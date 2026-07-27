@@ -118,6 +118,53 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UndeclaredRequestedAssembly_FailsBeforeWaiting()
+        {
+            MethodInfo method = typeof(MCPPackageTestCommands).GetMethod(
+                "TryValidateRequestedAssemblyNames",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+            object[] arguments =
+            {
+                new[] { "UnityMCP.Editor.Tests" },
+                new[] { "AnkleBreaker.UnityMCP.Editor.Tests" },
+                null,
+            };
+
+            bool valid = (bool)method.Invoke(null, arguments);
+
+            Assert.That(valid, Is.False);
+            Assert.That(arguments[2], Does.Contain("UnityMCP.Editor.Tests"));
+            Assert.That(arguments[2],
+                Does.Contain("AnkleBreaker.UnityMCP.Editor.Tests"));
+            Assert.That(arguments[2], Does.Contain("asmdef"));
+        }
+
+        [Test]
+        public void DeclaredRequestedAssembly_IsAccepted()
+        {
+            MethodInfo method = typeof(MCPPackageTestCommands).GetMethod(
+                "TryValidateRequestedAssemblyNames",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+            object[] arguments =
+            {
+                new[] { "AnkleBreaker.UnityMCP.Editor.Tests" },
+                new[]
+                {
+                    "AnkleBreaker.UnityMCP.Editor",
+                    "AnkleBreaker.UnityMCP.Editor.Tests",
+                },
+                null,
+            };
+
+            bool valid = (bool)method.Invoke(null, arguments);
+
+            Assert.That(valid, Is.True);
+            Assert.That(arguments[2], Is.Null);
+        }
+
+        [Test]
         public void ActiveWorkflow_BlocksConcurrentManifestMutation()
         {
             FieldInfo workflowField = typeof(MCPPackageTestCommands).GetField("_workflow",

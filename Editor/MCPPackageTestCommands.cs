@@ -51,6 +51,17 @@ namespace UnityMCP.Editor
                 assemblies = new[] { DefaultTestAssembly };
             if (assemblies == null || assemblies.Length == 0)
                 return new { error = "assemblies is required for package tests outside the Unity MCP package" };
+            if (!TryValidatePackageAssemblyNames(packageName, assemblies,
+                    out string assemblyError, out string[] declaredAssemblies))
+            {
+                return MCPResponse.Error(assemblyError, "test_assembly_not_declared", false,
+                    new Dictionary<string, object>
+                    {
+                        { "packageName", packageName },
+                        { "requestedAssemblies", assemblies },
+                        { "declaredAssemblies", declaredAssemblies },
+                    });
+            }
 
             string manifestPath = GetManifestPath();
             if (!File.Exists(manifestPath))
@@ -208,7 +219,15 @@ namespace UnityMCP.Editor
                         }
                         break;
                     case "waiting-for-assembly":
-                        if (AreAssembliesAvailable(_workflow.Assemblies))
+                        if (!TryValidatePackageAssemblyNames(
+                                _workflow.PackageName,
+                                _workflow.Assemblies,
+                                out string assemblyError,
+                                out _))
+                        {
+                            FailWorkflow(assemblyError);
+                        }
+                        else if (AreAssembliesAvailable(_workflow.Assemblies))
                         {
                             StartTestRun();
                         }
@@ -427,6 +446,92 @@ namespace UnityMCP.Editor
             return manifest.TryGetValue("testables", out var rawTestables) &&
                    rawTestables is List<object> testables &&
                    testables.Any(value => value?.ToString() == packageName);
+        }
+
+        private static bool TryValidatePackageAssemblyNames(string packageName,
+            IEnumerable<string> requestedAssemblyNames, out string error,
+            out string[] declaredAssemblyNames)
+        {
+            declaredAssemblyNames = Array.Empty<string>();
+            UnityEditor.PackageManager.PackageInfo package;
+            try
+            {
+                package = UnityEditor.PackageManager.PackageInfo
+                    .GetAllRegisteredPackages()
+                    .FirstOrDefault(candidate =>
+                        string.Equals(candidate.name, packageName,
+                            StringComparison.Ordinal));
+            }
+            catch (Exception ex)
+            {
+                error =
+                    $"Could not inspect package '{packageName}' test assemblies: {ex.Message}";
+                return false;
+            }
+
+            if (package == null || string.IsNullOrWhiteSpace(package.resolvedPath) ||
+                Directory.Exists(package.resolvedPath) == false)
+            {
+                error =
+                    $"Package '{packageName}' is not resolved, so its test assemblies cannot be validated.";
+                return false;
+            }
+
+            var declared = new HashSet<string>(StringComparer.Ordinal);
+            try
+            {
+                foreach (string asmdefPath in Directory.EnumerateFiles(
+                             package.resolvedPath, "*.asmdef",
+                             SearchOption.AllDirectories))
+                {
+                    if (MiniJson.Deserialize(File.ReadAllText(asmdefPath)) is
+                            Dictionary<string, object> asmdef &&
+                        asmdef.TryGetValue("name", out object rawName) &&
+                        string.IsNullOrWhiteSpace(rawName?.ToString()) == false)
+                    {
+                        declared.Add(rawName.ToString());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                error =
+                    $"Could not read package '{packageName}' assembly definitions: {ex.Message}";
+                return false;
+            }
+
+            declaredAssemblyNames = declared.OrderBy(value => value,
+                StringComparer.Ordinal).ToArray();
+            return TryValidateRequestedAssemblyNames(
+                requestedAssemblyNames, declaredAssemblyNames, out error);
+        }
+
+        private static bool TryValidateRequestedAssemblyNames(
+            IEnumerable<string> requestedAssemblyNames,
+            IEnumerable<string> declaredAssemblyNames, out string error)
+        {
+            var requested = new HashSet<string>(
+                requestedAssemblyNames ?? Array.Empty<string>(),
+                StringComparer.Ordinal);
+            var declared = new HashSet<string>(
+                declaredAssemblyNames ?? Array.Empty<string>(),
+                StringComparer.Ordinal);
+            string[] missing = requested.Except(declared)
+                .OrderBy(value => value, StringComparer.Ordinal).ToArray();
+            if (missing.Length == 0)
+            {
+                error = null;
+                return true;
+            }
+
+            string available = declared.Count == 0
+                ? "(none)"
+                : string.Join(", ", declared.OrderBy(value => value,
+                    StringComparer.Ordinal));
+            error =
+                $"Requested package test assembly is not declared: {string.Join(", ", missing)}. " +
+                $"Declared assemblies: {available}. Read the package asmdef name instead of guessing from its namespace.";
+            return false;
         }
 
         private static bool AreAssembliesAvailable(IEnumerable<string> assemblyNames)
