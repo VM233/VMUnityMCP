@@ -112,50 +112,5 @@ namespace UnityMCP.Editor
             };
         }
 
-        public static object FindObjectsByType(Dictionary<string, object> args)
-        {
-            string typeName = args.ContainsKey("typeName") ? args["typeName"].ToString() : "";
-            if (string.IsNullOrEmpty(typeName))
-                return new { error = "typeName is required" };
-
-            Type type = Type.GetType($"UnityEngine.{typeName}, UnityEngine") ??
-                        Type.GetType($"UnityEngine.{typeName}, UnityEngine.CoreModule") ??
-                        Type.GetType($"UnityEngine.{typeName}, UnityEngine.PhysicsModule");
-
-            if (type == null)
-            {
-                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    type = assembly.GetType(typeName) ?? assembly.GetType($"UnityEngine.{typeName}");
-                    if (type != null) break;
-                }
-            }
-
-            if (type == null)
-                return new { error = $"Type '{typeName}' not found" };
-
-            var objects = UnityEngine.Object.FindObjectsByType(type, FindObjectsSortMode.None);
-            var results = new List<Dictionary<string, object>>();
-            foreach (var obj in objects)
-            {
-                var comp = obj as Component;
-                if (comp != null)
-                {
-                    results.Add(new Dictionary<string, object>
-                    {
-                        { "gameObject", comp.gameObject.name },
-                        { "instanceId", MCPObjectId.Get(comp.gameObject) },
-                        { "path", MCPGameObjectCommands.GetHierarchyPath(comp.gameObject) },
-                    });
-                }
-            }
-
-            return new Dictionary<string, object>
-            {
-                { "typeName", typeName },
-                { "count", results.Count },
-                { "objects", results },
-            };
-        }
     }
 }

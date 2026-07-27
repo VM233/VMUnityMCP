@@ -287,45 +287,6 @@ namespace UnityMCP.Editor
 
         // ─── Search Assets ───
 
-        public static object SearchAssets(Dictionary<string, object> args)
-        {
-            string query = args.ContainsKey("query") ? args["query"].ToString() : "";
-            string type = args.ContainsKey("type") ? args["type"].ToString() : "";
-            string folder = args.ContainsKey("folder") ? args["folder"].ToString() : "";
-            int maxResults = args.ContainsKey("maxResults") ? Convert.ToInt32(args["maxResults"]) : 100;
-
-            string searchFilter = "";
-            if (!string.IsNullOrEmpty(query)) searchFilter += query;
-            if (!string.IsNullOrEmpty(type)) searchFilter += " t:" + type;
-
-            string[] searchFolders = string.IsNullOrEmpty(folder) ? null : new[] { folder };
-            string[] guids = searchFolders != null
-                ? AssetDatabase.FindAssets(searchFilter, searchFolders)
-                : AssetDatabase.FindAssets(searchFilter);
-
-            var results = new List<Dictionary<string, object>>();
-            int count = Math.Min(guids.Length, maxResults);
-            for (int i = 0; i < count; i++)
-            {
-                string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
-                var assetType = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
-                results.Add(new Dictionary<string, object>
-                {
-                    { "path", assetPath },
-                    { "guid", guids[i] },
-                    { "type", assetType != null ? assetType.Name : "Unknown" },
-                    { "name", System.IO.Path.GetFileNameWithoutExtension(assetPath) },
-                });
-            }
-
-            return new Dictionary<string, object>
-            {
-                { "totalFound", guids.Length },
-                { "returned", results.Count },
-                { "results", results },
-            };
-        }
-
         // ─── Find Missing References ───
 
         public static object FindMissingReferences(Dictionary<string, object> args)

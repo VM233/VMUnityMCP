@@ -48,7 +48,7 @@ namespace UnityMCP.Editor
             { "advanced/execute", (args, resolve, _) => ExecuteAdvancedRouteDeferred(args, resolve) },
             { "wait/editor-idle", (args, resolve, _) => MCPEditorCommands.WaitForIdle(args, resolve) },
             { "editor/play-mode", (args, resolve, _) => MCPEditorCommands.SetPlayMode(args, resolve) },
-            { "uitoolkit/wait-refresh", (args, resolve, _) => MCPUICommands.WaitForUIToolkitRefresh(args, resolve) },
+            { "uitoolkit/refresh", (args, resolve, _) => MCPUICommands.RefreshUIToolkit(args, resolve) },
             { "uitoolkit/builder-preview", (args, resolve, _) => MCPUICommands.OpenUIBuilderPreview(args, resolve) },
             { "screenshot/game", (args, resolve, _) => MCPGameViewCaptureCommands.CaptureGameView(args, resolve) },
             { "packages/update-git", (args, resolve, _) => MCPPackageManagerCommands.UpdateGitPackageDeferred(args, resolve) },
@@ -864,8 +864,8 @@ namespace UnityMCP.Editor
                     return MCPEditorCommands.GetEditorState();
                 case "wait/editor-idle":
                     return new { error = "wait/editor-idle must be executed through the deferred route." };
-                case "uitoolkit/wait-refresh":
-                    return new { error = "uitoolkit/wait-refresh must be executed through the deferred route." };
+                case "uitoolkit/refresh":
+                    return new { error = "uitoolkit/refresh must be executed through the deferred route." };
                 case "editor/play-mode":
                     return MCPResponse.Error(
                         "editor/play-mode must be executed through the deferred route.",
@@ -940,8 +940,6 @@ namespace UnityMCP.Editor
                     return MCPAssetCommands.Move(ParseJson(body));
                 case "asset/create-prefab":
                     return MCPAssetCommands.CreatePrefab(ParseJson(body));
-                case "asset/instantiate-prefab":
-                    return MCPAssetCommands.InstantiatePrefab(ParseJson(body));
                 case "asset/create-material":
                     return MCPAssetCommands.CreateMaterial(ParseJson(body));
                 case "asset/create-folder":
@@ -968,14 +966,10 @@ namespace UnityMCP.Editor
                 // ─── Build ───
                 case "build/start":
                     return MCPBuildCommands.StartBuild(ParseJson(body));
-                case "build/run-test":
-                    return MCPBuildCommands.BuildAndRunTest(ParseJson(body));
                 case "build/get-job":
                     return MCPBuildCommands.GetBuildJob(ParseJson(body));
 
                 // ─── Console ───
-                case "console/log":
-                    return MCPConsoleCommands.GetLog(ParseJson(body));
                 case "console/query":
                     return MCPConsoleCommands.Query(ParseJson(body));
                 case "console/clear":
@@ -986,14 +980,6 @@ namespace UnityMCP.Editor
                     return MCPDebugCommands.AttachUnity(ParseJson(body));
                 case "debug/set-breakpoint":
                     return MCPDebugCommands.SetBreakpoint(ParseJson(body));
-                case "debug/continue":
-                    return MCPDebugCommands.Continue(ParseJson(body));
-                case "debug/pause":
-                    return MCPDebugCommands.Pause(ParseJson(body));
-                case "debug/step-over":
-                    return MCPDebugCommands.StepOver(ParseJson(body));
-                case "debug/step-into":
-                    return MCPDebugCommands.StepInto(ParseJson(body));
                 case "debug/stack-trace":
                     return MCPDebugCommands.StackTrace(ParseJson(body));
                 case "debug/variables":
@@ -1114,7 +1100,6 @@ namespace UnityMCP.Editor
                     return MCPPrefabAssetCommands.SetReference(ParseJson(body));
                 case "prefab-asset/add-gameobject":
                     return MCPPrefabAssetCommands.AddGameObject(ParseJson(body));
-                case "prefab-asset/instantiate-prefab":
                 case "prefab-asset/instantiate-child-prefab":
                     return MCPPrefabAssetCommands.InstantiatePrefab(ParseJson(body));
                 case "prefab-asset/remove-gameobject":
@@ -1193,8 +1178,6 @@ namespace UnityMCP.Editor
                     return MCPSelectionCommands.SetSelection(ParseJson(body));
                 case "selection/focus-scene-view":
                     return MCPSelectionCommands.FocusSceneView(ParseJson(body));
-                case "selection/find-by-type":
-                    return MCPSelectionCommands.FindObjectsByType(ParseJson(body));
 
                 // ─── Input Actions ───
                 case "input/create":
@@ -1377,8 +1360,6 @@ namespace UnityMCP.Editor
                     return MCPSearchCommands.FindByName(ParseJson(body));
                 case "search/by-shader":
                     return MCPSearchCommands.FindByShader(ParseJson(body));
-                case "search/assets":
-                    return MCPSearchCommands.SearchAssets(ParseJson(body));
                 case "search/missing-references":
                     return MCPSearchCommands.FindMissingReferences(ParseJson(body));
                 case "search/scene-stats":
@@ -1433,22 +1414,14 @@ namespace UnityMCP.Editor
                     return MCPScreenshotCommands.SetGameViewResolution(ParseJson(body));
                 case "gameview/set-scale":
                     return MCPScreenshotCommands.SetGameViewScale(ParseJson(body));
-                case "gameview/set-min-scale":
-                    return MCPScreenshotCommands.SetGameViewMinScale(ParseJson(body));
 
                 // ─── Graphics & Visuals ───
                 case "graphics/asset-preview":
                     return MCPGraphicsCommands.CaptureAssetPreview(ParseJson(body));
-                case "graphics/scene-capture":
-                    return MCPGraphicsCommands.CaptureSceneView(ParseJson(body));
-                case "graphics/prefab-render":
-                    return MCPGraphicsCommands.RenderPrefabPreview(ParseJson(body));
                 case "graphics/mesh-info":
                     return MCPGraphicsCommands.GetMeshInfo(ParseJson(body));
                 case "graphics/material-info":
                     return MCPGraphicsCommands.GetMaterialInfo(ParseJson(body));
-                case "graphics/texture-info":
-                    return MCPGraphicsCommands.GetTextureInfo(ParseJson(body));
                 case "graphics/image-alpha-bounds":
                     return MCPGraphicsCommands.InspectImageAlphaBounds(ParseJson(body));
                 case "graphics/rect-gap":
@@ -1575,10 +1548,6 @@ namespace UnityMCP.Editor
                     return MCPTextureCommands.SetTextureImportSettings(ParseJson(body));
                 case "texture/reimport":
                     return MCPTextureCommands.ReimportTexture(ParseJson(body));
-                case "texture/set-sprite":
-                    return MCPTextureCommands.SetAsSprite(ParseJson(body));
-                case "texture/set-normalmap":
-                    return MCPTextureCommands.SetAsNormalMap(ParseJson(body));
                 case "texture/apply-sprite-preset":
                     return MCPTextureCommands.ApplySpriteImportPreset(ParseJson(body));
                 case "texture/import-image":
@@ -1665,8 +1634,6 @@ namespace UnityMCP.Editor
                     return MCPUICommands.AuditUIToolkitResources(ParseJson(body));
                 case "uitoolkit/runtime-repaint":
                     return MCPUICommands.RepaintRuntimeUI(ParseJson(body));
-                case "uitoolkit/refresh":
-                    return MCPUICommands.RefreshUIToolkit(ParseJson(body));
                 case "uitoolkit/assert-layout":
                     return MCPUICommands.AssertUIToolkitLayout(ParseJson(body));
                 case "uitoolkit/builder-preview":

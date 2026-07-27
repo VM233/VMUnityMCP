@@ -121,6 +121,17 @@ namespace UnityMCP.Editor
 
         public static void SetPlayMode(Dictionary<string, object> args, Action<object> resolve)
         {
+            string requestedAction = args != null &&
+                                     args.TryGetValue("action", out object requestedActionValue) &&
+                                     requestedActionValue != null
+                ? requestedActionValue.ToString().Trim().ToLowerInvariant()
+                : "play";
+            if (requestedAction == "step")
+            {
+                StepPlayModeFrame(args, resolve);
+                return;
+            }
+
             if (!TryResolvePlayModeTarget(args, out string action, out bool targetPlaying,
                     out bool targetPaused, out string validationError))
             {
@@ -226,6 +237,84 @@ namespace UnityMCP.Editor
                 EditorApplication.update += Tick;
         }
 
+        private static void StepPlayModeFrame(Dictionary<string, object> args, Action<object> resolve)
+        {
+            if (!EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode !=
+                EditorApplication.isPlaying)
+            {
+                resolve(MCPResponse.Error("Cannot step because Unity is not in stable Play Mode.",
+                    "play_mode_required"));
+                return;
+            }
+
+            int timeoutMs = Math.Max(100, GetInt(args, "timeoutMs", 10000));
+            int stableFrames = Math.Max(1, GetInt(args, "stableFrames", 1));
+            int frameBefore = Time.frameCount;
+            bool wasPaused = EditorApplication.isPaused;
+            double startedAt = EditorApplication.timeSinceStartup;
+            int confirmedFrames = 0;
+            bool resolved = false;
+
+            EditorApplication.isPaused = true;
+            EditorApplication.Step();
+
+            void Complete(object result)
+            {
+                if (resolved)
+                    return;
+
+                resolved = true;
+                resolve(result);
+            }
+
+            void Tick()
+            {
+                bool isChangingPlayMode = EditorApplication.isPlayingOrWillChangePlaymode !=
+                                          EditorApplication.isPlaying;
+                bool frameAdvanced = Time.frameCount > frameBefore;
+                bool targetReached = EditorApplication.isPlaying && !isChangingPlayMode &&
+                                     EditorApplication.isPaused && frameAdvanced;
+                confirmedFrames = targetReached ? confirmedFrames + 1 : 0;
+                double elapsedMs = (EditorApplication.timeSinceStartup - startedAt) * 1000d;
+
+                if (confirmedFrames >= stableFrames)
+                {
+                    EditorApplication.update -= Tick;
+                    Complete(new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "action", "step" },
+                        { "stateConfirmed", true },
+                        { "isPlaying", EditorApplication.isPlaying },
+                        { "isPaused", EditorApplication.isPaused },
+                        { "wasPaused", wasPaused },
+                        { "frameBefore", frameBefore },
+                        { "frameAfter", Time.frameCount },
+                        { "stableFrames", confirmedFrames },
+                        { "elapsedMs", Math.Round(elapsedMs, 1) },
+                    });
+                    return;
+                }
+
+                if (elapsedMs < timeoutMs)
+                    return;
+
+                EditorApplication.update -= Tick;
+                Complete(MCPResponse.Error(
+                    $"Unity did not complete one Play Mode frame step within {timeoutMs} ms.",
+                    "play_mode_step_timeout", true, new Dictionary<string, object>
+                    {
+                        { "action", "step" },
+                        { "isPlaying", EditorApplication.isPlaying },
+                        { "isPaused", EditorApplication.isPaused },
+                        { "frameBefore", frameBefore },
+                        { "frameAfter", Time.frameCount },
+                    }));
+            }
+
+            EditorApplication.update += Tick;
+        }
+
         internal static bool TryResolvePlayModeTarget(Dictionary<string, object> args,
             out string action, out bool targetPlaying, out bool targetPaused, out string error)
         {
@@ -251,7 +340,7 @@ namespace UnityMCP.Editor
                 default:
                     targetPlaying = false;
                     targetPaused = false;
-                    error = $"Unknown action: {action}. Use 'play', 'pause', 'resume', or 'stop'.";
+                    error = $"Unknown action: {action}. Use 'play', 'pause', 'resume', 'step', or 'stop'.";
                     return false;
             }
         }

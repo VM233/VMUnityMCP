@@ -127,63 +127,7 @@ namespace UnityMCP.Editor
             }
         }
 
-        // ─── 2. Scene View Capture (Base64 PNG) ───
-
-        public static object CaptureSceneView(Dictionary<string, object> args)
-        {
-            int width = args.ContainsKey("width") ? Convert.ToInt32(args["width"]) : 512;
-            int height = args.ContainsKey("height") ? Convert.ToInt32(args["height"]) : 512;
-
-            var sceneView = SceneView.lastActiveSceneView;
-            if (sceneView == null)
-                return new { error = "No active Scene View found" };
-
-            RenderTexture rt = null;
-            Texture2D tex = null;
-            try
-            {
-                var camera = sceneView.camera;
-                rt = new RenderTexture(width, height, 24);
-                camera.targetTexture = rt;
-                camera.Render();
-
-                RenderTexture.active = rt;
-                tex = new Texture2D(width, height, TextureFormat.RGB24, false);
-                tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                tex.Apply();
-
-                string base64 = TextureToBase64(tex);
-
-                return new Dictionary<string, object>
-                {
-                    { "success", true },
-                    { "base64", base64 },
-                    { "width", width },
-                    { "height", height },
-                };
-            }
-            finally
-            {
-                if (sceneView != null && sceneView.camera != null)
-                    sceneView.camera.targetTexture = null;
-                RenderTexture.active = null;
-                if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
-                if (rt != null) UnityEngine.Object.DestroyImmediate(rt);
-            }
-        }
-
-        // ─── 3. Prefab Render Preview (Base64 PNG) ───
-
-        public static object RenderPrefabPreview(Dictionary<string, object> args)
-        {
-            // Delegates to CaptureAssetPreview — Unity's built-in AssetPreview system
-            // is the safest way to render prefab thumbnails without triggering lifecycle
-            // callbacks on complex scripts (NavMeshAgent, NetworkBehaviour, etc.).
-            // Custom angle rendering via Instantiate/camera is deferred to a future version.
-            return CaptureAssetPreview(args);
-        }
-
-        // ─── 4. Mesh Info ───
+        // ─── 2. Mesh Info ───
 
         public static object GetMeshInfo(Dictionary<string, object> args)
         {
@@ -288,7 +232,7 @@ namespace UnityMCP.Editor
             };
         }
 
-        // ─── 5. Material Info (with preview) ───
+        // ─── 3. Material Info (with preview) ───
 
         public static object GetMaterialInfo(Dictionary<string, object> args)
         {
@@ -424,99 +368,6 @@ namespace UnityMCP.Editor
                 }
             }
             catch { /* preview optional, don't fail */ }
-
-            if (base64 != null) result["base64"] = base64;
-
-            return result;
-        }
-
-        // ─── 6. Texture Info (with preview) ───
-
-        public static object GetTextureInfo(Dictionary<string, object> args)
-        {
-            string assetPath = args.ContainsKey("assetPath") ? args["assetPath"].ToString() : "";
-            if (string.IsNullOrEmpty(assetPath))
-                return new { error = "assetPath is required" };
-
-            var texture = AssetDatabase.LoadAssetAtPath<Texture>(assetPath);
-            if (texture == null)
-                return new { error = $"Texture not found at '{assetPath}'" };
-
-            var result = new Dictionary<string, object>
-            {
-                { "name", texture.name },
-                { "assetPath", assetPath },
-                { "width", texture.width },
-                { "height", texture.height },
-                { "filterMode", texture.filterMode.ToString() },
-                { "wrapMode", texture.wrapMode.ToString() },
-                { "anisoLevel", texture.anisoLevel },
-                { "texelSize", new Dictionary<string, object>
-                    {
-                        { "x", texture.texelSize.x },
-                        { "y", texture.texelSize.y },
-                    }
-                },
-            };
-
-            // Texture2D-specific info
-            if (texture is Texture2D tex2D)
-            {
-                result["format"] = tex2D.format.ToString();
-                result["mipmapCount"] = tex2D.mipmapCount;
-                result["isReadable"] = tex2D.isReadable;
-            }
-
-            // Import settings
-            var importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
-            if (importer != null)
-            {
-                result["importSettings"] = new Dictionary<string, object>
-                {
-                    { "textureType", importer.textureType.ToString() },
-                    { "spriteMode", importer.spriteImportMode.ToString() },
-                    { "sRGB", importer.sRGBTexture },
-                    { "alphaSource", importer.alphaSource.ToString() },
-                    { "alphaIsTransparency", importer.alphaIsTransparency },
-                    { "mipmapEnabled", importer.mipmapEnabled },
-                    { "readWriteEnabled", importer.isReadable },
-                    { "maxTextureSize", importer.maxTextureSize },
-                    { "textureCompression", importer.textureCompression.ToString() },
-                    { "npotScale", importer.npotScale.ToString() },
-                };
-            }
-
-            // Memory estimate (approximate)
-            long memBytes = UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(texture);
-            result["memoryEstimateKB"] = Math.Round(memBytes / 1024.0, 1);
-
-            // Preview thumbnail
-            string base64 = null;
-            try
-            {
-                var preview = GetPreviewWithRetry(texture, 20);
-                if (preview != null)
-                {
-                    RenderTexture rt = RenderTexture.GetTemporary(preview.width, preview.height, 0);
-                    try
-                    {
-                        Graphics.Blit(preview, rt);
-                        RenderTexture.active = rt;
-                        var readable = new Texture2D(preview.width, preview.height, TextureFormat.RGBA32, false);
-                        readable.ReadPixels(new Rect(0, 0, preview.width, preview.height), 0, 0);
-                        readable.Apply();
-                        RenderTexture.active = null;
-                        base64 = TextureToBase64(readable);
-                        UnityEngine.Object.DestroyImmediate(readable);
-                    }
-                    finally
-                    {
-                        RenderTexture.active = null;
-                        RenderTexture.ReleaseTemporary(rt);
-                    }
-                }
-            }
-            catch { /* preview optional */ }
 
             if (base64 != null) result["base64"] = base64;
 
@@ -769,7 +620,7 @@ namespace UnityMCP.Editor
             }
         }
 
-        // ─── 7. Renderer Info ───
+        // ─── 4. Renderer Info ───
 
         public static object GetRendererInfo(Dictionary<string, object> args)
         {
@@ -853,7 +704,7 @@ namespace UnityMCP.Editor
             return result;
         }
 
-        // ─── 8. Lighting Summary ───
+        // ─── 5. Lighting Summary ───
 
         public static object GetLightingSummary(Dictionary<string, object> args)
         {

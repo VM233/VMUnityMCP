@@ -21,51 +21,81 @@ namespace UnityMCP.Editor
 
         public static object CaptureSceneView(Dictionary<string, object> args)
         {
-            string path = args.ContainsKey("path") ? args["path"].ToString() : "";
-            if (string.IsNullOrEmpty(path))
-                path = "Assets/Screenshots/SceneView_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png";
-
             int width = args.ContainsKey("width") ? Convert.ToInt32(args["width"]) : 1920;
             int height = args.ContainsKey("height") ? Convert.ToInt32(args["height"]) : 1080;
+            if (width <= 0 || height <= 0)
+                return new { error = "width and height must be greater than 0" };
+
+            string transport = GetString(args, "transport");
+            if (string.IsNullOrEmpty(transport))
+                transport = "file";
+            transport = transport.Trim().ToLowerInvariant();
+            if (transport != "file" && transport != "base64" && transport != "both")
+                return new { error = "transport must be 'file', 'base64', or 'both'" };
+
+            bool writeFile = transport == "file" || transport == "both";
+            bool returnBase64 = transport == "base64" || transport == "both";
+            string path = GetString(args, "path");
+            if (writeFile && string.IsNullOrEmpty(path))
+                path = "Assets/Screenshots/SceneView_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png";
 
             var sceneView = SceneView.lastActiveSceneView;
             if (sceneView == null)
                 return new { error = "No active Scene View found" };
 
-            // Ensure directory exists
-            string dir = Path.GetDirectoryName(path)?.Replace('\\', '/');
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-
             var camera = sceneView.camera;
-            var rt = new RenderTexture(width, height, 24);
-            camera.targetTexture = rt;
-            camera.Render();
-
-            RenderTexture.active = rt;
-            var tex = new Texture2D(width, height, TextureFormat.RGB24, false);
-            tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-            tex.Apply();
-
-            camera.targetTexture = null;
-            RenderTexture.active = null;
-
-            byte[] bytes = tex.EncodeToPNG();
-            File.WriteAllBytes(path, bytes);
-
-            UnityEngine.Object.DestroyImmediate(tex);
-            UnityEngine.Object.DestroyImmediate(rt);
-
-            AssetDatabase.Refresh();
-
-            return new Dictionary<string, object>
+            RenderTexture previousTarget = camera.targetTexture;
+            RenderTexture previousActive = RenderTexture.active;
+            RenderTexture renderTexture = null;
+            Texture2D texture = null;
+            try
             {
-                { "success", true },
-                { "path", path },
-                { "width", width },
-                { "height", height },
-                { "sizeBytes", bytes.Length },
-            };
+                renderTexture = new RenderTexture(width, height, 24);
+                camera.targetTexture = renderTexture;
+                camera.Render();
+
+                RenderTexture.active = renderTexture;
+                texture = new Texture2D(width, height, TextureFormat.RGB24, false);
+                texture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                texture.Apply();
+                byte[] bytes = texture.EncodeToPNG();
+
+                var result = new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "transport", transport },
+                    { "width", width },
+                    { "height", height },
+                    { "sizeBytes", bytes.Length },
+                };
+
+                if (writeFile)
+                {
+                    string fullPath = ResolveFilePath(path);
+                    string directory = Path.GetDirectoryName(fullPath);
+                    if (!string.IsNullOrEmpty(directory))
+                        Directory.CreateDirectory(directory);
+                    File.WriteAllBytes(fullPath, bytes);
+                    result["path"] = path;
+                    result["fullPath"] = fullPath.Replace('\\', '/');
+
+                    RefreshAssetIfNeeded(fullPath);
+                }
+
+                if (returnBase64)
+                    result["base64"] = Convert.ToBase64String(bytes);
+
+                return result;
+            }
+            finally
+            {
+                camera.targetTexture = previousTarget;
+                RenderTexture.active = previousActive;
+                if (texture != null)
+                    UnityEngine.Object.DestroyImmediate(texture);
+                if (renderTexture != null)
+                    UnityEngine.Object.DestroyImmediate(renderTexture);
+            }
         }
 
         // ─── Get Scene View Camera Info ───
@@ -211,42 +241,44 @@ namespace UnityMCP.Editor
 
         public static object SetGameViewScale(Dictionary<string, object> args)
         {
-            if (!TryGetFloat(args, "scale", out float scale))
-            {
-                if (!TryGetFloat(args, "value", out scale))
-                    return new { error = "scale is required" };
-            }
-
-            if (scale <= 0)
-                return new { error = "scale must be greater than 0" };
+            string mode = GetString(args, "mode");
+            if (string.IsNullOrEmpty(mode))
+                mode = "value";
+            mode = mode.Trim().ToLowerInvariant();
+            if (mode != "value" && mode != "minimum")
+                return new { error = "mode must be 'value' or 'minimum'" };
 
             if (!TryGetGameView(out Type gameViewType, out EditorWindow gameView, out object error))
                 return error;
+
+            float scale;
+            float fallbackScale = 0f;
+            if (mode == "minimum")
+            {
+                fallbackScale = GetFloat(args, "fallbackScale", 0.76f);
+                scale = GetGameViewZoomAreaMinimumScale(gameViewType, gameView, fallbackScale);
+            }
+            else
+            {
+                if (!TryGetFloat(args, "scale", out scale))
+                    return new { error = "scale is required" };
+
+                if (scale <= 0)
+                    return new { error = "scale must be greater than 0" };
+            }
 
             if (!TrySnapGameViewZoom(gameViewType, gameView, scale, out string zoomError))
                 return new { error = zoomError };
 
             var result = BuildGameViewInfo(gameViewType, gameView);
             result["success"] = true;
+            result["mode"] = mode;
             result["requestedScale"] = scale;
-            return result;
-        }
-
-        public static object SetGameViewMinScale(Dictionary<string, object> args)
-        {
-            if (!TryGetGameView(out Type gameViewType, out EditorWindow gameView, out object error))
-                return error;
-
-            float fallbackScale = GetFloat(args, "fallbackScale", 0.76f);
-            float minScale = GetGameViewZoomAreaMinimumScale(gameViewType, gameView, fallbackScale);
-
-            if (!TrySnapGameViewZoom(gameViewType, gameView, minScale, out string zoomError))
-                return new { error = zoomError };
-
-            var result = BuildGameViewInfo(gameViewType, gameView);
-            result["success"] = true;
-            result["appliedScale"] = minScale;
-            result["fallbackScale"] = fallbackScale;
+            if (mode == "minimum")
+            {
+                result["appliedScale"] = scale;
+                result["fallbackScale"] = fallbackScale;
+            }
             return result;
         }
 

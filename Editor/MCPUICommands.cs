@@ -1189,25 +1189,7 @@ namespace UnityMCP.Editor
             };
         }
 
-        public static object RefreshUIToolkit(Dictionary<string, object> args)
-        {
-            bool refreshAssets = GetBool(args, "refreshAssets", true);
-            bool forceSynchronousImport = GetBool(args, "forceSynchronousImport", true);
-            if (refreshAssets)
-            {
-                var options = forceSynchronousImport
-                    ? ImportAssetOptions.ForceSynchronousImport
-                    : ImportAssetOptions.Default;
-                AssetDatabase.Refresh(options);
-            }
-
-            int documentCount = MarkAllUIToolkitDirty();
-            EditorApplication.QueuePlayerLoopUpdate();
-
-            return BuildUIToolkitRefreshResult(true, false, 0, 0, documentCount);
-        }
-
-        public static void WaitForUIToolkitRefresh(Dictionary<string, object> args, Action<object> resolve)
+        public static void RefreshUIToolkit(Dictionary<string, object> args, Action<object> resolve)
         {
             bool refreshAssets = GetBool(args, "refreshAssets", true);
             bool forceSynchronousImport = GetBool(args, "forceSynchronousImport", true);

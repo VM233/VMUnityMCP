@@ -608,7 +608,8 @@ namespace UnityMCP.Editor
         private static string TestConsole()
         {
             var args = new Dictionary<string, object> { { "count", 1 } };
-            var result = MCPConsoleCommands.GetLog(args);
+            args["includeStack"] = true;
+            var result = MCPConsoleCommands.Query(args);
             return AssertNotNull(result, "GetLog");
         }
 

@@ -65,59 +65,6 @@ namespace UnityMCP.Editor
             });
         }
 
-        public static object Continue(Dictionary<string, object> args)
-        {
-            bool wasPaused = EditorApplication.isPaused;
-            EditorApplication.isPaused = false;
-
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "action", "continue" },
-                { "wasEditorPaused", wasPaused },
-                { "isEditorPaused", EditorApplication.isPaused },
-                { "managedDebuggerAttached", IsManagedDebuggerAttached() },
-                { "note", "This resumes Unity Play Mode pause. It cannot resume a source breakpoint hit by an external managed debugger." },
-            };
-        }
-
-        public static object Pause(Dictionary<string, object> args)
-        {
-            bool breakPlayMode = GetBool(args, "breakPlayMode", true);
-            bool wasPaused = EditorApplication.isPaused;
-
-            EditorApplication.isPaused = true;
-            if (breakPlayMode && EditorApplication.isPlaying)
-                UnityEngine.Debug.Break();
-
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "action", "pause" },
-                { "wasEditorPaused", wasPaused },
-                { "isEditorPaused", EditorApplication.isPaused },
-                { "isPlaying", EditorApplication.isPlaying },
-                { "managedDebuggerAttached", IsManagedDebuggerAttached() },
-                { "note", "This pauses Unity Play Mode. It is not a source-level managed debugger break." },
-            };
-        }
-
-        public static object StepOver(Dictionary<string, object> args)
-        {
-            if (GetBool(args, "stepFrame", false))
-                return StepEditorFrame("stepOver");
-
-            return Unsupported("stepOver");
-        }
-
-        public static object StepInto(Dictionary<string, object> args)
-        {
-            if (GetBool(args, "stepFrame", false))
-                return StepEditorFrame("stepInto");
-
-            return Unsupported("stepInto");
-        }
-
         public static object StackTrace(Dictionary<string, object> args)
         {
             int skipFrames = Math.Max(0, GetInt(args, "skipFrames", 0));
@@ -185,30 +132,6 @@ namespace UnityMCP.Editor
                 { "mode", "editorContext" },
                 { "result", result },
                 { "note", "Expression is evaluated in the Unity Editor context, not inside a paused managed stack frame." },
-            };
-        }
-
-        private static object StepEditorFrame(string action)
-        {
-            if (!EditorApplication.isPlaying)
-            {
-                return new Dictionary<string, object>
-                {
-                    { "error", "Unity is not in Play Mode. Frame stepping requires Play Mode." },
-                    { "action", action },
-                };
-            }
-
-            EditorApplication.isPaused = true;
-            EditorApplication.Step();
-
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "action", action },
-                { "stepped", "editorFrame" },
-                { "isEditorPaused", EditorApplication.isPaused },
-                { "note", "This advances one Unity frame. It is not source-level step-over or step-into." },
             };
         }
 

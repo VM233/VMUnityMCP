@@ -150,7 +150,6 @@ namespace UnityMCP.Editor
             AddProfile(profiles, ToolProfile.FirstClass(readOnly: true, longRunning: true),
                 "wait/editor-idle",
                 "testing/list-tests",
-                "uitoolkit/wait-refresh",
                 "uitoolkit/builder-preview",
                 "profiler/frame-data",
                 "profiler/analyze",
@@ -163,14 +162,14 @@ namespace UnityMCP.Editor
 
             AddProfile(profiles, ToolProfile.FirstClass(longRunning: true),
                 "testing/run-tests",
-                "build/run-test");
+                "build/start");
 
             AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true),
                 "serialized-object/set",
                 "prefab-asset/add-component",
                 "prefab-asset/add-gameobject",
                 "prefab-asset/configure-component",
-                "prefab-asset/instantiate-prefab",
+                "prefab-asset/instantiate-child-prefab",
                 "prefab-asset/move-component",
                 "prefab-asset/move-gameobject",
                 "prefab-asset/remove-component",
@@ -191,7 +190,6 @@ namespace UnityMCP.Editor
                 "animation/update-transition",
                 "animation/connect-states",
                 "uitoolkit/runtime-repaint",
-                "uitoolkit/refresh",
                 "uitoolkit/assert-layout",
                 "uitoolkit/edit-uxml",
                 "uitoolkit/edit-uss",
@@ -207,7 +205,8 @@ namespace UnityMCP.Editor
             AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true, longRunning: true,
                     mayReloadDomain: true),
                 "asset/refresh",
-                "asset/import-unitypackage");
+                "asset/import-unitypackage",
+                "uitoolkit/refresh");
 
             AddProfile(profiles, ToolProfile.FirstClass(mutatesRuntime: true),
                 "localization/set-selected-locale",
@@ -765,7 +764,7 @@ namespace UnityMCP.Editor
                 case "wait/editor-idle":
                     return "Wait until the Unity Editor is idle after compilation, domain reload, package refresh, or asset import.";
                 case "editor/play-mode":
-                    return "Enter, pause, resume, or stop Play Mode and return only after Unity confirms the requested state.";
+                    return "Enter, pause, resume, step one frame, or stop Play Mode and return only after Unity confirms the requested state.";
                 case "testing/list-tests":
                     return "List discoverable Unity tests with mode and name filters.";
                 case "testing/run-tests":
@@ -811,7 +810,6 @@ namespace UnityMCP.Editor
                 case "scene/hierarchy":
                     return "Read the active scene hierarchy, optionally returning compact matches filtered by component type.";
                 case "scene/instantiate-prefab":
-                case "asset/instantiate-prefab":
                     return "Instantiate a prefab asset into the currently open scene.";
                 case "prefab-asset/add-component":
                     return "Add a component to a prefab asset after waiting for a newly compiled script type to become available.";
@@ -819,7 +817,6 @@ namespace UnityMCP.Editor
                     return "Ensure and configure one component on a prefab asset GameObject, including serialized properties and ObjectReferences, in one atomic save.";
                 case "prefab-asset/add-gameobject":
                     return "Create a child GameObject inside a prefab asset with an explicit or parent-inherited Layer.";
-                case "prefab-asset/instantiate-prefab":
                 case "prefab-asset/instantiate-child-prefab":
                     return "Instantiate a prefab asset as a child inside another prefab asset.";
                 case "prefab-asset/hierarchy":
@@ -880,14 +877,6 @@ namespace UnityMCP.Editor
                     return "Inspect Unity managed debugger attachment state and return MCP debug capability boundaries.";
                 case "debug/set-breakpoint":
                     return "Request a managed source breakpoint. Currently reports that this requires an external debugger adapter.";
-                case "debug/continue":
-                    return "Continue Unity Play Mode pause state. Source breakpoint continuation requires an external debugger adapter.";
-                case "debug/pause":
-                    return "Pause Unity Play Mode from MCP. This is not a source-level managed debugger break.";
-                case "debug/step-over":
-                    return "Request managed step-over. Optionally supports one Unity frame step with stepFrame=true.";
-                case "debug/step-into":
-                    return "Request managed step-into. Optionally supports one Unity frame step with stepFrame=true.";
                 case "debug/stack-trace":
                     return "Return the current MCP request stack trace. Paused managed frames require an external debugger adapter.";
                 case "debug/variables":
@@ -941,9 +930,7 @@ namespace UnityMCP.Editor
                 case "uitoolkit/runtime-repaint":
                     return "Trigger repaint for a runtime UIDocument or one of its elements.";
                 case "uitoolkit/refresh":
-                    return "Refresh UI Toolkit assets and repaint runtime UIDocuments and Editor UI Toolkit windows.";
-                case "uitoolkit/wait-refresh":
-                    return "Refresh UI Toolkit assets, repaint panels, and wait for a few stable editor frames.";
+                    return "Refresh UI Toolkit assets, repaint runtime and Editor panels, and return after stable Editor frames.";
                 case "uitoolkit/assert-layout":
                     return "Assert UI Toolkit runtime layout constraints such as edge touching, containment, and size.";
                 case "uitoolkit/builder-preview":
@@ -964,14 +951,16 @@ namespace UnityMCP.Editor
                     return "Capture the current Game View during active or paused Play Mode, suppress and restore Game View Gizmos and Stats by default or preserve them when they are the evidence subject, fail without creating an image in Edit Mode, and return only after the PNG is fully written and decodable.";
                 case "screenshot/crop":
                     return "Crop an existing screenshot or image file to a PNG.";
+                case "screenshot/scene":
+                    return "Capture the current Scene View once and return the PNG as a file, base64 payload, or both.";
+                case "graphics/asset-preview":
+                    return "Render Unity's asset preview for any supported asset type, including prefabs, as a base64 PNG.";
                 case "gameview/info":
                     return "Read the Unity Editor Game View resolution, selected size, scale, and minimum scale.";
                 case "gameview/set-resolution":
                     return "Set the Unity Editor Game View to a custom resolution.";
                 case "gameview/set-scale":
-                    return "Set the Unity Editor Game View zoom scale.";
-                case "gameview/set-min-scale":
-                    return "Set the Unity Editor Game View zoom scale to its minimum slider scale.";
+                    return "Set the Unity Editor Game View zoom scale to an explicit value or the current minimum slider scale.";
                 case "graphics/image-alpha-bounds":
                     return "Inspect a PNG or texture asset and return alpha-based visible pixel bounds.";
                 case "graphics/rect-gap":
@@ -995,7 +984,9 @@ namespace UnityMCP.Editor
                 case "texture/apply-sprite-preset":
                     return "Apply high-level TextureImporter/Sprite settings such as pixel sprite preset, PPU, pivot, border, and reference settings.";
                 case "texture/info":
-                    return "Inspect a texture asset and its TextureImporter settings, including sprite PPU, pivot, and border when applicable.";
+                    return "Inspect a texture asset, runtime format and memory, and its TextureImporter settings, including sprite PPU, pivot, and border when applicable.";
+                case "texture/set-import":
+                    return "Set TextureImporter type and import settings, including Sprite and NormalMap configuration, then reimport once.";
                 case "texture/find-duplicates":
                     return "Audit project image assets for duplicate file bytes or identical decoded RGBA pixels, even when PNG/JPEG encoding differs.";
                 case "texture/import-image":
@@ -1004,7 +995,7 @@ namespace UnityMCP.Editor
                     return "Check TextureImporter settings against a reference texture or a pixel-sprite preset without modifying assets.";
                 case "texture/check-ui-import-settings":
                     return "Check UI pixel-art image import settings, including pixel sprite defaults plus optional expected dimensions, border, and max texture size.";
-                case "build/run-test":
+                case "build/start":
                     return "Start a persistent Player build job, optionally run the executable, and return immediately with a job ID. Poll build/get-job for the final BuildReport; no post-build asset refresh is required.";
                 case "build/get-job":
                     return "Poll the current or latest persistent Player build job and return its final BuildReport and optional run result.";
@@ -1300,7 +1291,7 @@ namespace UnityMCP.Editor
                     ), "packagePath");
                 case "editor/play-mode":
                     return Schema(Props(
-                        Prop("action", "string", "Target action: play, pause, resume, or stop. Defaults to play. Pause is idempotent and never toggles."),
+                        Prop("action", "string", "Target action: play, pause, resume, step, or stop. Defaults to play. Pause is idempotent; step advances one frame and remains paused."),
                         Prop("timeoutMs", "number", "Maximum time to wait for the confirmed target state. Defaults to 10000."),
                         Prop("stableFrames", "number", "Consecutive Editor updates that must confirm the target state. Defaults to 2.")
                     ));
@@ -1400,7 +1391,6 @@ namespace UnityMCP.Editor
                         Prop("clear", "boolean", "Delete terminal workflow state after returning it. Defaults to false.")
                     ));
                 case "scene/instantiate-prefab":
-                case "asset/instantiate-prefab":
                     return Schema(Props(
                         Prop("prefabPath", "string", "Prefab asset path to instantiate into the currently open scene."),
                         Prop("name", "string", "Optional name for the created scene instance."),
@@ -1446,7 +1436,6 @@ namespace UnityMCP.Editor
                         Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary.")
                     ), "assetPath", "propertyName");
-                case "prefab-asset/instantiate-prefab":
                 case "prefab-asset/instantiate-child-prefab":
                     return Schema(Props(
                         Prop("assetPath", "string", "Target prefab asset path to edit."),
@@ -1631,17 +1620,6 @@ namespace UnityMCP.Editor
                         Prop("file", "string", "Source file path for the requested breakpoint."),
                         Prop("line", "number", "1-based source line for the requested breakpoint.")
                     ), "file", "line");
-                case "debug/continue":
-                    return Schema(Props());
-                case "debug/pause":
-                    return Schema(Props(
-                        Prop("breakPlayMode", "boolean", "Call Debug.Break when in Play Mode. Defaults to true.")
-                    ));
-                case "debug/step-over":
-                case "debug/step-into":
-                    return Schema(Props(
-                        Prop("stepFrame", "boolean", "When true, perform one Unity frame step instead of source-level stepping. Defaults to false.")
-                    ));
                 case "debug/stack-trace":
                     return Schema(Props(
                         Prop("skipFrames", "number", "Number of MCP call frames to skip. Defaults to 0."),
@@ -1897,11 +1875,6 @@ namespace UnityMCP.Editor
                 case "uitoolkit/refresh":
                     return Schema(Props(
                         Prop("refreshAssets", "boolean", "Call AssetDatabase.Refresh before repainting. Defaults to true."),
-                        Prop("forceSynchronousImport", "boolean", "Use ForceSynchronousImport. Defaults to true.")
-                    ));
-                case "uitoolkit/wait-refresh":
-                    return Schema(Props(
-                        Prop("refreshAssets", "boolean", "Call AssetDatabase.Refresh before repainting. Defaults to true."),
                         Prop("forceSynchronousImport", "boolean", "Use ForceSynchronousImport. Defaults to true."),
                         Prop("timeoutMs", "number", "Maximum wait time in milliseconds. Defaults to 10000."),
                         Prop("stableFrames", "number", "Consecutive idle repaint frames required. Defaults to 2.")
@@ -1937,6 +1910,19 @@ namespace UnityMCP.Editor
                         Prop("outputPath", "string", "Output PNG path. Defaults next to source with _crop suffix."),
                         Prop("originTopLeft", "boolean", "Treat rect x/y as top-left image coordinates. Defaults to true.")
                     ));
+                case "screenshot/scene":
+                    return Schema(Props(
+                        Prop("path", "string", "Output PNG path for file or both transport. Defaults under Assets/Screenshots."),
+                        Prop("width", "number", "Capture width in pixels. Defaults to 1920."),
+                        Prop("height", "number", "Capture height in pixels. Defaults to 1080."),
+                        Prop("transport", "string", "Output transport: file, base64, or both. Defaults to file.")
+                    ));
+                case "graphics/asset-preview":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "Asset path to preview, including prefab, material, mesh, or texture assets."),
+                        Prop("width", "number", "Requested preview width in pixels. Defaults to 256."),
+                        Prop("height", "number", "Requested preview height in pixels. Defaults to 256.")
+                    ), "assetPath");
                 case "gameview/info":
                     return Schema(Props());
                 case "gameview/set-resolution":
@@ -1947,10 +1933,8 @@ namespace UnityMCP.Editor
                     ), "width", "height");
                 case "gameview/set-scale":
                     return Schema(Props(
-                        Prop("scale", "number", "Game View zoom scale, e.g. 0.76 or 1.")
-                    ), "scale");
-                case "gameview/set-min-scale":
-                    return Schema(Props(
+                        Prop("mode", "string", "Scale source: value or minimum. Defaults to value."),
+                        Prop("scale", "number", "Game View zoom scale when mode is value, e.g. 0.76 or 1."),
                         Prop("fallbackScale", "number", "Fallback minimum scale used if Unity internals do not expose a valid one. Defaults to 0.76.")
                     ));
                 case "graphics/image-alpha-bounds":
@@ -2060,6 +2044,23 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("path", "string", "Texture asset path under Assets/.")
                     ), "path");
+                case "texture/set-import":
+                    return Schema(Props(
+                        Prop("path", "string", "Texture asset path under Assets/."),
+                        Prop("textureType", "string", "TextureImporterType, such as Default, Sprite, or NormalMap."),
+                        Prop("spriteMode", "string", "SpriteImportMode, such as Single or Multiple."),
+                        Prop("spritePixelsPerUnit", "number", "Sprite pixels per unit."),
+                        Prop("sRGB", "boolean", "Import as sRGB texture."),
+                        Prop("readable", "boolean", "Enable CPU read/write access."),
+                        Prop("mipmapEnabled", "boolean", "Generate mipmaps."),
+                        Prop("filterMode", "string", "Texture FilterMode."),
+                        Prop("wrapMode", "string", "TextureWrapMode."),
+                        Prop("maxTextureSize", "number", "Maximum imported texture size."),
+                        Prop("textureCompression", "string", "TextureImporterCompression value."),
+                        Prop("anisoLevel", "number", "Anisotropic filtering level."),
+                        Prop("alphaIsTransparency", "boolean", "Treat alpha as transparency."),
+                        Prop("npotScale", "string", "TextureImporterNPOTScale value.")
+                    ), "path");
                 case "texture/find-duplicates":
                     return Schema(Props(
                         Prop("folder", "string", "Single search folder under Assets/. Defaults to Assets."),
@@ -2104,7 +2105,7 @@ namespace UnityMCP.Editor
                         Prop("maxTextureSize", "number", "Optional exact TextureImporter maxTextureSize check."),
                         Prop("tolerance", "number", "Float tolerance for border/PPU checks. Defaults to 0.001.")
                     ));
-                case "build/run-test":
+                case "build/start":
                     return Schema(Props(
                         Prop("target", "string", "BuildTarget. Defaults to StandaloneWindows64."),
                         Prop("outputPath", "string", "Player output executable path."),

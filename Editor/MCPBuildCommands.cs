@@ -35,7 +35,7 @@ namespace UnityMCP.Editor
             EnsureBuildUpdateRegistered();
         }
 
-        public static object StartBuild(Dictionary<string, object> args)
+        private static object ExecuteBuild(Dictionary<string, object> args)
         {
             string targetStr = args.ContainsKey("target") ? args["target"].ToString() : "StandaloneWindows64";
             string outputPath = args.ContainsKey("outputPath") ? args["outputPath"].ToString() : "";
@@ -84,7 +84,7 @@ namespace UnityMCP.Editor
             }
         }
 
-        public static object BuildAndRunTest(Dictionary<string, object> args)
+        public static object StartBuild(Dictionary<string, object> args)
         {
             bool clearStuck = GetBool(args, "clearStuck", false);
             if (_job != null && !_job.IsTerminal)
@@ -152,7 +152,7 @@ namespace UnityMCP.Editor
             return response;
         }
 
-        private static object ExecuteBuildAndRunTest(Dictionary<string, object> args)
+        private static object ExecuteBuildJob(Dictionary<string, object> args)
         {
             string outputPath = GetString(args, "outputPath");
             if (string.IsNullOrEmpty(outputPath))
@@ -162,7 +162,7 @@ namespace UnityMCP.Editor
             if (overwrite)
                 DeleteExistingBuildOutput(outputPath);
 
-            var buildResult = MCPResponse.ToDictionary(StartBuild(args));
+            var buildResult = MCPResponse.ToDictionary(ExecuteBuild(args));
             if (buildResult == null)
                 return new { error = "Build did not return a structured result." };
 
@@ -211,7 +211,7 @@ namespace UnityMCP.Editor
             SaveBuildJob();
             try
             {
-                _job.Result = MCPResponse.ToDictionary(ExecuteBuildAndRunTest(_job.Arguments));
+                _job.Result = MCPResponse.ToDictionary(ExecuteBuildJob(_job.Arguments));
                 bool success = _job.Result != null && _job.Result.TryGetValue("success", out object value) &&
                                value is bool succeeded && succeeded;
                 _job.Status = success ? "succeeded" : "failed";

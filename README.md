@@ -51,8 +51,7 @@ http://127.0.0.1:7890/api/ping
 | Prefab asset editing | `unity_prefab_asset_configure_component` | `prefab-asset/configure-component` | Ensure one component exists and atomically configure serialized properties and ObjectReferences in one prefab save. |
 | Prefab asset editing | `unity_prefab_asset_add_gameobject` | `prefab-asset/add-gameobject` | Create a child GameObject inside a prefab asset. |
 | Prefab asset editing | `unity_prefab_asset_transaction_edit` | `prefab-asset/transaction-edit` | Apply ordered prefab edits in one load/save transaction with `execution.mode` controlling immediate or frame-batched execution. |
-| Prefab asset editing | `unity_prefab_asset_instantiate_prefab` | `prefab-asset/instantiate-prefab` | Instantiate one prefab asset inside another prefab asset under a selected child path. |
-| Prefab asset editing | `unity_prefab_asset_instantiate_child_prefab` | `prefab-asset/instantiate-child-prefab` | Clearer alias for `prefab-asset/instantiate-prefab`; use this when editing a prefab asset, not the scene. |
+| Prefab asset editing | `unity_prefab_asset_instantiate_child_prefab` | `prefab-asset/instantiate-child-prefab` | Instantiate one prefab asset as a child inside another prefab asset. |
 | Prefab asset editing | `unity_prefab_asset_move_gameobject` | `prefab-asset/move-gameobject` | Move or reorder a GameObject inside a prefab asset without opening Prefab Mode manually. |
 | Prefab asset editing | `unity_prefab_asset_move_component` | `prefab-asset/move-component` | Atomically move a component between GameObjects while preserving its serialized data and remapping references to the moved component. |
 | Prefab asset editing | `unity_prefab_asset_remove_component` | `prefab-asset/remove-component` | Remove a component from a GameObject inside a prefab asset. |
@@ -84,8 +83,7 @@ http://127.0.0.1:7890/api/ping
 | UI Toolkit runtime | `unity_uitoolkit_runtime_query` | `uitoolkit/runtime-query` | Query runtime VisualElements by tree path, VisualElementPath name list, name, class, type, or text. |
 | UI Toolkit runtime | `unity_uitoolkit_runtime_style` | `uitoolkit/runtime-style` | Read inline style, resolved style, bounds, and background asset metadata for a runtime element. |
 | UI Toolkit runtime | `unity_uitoolkit_runtime_repaint` | `uitoolkit/runtime-repaint` | Repaint a runtime UIDocument or one selected VisualElement. |
-| UI Toolkit runtime | `unity_uitoolkit_refresh` | `uitoolkit/refresh` | Refresh UI Toolkit assets and repaint runtime and editor panels. |
-| UI Toolkit runtime | `unity_uitoolkit_wait_refresh` | `uitoolkit/wait-refresh` | Refresh UI Toolkit assets, repaint panels, and wait for stable editor frames. |
+| UI Toolkit runtime | `unity_uitoolkit_refresh` | `uitoolkit/refresh` | Refresh UI Toolkit assets, repaint panels, and return after stable editor frames. |
 | UI Toolkit runtime | `unity_uitoolkit_assert_layout` | `uitoolkit/assert-layout` | Assert runtime layout constraints such as no-gap/no-overlap edge touching, edge alignment, center alignment, containment, and expected size. |
 | UI Toolkit visual QA | `unity_uitoolkit_locate_element` | `uitoolkit/locate-element` | Locate an Editor or runtime UI Toolkit element and return bounds, crop rect, and context for later screenshots or pixel checks. |
 | UI Toolkit visual QA | `unity_uitoolkit_capture_element` | `uitoolkit/capture-element` | Capture a UI Toolkit element by locating it in an Editor window or runtime UIDocument and cropping its containing window screenshot. |
@@ -94,6 +92,8 @@ http://127.0.0.1:7890/api/ping
 | UI Toolkit visual QA | `unity_uitoolkit_resource_audit` | `uitoolkit/resource-audit` | Audit target elements and descendants for resolved background assets, highlighted-state misuse, and missing or forbidden assets. |
 | UI Builder | `unity_uitoolkit_builder_preview` | `uitoolkit/builder-preview` | Open a UXML asset in UI Builder, wait for the preview to settle, and optionally capture the UI Builder window. |
 | Screenshot utilities | `unity_screenshot_crop` | `screenshot/crop` | Crop a screenshot or image file to a PNG for focused visual inspection. |
+| Screenshot utilities | `unity_screenshot_scene` | `screenshot/scene` | Capture the Scene View once and return a file, base64 PNG, or both. |
+| Graphics utilities | `unity_graphics_asset_preview` | `graphics/asset-preview` | Render Unity's preview for a prefab or other supported asset as a base64 PNG. |
 | Graphics utilities | `unity_graphics_image_alpha_bounds` | `graphics/image-alpha-bounds` | Inspect a PNG or texture asset and return visible alpha pixel bounds plus transparent margins. |
 | Graphics utilities | `unity_graphics_rect_gap` | `graphics/rect-gap` | Measure a gap or overlap between two rectangles along selected edges. |
 | Graphics utilities | `unity_graphics_annotate_rects` | `graphics/annotate-rects` | Draw rectangle borders onto screenshots or images for visual verification reports. |
@@ -105,10 +105,11 @@ http://127.0.0.1:7890/api/ping
 | Sprite pipeline | `unity_sprite_replace_slice_update_clip` | `sprite/replace-slice-update-clip` | Replace a sheet, slice it, and update an AnimationClip in one call. |
 | Texture pipeline | `unity_texture_apply_sprite_preset` | `texture/apply-sprite-preset` | Apply high-level TextureImporter/Sprite settings, including pixel sprite preset, PPU, pivot, border, and reference settings. |
 | Texture pipeline | `unity_texture_info` | `texture/info` | Inspect texture dimensions and TextureImporter settings, including sprite PPU, pivot, and border. |
+| Texture pipeline | `unity_texture_set_import` | `texture/set-import` | Configure TextureImporter type and settings, including Sprite and NormalMap, then reimport once. |
 | Texture pipeline | `unity_texture_find_duplicates` | `texture/find-duplicates` | Audit project image assets for identical decoded pixels or file bytes across one or more folders. |
 | Texture pipeline | `unity_texture_import_image` | `texture/import-image` | Import an image from a URL or local file into Assets, dedupe by hash, and apply sprite import settings. |
 | Texture pipeline | `unity_texture_check_ui_import_settings` | `texture/check-ui-import-settings` | Check UI pixel-art image import settings, including pixel sprite defaults plus optional expected dimensions, border, and max texture size. |
-| Player Build | `unity_build_run_test` | `build/run-test` | Start a persistent Player Build job and optionally run the built player. |
+| Player Build | `unity_build_start` | `build/start` | Start a persistent Player Build job and optionally run the built player. |
 | Player Build | `unity_build_get_job` | `build/get-job` | Poll the Player Build job for its final BuildReport and optional run result. |
 | Package management | `unity_packages_update_git` | `packages/update-git` | Update a Git package through a deferred route; same-commit updates skip Unity Package Manager resolve by default. |
 | Package management | `unity_packages_add` | `packages/add` | Add a registry, Git, local, or tarball package through Unity Package Manager. |
@@ -198,7 +199,7 @@ Concrete `project-tools/call/...` routes are reserved for tools that explicitly 
 - Prefab saves retry transient Windows file locks, including Win32 error 1224. YAML normalization and diff capture are auxiliary; `prefab-asset/set-property` reports persistence only after Unity serialized readback confirms the requested value.
 - `uitoolkit/builder-preview` opens and screenshots UI Builder. Its GPU-composited viewport is captured from the temporarily raised on-screen window because Win32 `PrintWindow` only returns the shell. Unity does not expose a stable public UI Builder zoom API, so the route records requested zoom values but does not use reflection to force the viewport zoom.
 - Runtime `uitoolkit/capture-element` crops from the Game View render texture, keeping UI panel coordinates aligned with pixels and avoiding black GPU surfaces in Editor-window captures.
-- `build/run-test` returns a job ID before `BuildPipeline.BuildPlayer` begins. Poll `build/get-job`; the terminal result contains the authoritative BuildReport, so do not force an AssetDatabase refresh after a successful build. Keep `overwrite=true` for repeat tests so output folders do not accumulate.
+- `build/start` returns a job ID before `BuildPipeline.BuildPlayer` begins. Poll `build/get-job`; the terminal result contains the authoritative BuildReport, so do not force an AssetDatabase refresh after a successful build. Keep `overwrite=true` for repeat tests so output folders do not accumulate.
 - `asset/refresh` likewise returns a job ID. Poll `asset/get-refresh-job`; if scripts trigger a domain reload, the persisted workflow resumes after the Editor becomes idle instead of losing the active MCP response.
 - `unity_packages_update_git` defaults to `skipIfResolved=true`. When the requested ref is a commit hash already recorded in `packages-lock.json`, the tool returns `skipped=true` without asking Unity Package Manager to resolve again. Pass `force=true` to force a resolve.
 - This fork intentionally keeps the package smaller by removing local documentation images.

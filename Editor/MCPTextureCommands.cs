@@ -36,6 +36,12 @@ namespace UnityMCP.Editor
                 { "name", texture.name },
                 { "width", texture.width },
                 { "height", texture.height },
+                { "texelSize", new Dictionary<string, object>
+                    {
+                        { "x", texture.texelSize.x },
+                        { "y", texture.texelSize.y },
+                    }
+                },
                 { "textureType", importer.textureType.ToString() },
                 { "spriteMode", importer.spriteImportMode.ToString() },
                 { "sRGB", importer.sRGBTexture },
@@ -51,6 +57,17 @@ namespace UnityMCP.Editor
                 { "compressionQuality", importer.compressionQuality },
                 { "npotScale", importer.npotScale.ToString() },
             };
+
+            long runtimeMemoryBytes = UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(texture);
+            result["runtimeMemoryBytes"] = runtimeMemoryBytes;
+            result["runtimeMemoryKB"] = Math.Round(runtimeMemoryBytes / 1024.0, 1);
+
+            if (texture is Texture2D texture2D)
+            {
+                result["format"] = texture2D.format.ToString();
+                result["mipmapCount"] = texture2D.mipmapCount;
+                result["isReadable"] = texture2D.isReadable;
+            }
 
             if (importer.textureType == TextureImporterType.Sprite)
             {
@@ -214,61 +231,6 @@ namespace UnityMCP.Editor
             {
                 { "success", true },
                 { "path", path },
-            };
-        }
-
-        // ─── Set Texture as Sprite ───
-
-        public static object SetAsSprite(Dictionary<string, object> args)
-        {
-            string path = args.ContainsKey("path") ? args["path"].ToString() : "";
-            if (string.IsNullOrEmpty(path))
-                return new { error = "path is required" };
-
-            var importer = AssetImporter.GetAtPath(path) as TextureImporter;
-            if (importer == null)
-                return new { error = $"No texture importer for '{path}'" };
-
-            importer.textureType = TextureImporterType.Sprite;
-            importer.spriteImportMode = SpriteImportMode.Single;
-
-            if (args.ContainsKey("pixelsPerUnit"))
-                importer.spritePixelsPerUnit = Convert.ToSingle(args["pixelsPerUnit"]);
-
-            if (args.ContainsKey("multiple") && Convert.ToBoolean(args["multiple"]))
-                importer.spriteImportMode = SpriteImportMode.Multiple;
-
-            importer.SaveAndReimport();
-
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "path", path },
-                { "textureType", "Sprite" },
-                { "spriteMode", importer.spriteImportMode.ToString() },
-            };
-        }
-
-        // ─── Set Texture as Normal Map ───
-
-        public static object SetAsNormalMap(Dictionary<string, object> args)
-        {
-            string path = args.ContainsKey("path") ? args["path"].ToString() : "";
-            if (string.IsNullOrEmpty(path))
-                return new { error = "path is required" };
-
-            var importer = AssetImporter.GetAtPath(path) as TextureImporter;
-            if (importer == null)
-                return new { error = $"No texture importer for '{path}'" };
-
-            importer.textureType = TextureImporterType.NormalMap;
-            importer.SaveAndReimport();
-
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "path", path },
-                { "textureType", "NormalMap" },
             };
         }
 

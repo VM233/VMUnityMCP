@@ -630,6 +630,7 @@ namespace UnityMCP.Editor.Tests
             Assert.That(routes, Does.Contain("component/set-reference"));
             Assert.That(routes, Does.Contain("localization/upsert-entry"));
             Assert.That(routes, Does.Contain("editor/play-mode"));
+            Assert.That(routes, Does.Contain("uitoolkit/refresh"));
             Assert.That(routes, Does.Contain("profiler/memory-snapshot"));
 
             var registered = RequireDictionary(MCPToolMetadata.GetRegisteredRoutes());
@@ -1254,7 +1255,7 @@ namespace UnityMCP.Editor.Tests
 
             foreach (string route in new[]
                      {
-                         "build/run-test",
+                         "build/start",
                          "build/get-job",
                          "asset/refresh",
                          "asset/get-refresh-job",
@@ -1644,6 +1645,85 @@ namespace UnityMCP.Editor.Tests
             var routes = (List<string>)registered["routes"];
 
             Assert.That(routes, Does.Not.Contain("graphics/game-capture"));
+        }
+
+        [Test]
+        public void RouteRegistry_ExposesOneAuthorityPerConsolidatedToolProduct()
+        {
+            var registered = RequireDictionary(MCPToolMetadata.GetRegisteredRoutes());
+            var routes = (List<string>)registered["routes"];
+            string[] canonicalRoutes =
+            {
+                "asset/list",
+                "build/start",
+                "console/query",
+                "editor/play-mode",
+                "gameview/set-scale",
+                "graphics/asset-preview",
+                "prefab-asset/instantiate-child-prefab",
+                "scene/instantiate-prefab",
+                "screenshot/scene",
+                "search/by-component",
+                "texture/info",
+                "texture/set-import",
+                "uitoolkit/refresh",
+            };
+            string[] removedRoutes =
+            {
+                "asset/instantiate-prefab",
+                "build/run-test",
+                "console/log",
+                "debug/continue",
+                "debug/pause",
+                "debug/step-into",
+                "debug/step-over",
+                "gameview/set-min-scale",
+                "graphics/prefab-render",
+                "graphics/scene-capture",
+                "graphics/texture-info",
+                "prefab-asset/instantiate-prefab",
+                "search/assets",
+                "selection/find-by-type",
+                "texture/set-normalmap",
+                "texture/set-sprite",
+                "uitoolkit/wait-refresh",
+            };
+
+            foreach (string route in canonicalRoutes)
+                Assert.That(routes, Does.Contain(route), route);
+            foreach (string route in removedRoutes)
+                Assert.That(routes, Does.Not.Contain(route), route);
+
+            Assert.That(typeof(MCPGraphicsCommands).GetMethod("CaptureSceneView"), Is.Null);
+            Assert.That(typeof(MCPGraphicsCommands).GetMethod("RenderPrefabPreview"), Is.Null);
+            Assert.That(typeof(MCPGraphicsCommands).GetMethod("GetTextureInfo"), Is.Null);
+            Assert.That(typeof(MCPConsoleCommands).GetMethod("GetLog"), Is.Null);
+            Assert.That(typeof(MCPTextureCommands).GetMethod("SetAsSprite"), Is.Null);
+            Assert.That(typeof(MCPTextureCommands).GetMethod("SetAsNormalMap"), Is.Null);
+        }
+
+        [Test]
+        public void ConsolidatedToolMetadata_ExposesVariantParametersOnCanonicalRoutes()
+        {
+            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: false, compact: false, includeSchema: true, limit: 500));
+            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
+
+            Dictionary<string, object> Properties(string route)
+            {
+                var tool = tools.Single(item => item["route"].ToString() == route);
+                var schema = RequireDictionary(tool["inputSchema"]);
+                return RequireDictionary(schema["properties"]);
+            }
+
+            Assert.That(Properties("gameview/set-scale").Keys,
+                Is.SupersetOf(new[] { "mode", "scale", "fallbackScale" }));
+            Assert.That(Properties("screenshot/scene").Keys,
+                Is.SupersetOf(new[] { "path", "width", "height", "transport" }));
+            Assert.That(Properties("uitoolkit/refresh").Keys,
+                Is.SupersetOf(new[] { "refreshAssets", "timeoutMs", "stableFrames" }));
+            Assert.That(Properties("editor/play-mode").Keys,
+                Does.Contain("action"));
         }
 
         [Test]
