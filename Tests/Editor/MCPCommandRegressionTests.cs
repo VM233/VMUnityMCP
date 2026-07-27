@@ -1705,12 +1705,13 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ConsolidatedToolMetadata_ExposesVariantParametersOnCanonicalRoutes()
         {
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: false, includeSchema: true, limit: 500));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-
             Dictionary<string, object> Properties(string route)
             {
+                string category = route.Substring(0, route.IndexOf('/'));
+                var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                    firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
+                    category: category));
+                var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
                 var tool = tools.Single(item => item["route"].ToString() == route);
                 var schema = RequireDictionary(tool["inputSchema"]);
                 return RequireDictionary(schema["properties"]);
