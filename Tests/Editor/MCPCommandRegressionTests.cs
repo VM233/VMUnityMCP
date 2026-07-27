@@ -1618,7 +1618,32 @@ namespace UnityMCP.Editor.Tests
             Assert.That(result["success"], Is.EqualTo(false));
             Assert.That(result["errorCode"], Is.EqualTo("requires_play_mode"));
             Assert.That(result["requiresPlayMode"], Is.EqualTo(true));
+            Assert.That(result["route"], Is.EqualTo("screenshot/game"));
+            Assert.That(result.ContainsKey("base64"), Is.False);
             Assert.That(File.Exists(GetAbsolutePath(screenshotPath)), Is.False);
+        }
+
+        [Test]
+        public void RouteRegistry_OmitsDuplicateGraphicsGameCapture()
+        {
+            Assert.That(MCPRouteRegistry.BuiltInRoutes,
+                Does.Not.Contain("graphics/game-capture"));
+        }
+
+        [Test]
+        public void ToolMetadata_DeclaresGameViewCaptureRequiresPlayMode()
+        {
+            var screenshotTools = (List<Dictionary<string, object>>)RequireDictionary(
+                MCPToolMetadata.GetRegisteredTools(
+                    firstClassOnly: true,
+                    compact: false,
+                    includeSchema: true,
+                    limit: 200,
+                    category: "screenshot"))["tools"];
+            var screenshot = screenshotTools.Single(tool =>
+                tool["route"].ToString() == "screenshot/game");
+
+            Assert.That(screenshot["requiresPlayMode"], Is.EqualTo(true));
         }
 
         [Test]

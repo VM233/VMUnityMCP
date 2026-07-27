@@ -139,7 +139,6 @@ namespace UnityMCP.Editor
             "graphics/annotate-rects",
             "graphics/asset-preview",
             "graphics/compare-images",
-            "graphics/game-capture",
             "graphics/image-alpha-bounds",
             "graphics/lighting-summary",
             "graphics/material-info",

@@ -1441,8 +1441,6 @@ namespace UnityMCP.Editor
                     return MCPGraphicsCommands.CaptureAssetPreview(ParseJson(body));
                 case "graphics/scene-capture":
                     return MCPGraphicsCommands.CaptureSceneView(ParseJson(body));
-                case "graphics/game-capture":
-                    return MCPGraphicsCommands.CaptureGameView(ParseJson(body));
                 case "graphics/prefab-render":
                     return MCPGraphicsCommands.RenderPrefabPreview(ParseJson(body));
                 case "graphics/mesh-info":

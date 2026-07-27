@@ -25,13 +25,12 @@ namespace UnityMCP.Editor
         public static void CaptureGameView(Dictionary<string, object> args, Action<object> resolve)
         {
             args ??= new Dictionary<string, object>();
-            if (EditorApplication.isPlaying == false)
+            if (MCPRuntimePreconditions.TryRequirePlayMode(
+                    "screenshot/game",
+                    "Game View capture needs a live rendered runtime frame",
+                    out var preconditionError) == false)
             {
-                resolve(MCPResponse.Error("screenshot/game requires Play Mode because ScreenCapture writes on a rendered game frame.",
-                    "requires_play_mode", false, new Dictionary<string, object>
-                    {
-                        { "requiresPlayMode", true },
-                    }));
+                resolve(preconditionError);
                 return;
             }
 

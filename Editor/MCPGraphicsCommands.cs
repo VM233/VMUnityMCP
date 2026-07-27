@@ -172,59 +172,7 @@ namespace UnityMCP.Editor
             }
         }
 
-        // ─── 3. Game View Capture (Base64 PNG) ───
-
-        public static object CaptureGameView(Dictionary<string, object> args)
-        {
-            int width = args.ContainsKey("width") ? Convert.ToInt32(args["width"]) : 512;
-            int height = args.ContainsKey("height") ? Convert.ToInt32(args["height"]) : 512;
-            string cameraName = args.ContainsKey("cameraName") ? args["cameraName"].ToString() : "";
-
-            Camera camera = null;
-            if (!string.IsNullOrEmpty(cameraName))
-            {
-                var go = GameObject.Find(cameraName);
-                if (go != null) camera = go.GetComponent<Camera>();
-            }
-            if (camera == null) camera = Camera.main;
-            if (camera == null)
-                return new { error = "No camera found. Ensure a Camera exists with tag 'MainCamera' or specify cameraName." };
-
-            RenderTexture rt = null;
-            Texture2D tex = null;
-            RenderTexture prevTarget = camera.targetTexture;
-            try
-            {
-                rt = new RenderTexture(width, height, 24);
-                camera.targetTexture = rt;
-                camera.Render();
-
-                RenderTexture.active = rt;
-                tex = new Texture2D(width, height, TextureFormat.RGB24, false);
-                tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                tex.Apply();
-
-                string base64 = TextureToBase64(tex);
-
-                return new Dictionary<string, object>
-                {
-                    { "success", true },
-                    { "base64", base64 },
-                    { "width", width },
-                    { "height", height },
-                    { "cameraName", camera.name },
-                };
-            }
-            finally
-            {
-                camera.targetTexture = prevTarget;
-                RenderTexture.active = null;
-                if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
-                if (rt != null) UnityEngine.Object.DestroyImmediate(rt);
-            }
-        }
-
-        // ─── 4. Prefab Render Preview (Base64 PNG) ───
+        // ─── 3. Prefab Render Preview (Base64 PNG) ───
 
         public static object RenderPrefabPreview(Dictionary<string, object> args)
         {
@@ -235,7 +183,7 @@ namespace UnityMCP.Editor
             return CaptureAssetPreview(args);
         }
 
-        // ─── 5. Mesh Info ───
+        // ─── 4. Mesh Info ───
 
         public static object GetMeshInfo(Dictionary<string, object> args)
         {
@@ -340,7 +288,7 @@ namespace UnityMCP.Editor
             };
         }
 
-        // ─── 6. Material Info (with preview) ───
+        // ─── 5. Material Info (with preview) ───
 
         public static object GetMaterialInfo(Dictionary<string, object> args)
         {
@@ -482,7 +430,7 @@ namespace UnityMCP.Editor
             return result;
         }
 
-        // ─── 7. Texture Info (with preview) ───
+        // ─── 6. Texture Info (with preview) ───
 
         public static object GetTextureInfo(Dictionary<string, object> args)
         {
@@ -821,7 +769,7 @@ namespace UnityMCP.Editor
             }
         }
 
-        // ─── 8. Renderer Info ───
+        // ─── 7. Renderer Info ───
 
         public static object GetRendererInfo(Dictionary<string, object> args)
         {
@@ -905,7 +853,7 @@ namespace UnityMCP.Editor
             return result;
         }
 
-        // ─── 9. Lighting Summary ───
+        // ─── 8. Lighting Summary ───
 
         public static object GetLightingSummary(Dictionary<string, object> args)
         {
