@@ -961,7 +961,7 @@ namespace UnityMCP.Editor
                 case "packages/search":
                     return "Search Unity Package Manager registry packages with bounded results.";
                 case "screenshot/game":
-                    return "Capture the current Game View during active or paused Play Mode, temporarily suppress and restore Game View Gizmos and Stats, fail without creating an image in Edit Mode, and return only after the PNG is fully written and decodable.";
+                    return "Capture the current Game View during active or paused Play Mode, suppress and restore Game View Gizmos and Stats by default or preserve them when they are the evidence subject, fail without creating an image in Edit Mode, and return only after the PNG is fully written and decodable.";
                 case "screenshot/crop":
                     return "Crop an existing screenshot or image file to a PNG.";
                 case "gameview/info":
@@ -1927,7 +1927,8 @@ namespace UnityMCP.Editor
                         Prop("superSize", "number", "Resolution multiplier. Defaults to 1."),
                         Prop("waitFrames", "number", "Frames to wait before requesting a running capture. Ignored while paused. Defaults to 2."),
                         Prop("stableFrames", "number", "Consecutive stable file-size frames required for a running capture. Ignored while paused. Defaults to 2."),
-                        Prop("timeoutMs", "number", "Maximum time to wait for a complete decodable PNG. Defaults to 10000.")
+                        Prop("timeoutMs", "number", "Maximum time to wait for a complete decodable PNG. Defaults to 10000."),
+                        Prop("editorOverlays", "string", "Game View Gizmos and Stats policy: suppress or preserve. Defaults to suppress; use preserve only when editor overlays are the evidence subject.")
                     ));
                 case "screenshot/crop":
                     return Schema(Props(

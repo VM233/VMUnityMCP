@@ -1661,7 +1661,12 @@ namespace UnityMCP.Editor.Tests
 
             Assert.That(screenshot["requiresPlayMode"], Is.EqualTo(true));
             Assert.That(screenshot["description"].ToString(),
-                Does.Contain("suppress and restore Game View Gizmos and Stats"));
+                Does.Contain("suppress and restore Game View Gizmos and Stats by default"));
+            var inputSchema =
+                (Dictionary<string, object>)screenshot["inputSchema"];
+            var properties =
+                (Dictionary<string, object>)inputSchema["properties"];
+            Assert.That(properties.ContainsKey("editorOverlays"), Is.True);
         }
 
         [Test]

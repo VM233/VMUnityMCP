@@ -31,8 +31,25 @@ namespace UnityMCP.Editor
                 return;
             }
 
-            if (GameViewPresentationScope.TryCreate(out var presentation,
-                    out object presentationError) == false)
+            string editorOverlayMode = GetString(
+                    args, "editorOverlays", "suppress")
+                .Trim().ToLowerInvariant();
+            if (editorOverlayMode != "suppress" &&
+                editorOverlayMode != "preserve")
+            {
+                resolve(MCPResponse.Error(
+                    "editorOverlays must be 'suppress' or 'preserve'.",
+                    "invalid_arguments"));
+                return;
+            }
+
+            GameViewPresentationScope presentation;
+            if (editorOverlayMode == "preserve")
+            {
+                presentation = GameViewPresentationScope.CreatePreserving();
+            }
+            else if (GameViewPresentationScope.TryCreate(
+                         out presentation, out object presentationError) == false)
             {
                 resolve(presentationError);
                 return;
@@ -449,9 +466,15 @@ namespace UnityMCP.Editor
             if (result is not IDictionary<string, object> dictionary)
                 return;
 
-            dictionary["editorOverlaysSuppressed"] = true;
-            dictionary["gameViewGizmosSuppressed"] = true;
-            dictionary["gameViewStatsSuppressed"] = true;
+            dictionary["editorOverlayMode"] = presentation.SuppressionApplied
+                ? "suppress"
+                : "preserve";
+            dictionary["editorOverlaysSuppressed"] =
+                presentation.SuppressionApplied;
+            dictionary["gameViewGizmosSuppressed"] =
+                presentation.SuppressionApplied;
+            dictionary["gameViewStatsSuppressed"] =
+                presentation.SuppressionApplied;
             dictionary["sanitizedGameViewCount"] = presentation.ViewCount;
             dictionary["editorOverlayStateRestored"] =
                 presentation.RestorationSucceeded;
@@ -489,23 +512,45 @@ namespace UnityMCP.Editor
                 : fallback;
         }
 
+        private static string GetString(
+            IReadOnlyDictionary<string, object> args, string key, string fallback)
+        {
+            return args != null && args.TryGetValue(key, out object value) &&
+                   value != null
+                ? value.ToString()
+                : fallback;
+        }
+
         private sealed class GameViewPresentationScope : IDisposable
         {
             private readonly FieldInfo gizmosField;
             private readonly FieldInfo statsField;
             private readonly ViewState[] states;
+            private readonly bool suppressionApplied;
 
             private GameViewPresentationScope(
-                FieldInfo gizmosField, FieldInfo statsField, ViewState[] states)
+                FieldInfo gizmosField, FieldInfo statsField, ViewState[] states,
+                bool suppressionApplied)
             {
                 this.gizmosField = gizmosField;
                 this.statsField = statsField;
                 this.states = states;
+                this.suppressionApplied = suppressionApplied;
             }
 
             internal int ViewCount => states.Length;
             internal bool IsDisposed { get; private set; }
+            internal bool SuppressionApplied => suppressionApplied;
             internal bool RestorationSucceeded { get; private set; }
+
+            internal static GameViewPresentationScope CreatePreserving()
+            {
+                return new GameViewPresentationScope(
+                    null, null, Array.Empty<ViewState>(), false)
+                {
+                    RestorationSucceeded = true,
+                };
+            }
 
             internal static bool TryCreate(
                 out GameViewPresentationScope scope, out object error)
@@ -561,7 +606,7 @@ namespace UnityMCP.Editor
 
                     EditorApplication.QueuePlayerLoopUpdate();
                     scope = new GameViewPresentationScope(
-                        gizmos, stats, viewStates.ToArray());
+                        gizmos, stats, viewStates.ToArray(), true);
                     error = null;
                     return true;
                 }
@@ -581,6 +626,12 @@ namespace UnityMCP.Editor
                     return;
 
                 IsDisposed = true;
+                if (suppressionApplied == false)
+                {
+                    RestorationSucceeded = true;
+                    return;
+                }
+
                 RestorationSucceeded =
                     Restore(gizmosField, statsField, states);
             }
