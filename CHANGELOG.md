@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.22] - 2026-07-27
+
+- Synchronize Single Sprite sub-asset names and every TextureImporter name table when `asset/rename` or a filename-changing `asset/move` renames the texture, including immediate and frame-batched move execution.
+
 ## [3.3.21] - 2026-07-23
 
 - Publish Animator transition condition fields as object-array item schemas so `unity_animation_update_transition` can replace, add, and update conditions directly.

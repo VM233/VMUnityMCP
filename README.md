@@ -66,8 +66,8 @@ http://127.0.0.1:7890/api/ping
 | Safe assets | `unity_asset_get_refresh_job` | `asset/get-refresh-job` | Poll a reload-safe AssetDatabase refresh through compilation or domain reload. |
 | Safe assets | `unity_asset_import` | `asset/import` | Preflight and import external assets with shared TextureImporter defaults, decoded-pixel/file-byte deduplication, frame-batched execution, per-item results, and rollback. |
 | Safe assets | `unity_asset_import_unitypackage` | `asset/import-unitypackage` | Start a reload-safe, non-interactive `.unitypackage` import; poll `unity_jobs_get` until callback-confirmed completion, with packaged `.meta` GUIDs preserved. |
-| Safe assets | `unity_asset_rename` | `asset/rename` | Rename an asset through `AssetDatabase.RenameAsset`, preserving `.meta`, GUID, and references. |
-| Safe assets | `unity_asset_move` | `asset/move` | Preflight and move one or more assets, preserving `.meta` GUIDs and rolling back completed moves when configured to stop on failure. |
+| Safe assets | `unity_asset_rename` | `asset/rename` | Rename an asset through `AssetDatabase.RenameAsset`, preserving `.meta`, GUID, references, and Single Sprite internal names. |
+| Safe assets | `unity_asset_move` | `asset/move` | Preflight and move one or more assets, preserving `.meta` GUIDs, synchronizing Single Sprite internal names when filenames change, and rolling back completed moves when configured to stop on failure. |
 | Scene references | `unity_component_set_reference` | `component/set-reference` | Assign one or more ObjectReference properties with `execution.mode` and shared target defaults. |
 | Serialization | `unity_serialized_object_get` | `serialized-object/get` | Read serialized properties from a scene object, component, or asset. |
 | Serialization | `unity_serialized_object_set` | `serialized-object/set` | Set one serialized property on a scene object, component, or asset. |

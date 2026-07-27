@@ -949,6 +949,32 @@ namespace UnityMCP.Editor.Tests
             Assert.That(error, Does.Contain("auto, immediate, or batched"));
         }
 
+        [Test]
+        public void AssetMove_ImmediateModeSynchronizesSingleSpriteInternalNames()
+        {
+            const string oldPath = TEST_FOLDER + "/Immediate Old Sprite.png";
+            const string newPath = TEST_FOLDER + "/Immediate New Sprite.png";
+            CreateSingleSpriteTexture(oldPath, Color.white);
+            string oldGuid = AssetDatabase.AssetPathToGUID(oldPath);
+
+            var result = RequireDictionary(MCPAssetCommands.Move(new Dictionary<string, object>
+            {
+                { "moves", new object[]
+                    {
+                        new Dictionary<string, object> { { "path", oldPath }, { "destinationPath", newPath } },
+                    }
+                },
+                { "execution", new Dictionary<string, object> { { "mode", "immediate" } } },
+            }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            var move = ((List<Dictionary<string, object>>)result["moves"]).Single();
+            Assert.That(move["singleSpriteNameSynchronizationAttempted"], Is.EqualTo(true));
+            Assert.That(move["synchronizedSingleSpriteName"], Is.EqualTo(true));
+            Assert.That(AssetDatabase.AssetPathToGUID(newPath), Is.EqualTo(oldGuid));
+            AssertSingleSpriteInternalNames(newPath, "Immediate New Sprite", "Immediate Old Sprite");
+        }
+
         [UnityTest]
         public IEnumerator AssetMoveDeferred_BatchedModeMovesAllAssets()
         {
@@ -987,6 +1013,45 @@ namespace UnityMCP.Editor.Tests
             Assert.That(RequireDictionary(completed)["success"], Is.EqualTo(true));
             Assert.That(AssetDatabase.LoadAssetAtPath<TextAsset>(movedFirst), Is.Not.Null);
             Assert.That(AssetDatabase.LoadAssetAtPath<TextAsset>(movedSecond), Is.Not.Null);
+        }
+
+        [UnityTest]
+        public IEnumerator AssetMoveDeferred_BatchedModeSynchronizesSingleSpriteInternalNames()
+        {
+            const string oldPath = TEST_FOLDER + "/Batched Old Sprite.png";
+            const string newPath = TEST_FOLDER + "/Batched New Sprite.png";
+            CreateSingleSpriteTexture(oldPath, Color.cyan);
+            string oldGuid = AssetDatabase.AssetPathToGUID(oldPath);
+
+            object completed = null;
+            MCPAssetCommands.MoveDeferred(new Dictionary<string, object>
+            {
+                { "moves", new object[]
+                    {
+                        new Dictionary<string, object> { { "path", oldPath }, { "destinationPath", newPath } },
+                    }
+                },
+                { "execution", new Dictionary<string, object>
+                    {
+                        { "mode", "batched" },
+                        { "operationsPerFrame", 1 },
+                        { "frameBudgetMs", 1 },
+                    }
+                },
+            }, result => completed = result, _ => { });
+
+            double timeoutAt = EditorApplication.timeSinceStartup + 10d;
+            while (completed == null && EditorApplication.timeSinceStartup < timeoutAt)
+                yield return null;
+
+            Assert.That(completed, Is.Not.Null);
+            var result = RequireDictionary(completed);
+            Assert.That(result["success"], Is.EqualTo(true));
+            var move = ((List<Dictionary<string, object>>)result["moves"]).Single();
+            Assert.That(move["singleSpriteNameSynchronizationAttempted"], Is.EqualTo(true));
+            Assert.That(move["synchronizedSingleSpriteName"], Is.EqualTo(true));
+            Assert.That(AssetDatabase.AssetPathToGUID(newPath), Is.EqualTo(oldGuid));
+            AssertSingleSpriteInternalNames(newPath, "Batched New Sprite", "Batched Old Sprite");
         }
 
         [UnityTest]
@@ -3480,23 +3545,7 @@ namespace UnityMCP.Editor.Tests
         public void AssetRename_SynchronizesSingleSpriteSubAssetName()
         {
             const string oldPath = TEST_FOLDER + "/Old Sprite.png";
-            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            try
-            {
-                texture.SetPixels(new[] { Color.white, Color.white, Color.white, Color.white });
-                texture.Apply();
-                File.WriteAllBytes(GetAbsolutePath(oldPath), texture.EncodeToPNG());
-            }
-            finally
-            {
-                Object.DestroyImmediate(texture);
-            }
-
-            AssetDatabase.ImportAsset(oldPath, ImportAssetOptions.ForceSynchronousImport);
-            var importer = (TextureImporter)AssetImporter.GetAtPath(oldPath);
-            importer.textureType = TextureImporterType.Sprite;
-            importer.spriteImportMode = SpriteImportMode.Single;
-            importer.SaveAndReimport();
+            CreateSingleSpriteTexture(oldPath, Color.white);
 
             var result = RequireDictionary(MCPAssetCommands.Rename(new Dictionary<string, object>
             {
@@ -3506,8 +3555,7 @@ namespace UnityMCP.Editor.Tests
             Assert.That(result["success"], Is.EqualTo(true));
             Assert.That(result["synchronizedSingleSpriteName"], Is.EqualTo(true));
             const string newPath = TEST_FOLDER + "/Dragon King Head.png";
-            Assert.That(AssetDatabase.LoadAllAssetsAtPath(newPath).OfType<Sprite>().Single().name,
-                Is.EqualTo("Dragon King Head"));
+            AssertSingleSpriteInternalNames(newPath, "Dragon King Head", "Old Sprite");
         }
 
         [Test]
@@ -4234,6 +4282,78 @@ namespace UnityMCP.Editor.Tests
         {
             string projectRoot = Directory.GetParent(Application.dataPath).FullName;
             return Path.GetFullPath(Path.Combine(projectRoot, assetPath));
+        }
+
+        private static void CreateSingleSpriteTexture(string assetPath, Color color)
+        {
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            try
+            {
+                texture.SetPixels(new[] { color, color, color, color });
+                texture.Apply();
+                File.WriteAllBytes(GetAbsolutePath(assetPath), texture.EncodeToPNG());
+            }
+            finally
+            {
+                Object.DestroyImmediate(texture);
+            }
+
+            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport);
+            var importer = (TextureImporter)AssetImporter.GetAtPath(assetPath);
+            importer.textureType = TextureImporterType.Sprite;
+            importer.spriteImportMode = SpriteImportMode.Single;
+            importer.SaveAndReimport();
+        }
+
+        private static void AssertSingleSpriteInternalNames(string assetPath, string expectedName,
+            string staleName)
+        {
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(assetPath).OfType<Sprite>().Single().name,
+                Is.EqualTo(expectedName));
+
+            var importer = (TextureImporter)AssetImporter.GetAtPath(assetPath);
+            var serializedImporter = new SerializedObject(importer);
+            serializedImporter.Update();
+            int inspectedNameCount = AssertSerializedArrayEntryNames(
+                serializedImporter.FindProperty("m_InternalIDToNameTable") ??
+                serializedImporter.FindProperty("internalIDToNameTable"), expectedName, "second", "name");
+            var spriteSheet = serializedImporter.FindProperty("m_SpriteSheet");
+            inspectedNameCount += AssertSerializedArrayEntryNames(
+                spriteSheet?.FindPropertyRelative("m_Sprites"), expectedName, "m_Name", "name");
+            inspectedNameCount += AssertSerializedArrayEntryNames(
+                spriteSheet?.FindPropertyRelative("m_NameFileIdTable"), expectedName, "first", "name");
+            Assert.That(inspectedNameCount, Is.GreaterThan(0));
+
+            string metaText = File.ReadAllText(GetAbsolutePath(assetPath) + ".meta");
+            Assert.That(metaText, Does.Contain(expectedName));
+            Assert.That(metaText, Does.Not.Contain(staleName));
+        }
+
+        private static int AssertSerializedArrayEntryNames(SerializedProperty entries, string expectedName,
+            params string[] nameProperties)
+        {
+            if (entries == null || !entries.isArray)
+                return 0;
+
+            int inspectedNameCount = 0;
+            for (int index = 0; index < entries.arraySize; index++)
+            {
+                var entry = entries.GetArrayElementAtIndex(index);
+                SerializedProperty name = null;
+                foreach (string nameProperty in nameProperties)
+                {
+                    name = entry.FindPropertyRelative(nameProperty);
+                    if (name != null)
+                        break;
+                }
+                if (name == null || name.propertyType != SerializedPropertyType.String)
+                    continue;
+
+                inspectedNameCount++;
+                Assert.That(name.stringValue, Is.EqualTo(expectedName));
+            }
+
+            return inspectedNameCount;
         }
 
         private static string CreateExternalPng(Color color)

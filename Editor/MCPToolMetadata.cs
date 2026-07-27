@@ -856,9 +856,9 @@ namespace UnityMCP.Editor
                 case "asset/import":
                     return "Preflight and import one or more external assets with shared TextureImporter defaults, image-content deduplication, configurable execution, per-item results, and rollback.";
                 case "asset/rename":
-                    return "Safely rename a Unity asset using AssetDatabase while preserving its .meta GUID.";
+                    return "Safely rename a Unity asset using AssetDatabase while preserving its .meta GUID and synchronizing Single Sprite internal names.";
                 case "asset/move":
-                    return "Preflight and move one or more Unity assets with configurable execution, GUID preservation, and rollback.";
+                    return "Preflight and move one or more Unity assets with configurable execution, GUID preservation, Single Sprite internal-name synchronization when filenames change, and rollback.";
                 case "asset/export-unitypackage":
                     return "Export one or more Unity assets to a .unitypackage file using AssetDatabase.ExportPackage.";
                 case "asset/import-unitypackage":

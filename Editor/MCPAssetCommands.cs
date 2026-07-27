@@ -1377,18 +1377,17 @@ namespace UnityMCP.Editor
                 return false;
 
             var serializedImporter = new SerializedObject(importer);
+            serializedImporter.Update();
             var nameTable = serializedImporter.FindProperty("m_InternalIDToNameTable") ??
                             serializedImporter.FindProperty("internalIDToNameTable");
-            if (nameTable != null && nameTable.isArray)
-            {
-                for (int i = 0; i < nameTable.arraySize; i++)
-                {
-                    var entry = nameTable.GetArrayElementAtIndex(i);
-                    var name = entry.FindPropertyRelative("second") ?? entry.FindPropertyRelative("name");
-                    if (name != null) name.stringValue = spriteName;
-                }
-                serializedImporter.ApplyModifiedPropertiesWithoutUndo();
-            }
+            SetSerializedArrayEntryNames(nameTable, spriteName, "second", "name");
+
+            var spriteSheet = serializedImporter.FindProperty("m_SpriteSheet");
+            SetSerializedArrayEntryNames(spriteSheet?.FindPropertyRelative("m_Sprites"), spriteName,
+                "m_Name", "name");
+            SetSerializedArrayEntryNames(spriteSheet?.FindPropertyRelative("m_NameFileIdTable"), spriteName,
+                "first", "name");
+            serializedImporter.ApplyModifiedPropertiesWithoutUndo();
 
             foreach (var sprite in AssetDatabase.LoadAllAssetsAtPath(assetPath).OfType<Sprite>())
             {
@@ -1397,8 +1396,67 @@ namespace UnityMCP.Editor
             }
 
             importer.SaveAndReimport();
-            return AssetDatabase.LoadAllAssetsAtPath(assetPath).OfType<Sprite>()
-                .All(sprite => sprite.name == spriteName);
+            var importedSprites = AssetDatabase.LoadAllAssetsAtPath(assetPath).OfType<Sprite>().ToArray();
+            if (importedSprites.Length == 0 || importedSprites.Any(sprite => sprite.name != spriteName))
+                return false;
+
+            importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+            if (importer == null)
+                return false;
+            serializedImporter = new SerializedObject(importer);
+            serializedImporter.Update();
+            nameTable = serializedImporter.FindProperty("m_InternalIDToNameTable") ??
+                        serializedImporter.FindProperty("internalIDToNameTable");
+            spriteSheet = serializedImporter.FindProperty("m_SpriteSheet");
+            return SerializedArrayEntryNamesMatch(nameTable, spriteName, "second", "name") &&
+                   SerializedArrayEntryNamesMatch(spriteSheet?.FindPropertyRelative("m_Sprites"), spriteName,
+                       "m_Name", "name") &&
+                   SerializedArrayEntryNamesMatch(spriteSheet?.FindPropertyRelative("m_NameFileIdTable"),
+                       spriteName, "first", "name");
+        }
+
+        private static void SetSerializedArrayEntryNames(SerializedProperty entries, string value,
+            params string[] nameProperties)
+        {
+            if (entries == null || !entries.isArray)
+                return;
+
+            for (int index = 0; index < entries.arraySize; index++)
+            {
+                var name = FindRelativeProperty(entries.GetArrayElementAtIndex(index), nameProperties);
+                if (name != null && name.propertyType == SerializedPropertyType.String)
+                    name.stringValue = value;
+            }
+        }
+
+        private static bool SerializedArrayEntryNamesMatch(SerializedProperty entries, string expected,
+            params string[] nameProperties)
+        {
+            if (entries == null || !entries.isArray)
+                return true;
+
+            for (int index = 0; index < entries.arraySize; index++)
+            {
+                var name = FindRelativeProperty(entries.GetArrayElementAtIndex(index), nameProperties);
+                if (name != null && name.propertyType == SerializedPropertyType.String &&
+                    !string.Equals(name.stringValue, expected, StringComparison.Ordinal))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static SerializedProperty FindRelativeProperty(SerializedProperty parent,
+            params string[] relativePaths)
+        {
+            foreach (string relativePath in relativePaths)
+            {
+                var property = parent.FindPropertyRelative(relativePath);
+                if (property != null)
+                    return property;
+            }
+
+            return null;
         }
 
         public static object Move(Dictionary<string, object> args)
@@ -1455,7 +1513,7 @@ namespace UnityMCP.Editor
                 {
                     string timeoutError = $"Asset moves timed out after {execution.TimeoutMs} ms";
                     errors.Add(timeoutError);
-                    var rollbackErrors = RollbackMoves(entries);
+                    var rollbackErrors = RollbackMovesAndRestoreSingleSpriteNames(entries);
                     errors.AddRange(rollbackErrors);
                     FinishAssetMoves();
                     complete(BuildMoveFailure(entries, execution, timeoutError, errors));
@@ -1500,13 +1558,22 @@ namespace UnityMCP.Editor
 
                 if (errors.Count > 0 && !execution.ContinueOnError)
                 {
-                    errors.AddRange(RollbackMoves(entries));
+                    errors.AddRange(RollbackMovesAndRestoreSingleSpriteNames(entries));
                     FinishAssetMoves();
                     complete(BuildMoveFailure(entries, execution, errors[0], errors));
                     return;
                 }
                 if (nextIndex < entries.Count)
                     return;
+
+                SynchronizeMovedSingleSpriteNames(entries, errors);
+                if (errors.Count > 0 && !execution.ContinueOnError)
+                {
+                    errors.AddRange(RollbackMovesAndRestoreSingleSpriteNames(entries));
+                    FinishAssetMoves();
+                    complete(BuildMoveFailure(entries, execution, errors[0], errors));
+                    return;
+                }
 
                 FinishAssetMoves();
                 if (errors.Count > 0)
@@ -1635,8 +1702,10 @@ namespace UnityMCP.Editor
                 AssetDatabase.StopAssetEditing();
             }
 
+            if (errors.Count == 0 || execution.ContinueOnError)
+                SynchronizeMovedSingleSpriteNames(entries, errors);
             if (errors.Count > 0 && !execution.ContinueOnError)
-                errors.AddRange(RollbackMoves(entries));
+                errors.AddRange(RollbackMovesAndRestoreSingleSpriteNames(entries));
             FinishAssetMoves();
             return errors.Count == 0
                 ? BuildMoveResult(entries, execution, false, errors)
@@ -1666,6 +1735,71 @@ namespace UnityMCP.Editor
                 AssetDatabase.StopAssetEditing();
             }
             return rollbackErrors;
+        }
+
+        private static List<string> RollbackMovesAndRestoreSingleSpriteNames(List<BatchMoveEntry> entries)
+        {
+            var rollbackErrors = RollbackMoves(entries);
+            foreach (var entry in entries)
+            {
+                if (!entry.RolledBack || !entry.SingleSpriteNameSynchronizationAttempted)
+                    continue;
+
+                try
+                {
+                    string oldSpriteName = Path.GetFileNameWithoutExtension(entry.OldPath);
+                    entry.SynchronizedSingleSpriteName =
+                        SynchronizeSingleSpriteName(entry.OldPath, oldSpriteName);
+                    if (!entry.SynchronizedSingleSpriteName)
+                    {
+                        rollbackErrors.Add(
+                            $"Rollback {entry.Index} restored the asset path but not its Single Sprite internal name.");
+                    }
+                }
+                catch (Exception exception)
+                {
+                    rollbackErrors.Add(
+                        $"Rollback {entry.Index} could not restore its Single Sprite internal name: {exception.Message}");
+                }
+            }
+
+            return rollbackErrors;
+        }
+
+        private static void SynchronizeMovedSingleSpriteNames(List<BatchMoveEntry> entries, List<string> errors)
+        {
+            foreach (var entry in entries)
+            {
+                if (!entry.Moved || entry.RolledBack ||
+                    string.Equals(Path.GetFileNameWithoutExtension(entry.OldPath),
+                        Path.GetFileNameWithoutExtension(entry.TargetPath), StringComparison.Ordinal))
+                    continue;
+                if (AssetImporter.GetAtPath(entry.TargetPath) is not TextureImporter importer ||
+                    importer.textureType != TextureImporterType.Sprite ||
+                    importer.spriteImportMode != SpriteImportMode.Single)
+                    continue;
+
+                entry.SingleSpriteNameSynchronizationAttempted = true;
+                try
+                {
+                    string spriteName = Path.GetFileNameWithoutExtension(entry.TargetPath);
+                    entry.SynchronizedSingleSpriteName =
+                        SynchronizeSingleSpriteName(entry.TargetPath, spriteName);
+                    if (entry.SynchronizedSingleSpriteName)
+                        continue;
+
+                    entry.Error =
+                        $"Move {entry.Index} left Single Sprite internal names unsynchronized at '{entry.TargetPath}'.";
+                }
+                catch (Exception exception)
+                {
+                    entry.Error =
+                        $"Move {entry.Index} could not synchronize Single Sprite internal names at " +
+                        $"'{entry.TargetPath}': {exception.Message}";
+                }
+
+                errors.Add(entry.Error);
+            }
         }
 
         private static void FinishAssetMoves()
@@ -2086,6 +2220,8 @@ namespace UnityMCP.Editor
                 { "currentMetaExists", !string.IsNullOrEmpty(currentMetaPath) && File.Exists(GetAbsolutePath(currentMetaPath)) },
                 { "moved", entry.Moved },
                 { "rolledBack", entry.RolledBack },
+                { "singleSpriteNameSynchronizationAttempted", entry.SingleSpriteNameSynchronizationAttempted },
+                { "synchronizedSingleSpriteName", entry.SynchronizedSingleSpriteName },
                 { "error", entry.Error ?? "" },
             };
         }
@@ -2101,6 +2237,8 @@ namespace UnityMCP.Editor
             public bool OldMetaExists;
             public bool Moved;
             public bool RolledBack;
+            public bool SingleSpriteNameSynchronizationAttempted;
+            public bool SynchronizedSingleSpriteName;
             public string Error;
         }
 
