@@ -1626,8 +1626,11 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void RouteRegistry_OmitsDuplicateGraphicsGameCapture()
         {
-            Assert.That(MCPRouteRegistry.BuiltInRoutes,
-                Does.Not.Contain("graphics/game-capture"));
+            var registered = RequireDictionary(
+                MCPToolMetadata.GetRegisteredRoutes());
+            var routes = (List<string>)registered["routes"];
+
+            Assert.That(routes, Does.Not.Contain("graphics/game-capture"));
         }
 
         [Test]
