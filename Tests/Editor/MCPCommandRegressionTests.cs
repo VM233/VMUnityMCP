@@ -1605,7 +1605,7 @@ namespace UnityMCP.Editor.Tests
         {
             const string screenshotPath = TEST_FOLDER + "/Game View.png";
             object response = null;
-            MCPScreenshotCommands.CaptureGameView(new Dictionary<string, object>
+            MCPGameViewCaptureCommands.CaptureGameView(new Dictionary<string, object>
             {
                 { "path", screenshotPath },
                 { "waitFrames", 1 },
@@ -1621,6 +1621,19 @@ namespace UnityMCP.Editor.Tests
             Assert.That(result["route"], Is.EqualTo("screenshot/game"));
             Assert.That(result.ContainsKey("base64"), Is.False);
             Assert.That(File.Exists(GetAbsolutePath(screenshotPath)), Is.False);
+        }
+
+        [Test]
+        public void GameViewScreenshot_HasOneDedicatedCommandOwner()
+        {
+            Assert.That(typeof(MCPScreenshotCommands).GetMethods(
+                    BindingFlags.Static | BindingFlags.Public |
+                    BindingFlags.NonPublic)
+                .Any(method => method.Name == "CaptureGameView"), Is.False);
+            Assert.That(typeof(MCPGameViewCaptureCommands).GetMethods(
+                    BindingFlags.Static | BindingFlags.Public |
+                    BindingFlags.NonPublic)
+                .Any(method => method.Name == "CaptureGameView"), Is.True);
         }
 
         [Test]
@@ -1647,6 +1660,8 @@ namespace UnityMCP.Editor.Tests
                 tool["route"].ToString() == "screenshot/game");
 
             Assert.That(screenshot["requiresPlayMode"], Is.EqualTo(true));
+            Assert.That(screenshot["description"].ToString(),
+                Does.Contain("suppress and restore Game View Gizmos and Stats"));
         }
 
         [Test]
@@ -1664,7 +1679,7 @@ namespace UnityMCP.Editor.Tests
                 GL.Clear(true, true, Color.magenta);
                 RenderTexture.active = previousActive;
 
-                MethodInfo writer = typeof(MCPScreenshotCommands).GetMethod("WriteRenderTexturePng",
+                MethodInfo writer = typeof(MCPGameViewCaptureCommands).GetMethod("WriteRenderTexturePng",
                     BindingFlags.Static | BindingFlags.NonPublic);
                 Assert.That(writer, Is.Not.Null);
                 var result = RequireDictionary(writer.Invoke(null,
@@ -1701,7 +1716,7 @@ namespace UnityMCP.Editor.Tests
             var topRight = new Color32(255, 255, 255, 255);
             var pixels = new[] { bottomLeft, bottomRight, topLeft, topRight };
 
-            MethodInfo flip = typeof(MCPScreenshotCommands).GetMethod("FlipPixelsVertically",
+            MethodInfo flip = typeof(MCPGameViewCaptureCommands).GetMethod("FlipPixelsVertically",
                 BindingFlags.Static | BindingFlags.NonPublic);
             Assert.That(flip, Is.Not.Null);
             flip.Invoke(null, new object[] { pixels, 2, 2 });

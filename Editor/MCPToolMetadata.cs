@@ -961,7 +961,7 @@ namespace UnityMCP.Editor
                 case "packages/search":
                     return "Search Unity Package Manager registry packages with bounded results.";
                 case "screenshot/game":
-                    return "Capture the current Game View during active or paused Play Mode, fail without creating an image in Edit Mode, and return only after the PNG is fully written and decodable.";
+                    return "Capture the current Game View during active or paused Play Mode, temporarily suppress and restore Game View Gizmos and Stats, fail without creating an image in Edit Mode, and return only after the PNG is fully written and decodable.";
                 case "screenshot/crop":
                     return "Crop an existing screenshot or image file to a PNG.";
                 case "gameview/info":

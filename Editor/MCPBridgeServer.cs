@@ -50,7 +50,7 @@ namespace UnityMCP.Editor
             { "editor/play-mode", (args, resolve, _) => MCPEditorCommands.SetPlayMode(args, resolve) },
             { "uitoolkit/wait-refresh", (args, resolve, _) => MCPUICommands.WaitForUIToolkitRefresh(args, resolve) },
             { "uitoolkit/builder-preview", (args, resolve, _) => MCPUICommands.OpenUIBuilderPreview(args, resolve) },
-            { "screenshot/game", (args, resolve, _) => MCPScreenshotCommands.CaptureGameView(args, resolve) },
+            { "screenshot/game", (args, resolve, _) => MCPGameViewCaptureCommands.CaptureGameView(args, resolve) },
             { "packages/update-git", (args, resolve, _) => MCPPackageManagerCommands.UpdateGitPackageDeferred(args, resolve) },
             { "packages/list", (args, resolve, _) => MCPPackageManagerCommands.ListPackagesDeferred(args, resolve) },
             { "packages/add", (args, resolve, _) => MCPPackageManagerCommands.AddPackageDeferred(args, resolve) },
@@ -1416,7 +1416,7 @@ namespace UnityMCP.Editor
 
                 // ─── Screenshot / Scene View ───
                 case "screenshot/game":
-                    return MCPScreenshotCommands.CaptureGameView(ParseJson(body));
+                    return MCPGameViewCaptureCommands.CaptureGameView(ParseJson(body));
                 case "screenshot/scene":
                     return MCPScreenshotCommands.CaptureSceneView(ParseJson(body));
                 case "screenshot/editor-window":

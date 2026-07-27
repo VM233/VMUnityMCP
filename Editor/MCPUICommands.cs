@@ -910,7 +910,7 @@ namespace UnityMCP.Editor
                 { "captureMode", runtime ? "screen" : "auto" },
             };
             Dictionary<string, object> capture = runtime
-                ? MCPScreenshotCommands.CaptureGameViewRenderTexture(fullWindowPath)
+                ? MCPGameViewCaptureCommands.CaptureGameViewRenderTexture(fullWindowPath)
                 : MCPScreenshotCommands.CaptureEditorWindow(captureArgs) as Dictionary<string, object>;
             if (runtime && (capture == null || GetBool(capture, "success", false) == false))
             {
