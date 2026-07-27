@@ -904,7 +904,7 @@ namespace UnityMCP.Editor
                 case "uitoolkit/repaint":
                     return "Trigger repaint on a UI Toolkit EditorWindow or element.";
                 case "uitoolkit/asset-inspect":
-                    return "Inspect UXML and USS assets for VisualElement names, types, and default USS dimensions.";
+                    return "Inspect UXML and USS assets for VisualElement names, types, unconditional class defaults, contextual selectors, and pseudo-state rules.";
                 case "uitoolkit/runtime-documents":
                     return "List runtime UIDocuments with root visual element metadata.";
                 case "uitoolkit/runtime-tree":
@@ -934,7 +934,7 @@ namespace UnityMCP.Editor
                 case "uitoolkit/assert-layout":
                     return "Assert UI Toolkit runtime layout constraints such as edge touching, containment, and size.";
                 case "uitoolkit/builder-preview":
-                    return "Open a UXML asset in UI Builder, wait for the preview to settle, and optionally capture the UI Builder window.";
+                    return "Open a UXML asset in UI Builder, expand an undersized canvas through Match Game View, wait for the preview to settle, and optionally capture the window.";
                 case "uitoolkit/edit-uxml":
                     return "Structurally edit UXML elements by VisualElementPath or authored name, then synchronously reimport the asset.";
                 case "uitoolkit/edit-uss":
@@ -1735,7 +1735,7 @@ namespace UnityMCP.Editor
                         Prop("className", "string", "USS class exact match."),
                         Prop("typeName", "string", "Expected or filtered VisualElement type name."),
                         Prop("maxResults", "number", "Total result budget for elements and name matches. Defaults to 100."),
-                        Prop("includeUss", "boolean", "Parse USS files and attach default size declarations. Defaults to true."),
+                        Prop("includeUss", "boolean", "Parse USS files, keeping unconditional class defaults separate from contextual and pseudo-state rules. Defaults to true."),
                         Prop("includeElements", "boolean", "Return the general elements collection. Defaults to false for names queries and true otherwise."),
                         Prop("includeAllUssClasses", "boolean", "Return every parsed USS class. Targeted queries default to only classes used by returned elements.")
                     ));
@@ -1886,6 +1886,8 @@ namespace UnityMCP.Editor
                         Prop("stableFrames", "number", "Consecutive ready UI Builder frames required. Defaults to 2."),
                         Prop("timeoutMs", "number", "Maximum time to wait for the requested document and canvas. Defaults to 10000."),
                         Prop("capture", "boolean", "Capture the UI Builder window after opening. Defaults to true."),
+                        Prop("autoMatchGameView", "boolean", "Enable UI Builder Match Game View when visible document content overflows the configured canvas. Defaults to true."),
+                        Prop("requireContentFit", "boolean", "Fail the preview result when visible document content remains clipped by the canvas. Defaults to true."),
                         Prop("screenshotPath", "string", "PNG path for the UI Builder screenshot."),
                         Prop("maxDimension", "number", "Maximum screenshot dimension. Defaults to 8192."),
                         Prop("zoom", "number", "Requested zoom, recorded for diagnostics. UI Builder has no stable public zoom API.")

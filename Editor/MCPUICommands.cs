@@ -1266,6 +1266,8 @@ namespace UnityMCP.Editor
             int stableFrames = Math.Max(1, GetInt(args, "stableFrames", 2));
             int timeoutMs = Math.Max(1000, GetInt(args, "timeoutMs", 10000));
             bool capture = GetBool(args, "capture", true);
+            bool autoMatchGameView = GetBool(args, "autoMatchGameView", true);
+            bool requireContentFit = GetBool(args, "requireContentFit", true);
             string screenshotPath = GetString(args, "screenshotPath");
             if (string.IsNullOrEmpty(screenshotPath))
             {
@@ -1277,6 +1279,16 @@ namespace UnityMCP.Editor
             int readyFrameCount = 0;
             double startedAt = EditorApplication.timeSinceStartup;
             bool resolved = false;
+            bool canvasAdjustmentAttempted = false;
+            bool canvasAdjustmentApplied = false;
+            bool initialMatchGameView = false;
+            bool initialMatchGameViewKnown = false;
+            float initialCanvasWidth = 0;
+            float initialCanvasHeight = 0;
+            float initialRequiredCanvasWidth = 0;
+            float initialRequiredCanvasHeight = 0;
+            int canvasAdjustmentFrame = -1;
+            string canvasAdjustmentError = "";
 
             void Finish(Dictionary<string, object> result)
             {
@@ -1313,6 +1325,26 @@ namespace UnityMCP.Editor
 
                 var previewState = InspectUIBuilderPreviewState(window, uxmlPath);
                 bool editorIdle = EditorApplication.isCompiling == false && EditorApplication.isUpdating == false;
+                if (frame >= waitFrames && editorIdle && previewState.Ready && autoMatchGameView &&
+                    previewState.CanvasTooSmall && canvasAdjustmentAttempted == false)
+                {
+                    canvasAdjustmentAttempted = true;
+                    initialMatchGameView = previewState.MatchGameView;
+                    initialMatchGameViewKnown = previewState.MatchGameViewKnown;
+                    initialCanvasWidth = previewState.ConfiguredCanvasWidth;
+                    initialCanvasHeight = previewState.ConfiguredCanvasHeight;
+                    initialRequiredCanvasWidth = previewState.RequiredCanvasWidth;
+                    initialRequiredCanvasHeight = previewState.RequiredCanvasHeight;
+                    canvasAdjustmentFrame = frame;
+                    canvasAdjustmentApplied = TryEnableUIBuilderMatchGameView(window, out canvasAdjustmentError);
+                    readyFrameCount = 0;
+                    if (canvasAdjustmentApplied)
+                    {
+                        EditorApplication.QueuePlayerLoopUpdate();
+                        return;
+                    }
+                }
+
                 if (frame >= waitFrames && editorIdle && previewState.Ready)
                     readyFrameCount++;
                 else
@@ -1326,9 +1358,11 @@ namespace UnityMCP.Editor
                     return;
                 }
 
+                bool previewSettled = readyFrameCount >= stableFrames;
+                bool contentFitAccepted = requireContentFit == false || previewState.CanvasTooSmall == false;
                 var result = new Dictionary<string, object>
                 {
-                    { "success", readyFrameCount >= stableFrames },
+                    { "success", previewSettled && contentFitAccepted },
                     { "uxmlPath", uxmlPath },
                     { "opened", opened },
                     { "waitFrames", waitFrames },
@@ -1340,6 +1374,47 @@ namespace UnityMCP.Editor
                     { "windowFound", window != null },
                     { "window", window == null ? null : BuildWindowInfo(window) },
                     { "preview", previewState.ToDictionary() },
+                    { "canvasAdjustment", new Dictionary<string, object>
+                        {
+                            { "autoMatchGameView", autoMatchGameView },
+                            { "requireContentFit", requireContentFit },
+                            { "attempted", canvasAdjustmentAttempted },
+                            { "applied", canvasAdjustmentApplied },
+                            { "attemptedAtFrame", canvasAdjustmentFrame },
+                            { "initialMatchGameView", initialMatchGameViewKnown
+                                ? (object)initialMatchGameView
+                                : null },
+                            { "finalMatchGameView", previewState.MatchGameViewKnown
+                                ? (object)previewState.MatchGameView
+                                : null },
+                            { "initialCanvasSize", new Dictionary<string, object>
+                                {
+                                    { "width", initialCanvasWidth },
+                                    { "height", initialCanvasHeight },
+                                }
+                            },
+                            { "initialRequiredCanvasSize", new Dictionary<string, object>
+                                {
+                                    { "width", initialRequiredCanvasWidth },
+                                    { "height", initialRequiredCanvasHeight },
+                                }
+                            },
+                            { "finalCanvasSize", new Dictionary<string, object>
+                                {
+                                    { "width", previewState.ConfiguredCanvasWidth },
+                                    { "height", previewState.ConfiguredCanvasHeight },
+                                }
+                            },
+                            { "finalRequiredCanvasSize", new Dictionary<string, object>
+                                {
+                                    { "width", previewState.RequiredCanvasWidth },
+                                    { "height", previewState.RequiredCanvasHeight },
+                                }
+                            },
+                            { "contentFitsCanvas", previewState.ContentFitsCanvas },
+                            { "error", canvasAdjustmentError },
+                        }
+                    },
                 };
 
                 if (args.ContainsKey("zoom"))
@@ -1391,7 +1466,16 @@ namespace UnityMCP.Editor
                     }
                 }
 
-                if (readyFrameCount < stableFrames && result.ContainsKey("error") == false)
+                if (previewSettled && requireContentFit && previewState.CanvasTooSmall &&
+                    result.ContainsKey("error") == false)
+                {
+                    result["success"] = false;
+                    result["error"] = canvasAdjustmentAttempted
+                        ? "UI Builder canvas remains smaller than the visible document content after enabling Match Game View."
+                        : "UI Builder canvas is smaller than the visible document content.";
+                }
+
+                if (previewSettled == false && result.ContainsKey("error") == false)
                 {
                     result["error"] = previewState.Error.Length > 0
                         ? previewState.Error
@@ -2249,9 +2333,23 @@ namespace UnityMCP.Editor
             public float DocumentRootHeight;
             public float CanvasWidth;
             public float CanvasHeight;
+            public float ConfiguredCanvasWidth;
+            public float ConfiguredCanvasHeight;
+            public float RequiredCanvasWidth;
+            public float RequiredCanvasHeight;
             public Rect DocumentRootWorldBound;
             public Rect CanvasWorldBound;
             public Rect ViewportWorldBound;
+            public Rect ContentWorldBound;
+            public int ContentElementCount;
+            public bool ContentFitsCanvas = true;
+            public bool CanvasTooSmall;
+            public float ContentOverflowLeft;
+            public float ContentOverflowTop;
+            public float ContentOverflowRight;
+            public float ContentOverflowBottom;
+            public bool MatchGameView;
+            public bool MatchGameViewKnown;
             public UnityEngine.UIElements.VisualElement DocumentRoot;
             public UnityEngine.UIElements.VisualElement Canvas;
             public UnityEngine.UIElements.VisualElement Viewport;
@@ -2278,9 +2376,34 @@ namespace UnityMCP.Editor
                             { "height", CanvasHeight },
                         }
                     },
+                    { "configuredCanvasSize", new Dictionary<string, object>
+                        {
+                            { "width", ConfiguredCanvasWidth },
+                            { "height", ConfiguredCanvasHeight },
+                        }
+                    },
+                    { "requiredCanvasSize", new Dictionary<string, object>
+                        {
+                            { "width", RequiredCanvasWidth },
+                            { "height", RequiredCanvasHeight },
+                        }
+                    },
+                    { "matchGameView", MatchGameViewKnown ? (object)MatchGameView : null },
+                    { "contentElementCount", ContentElementCount },
+                    { "contentFitsCanvas", ContentFitsCanvas },
+                    { "canvasTooSmall", CanvasTooSmall },
+                    { "contentOverflow", new Dictionary<string, object>
+                        {
+                            { "left", ContentOverflowLeft },
+                            { "top", ContentOverflowTop },
+                            { "right", ContentOverflowRight },
+                            { "bottom", ContentOverflowBottom },
+                        }
+                    },
                     { "documentRootWorldBound", RectToDictionary(DocumentRootWorldBound) },
                     { "canvasWorldBound", RectToDictionary(CanvasWorldBound) },
                     { "viewportWorldBound", RectToDictionary(ViewportWorldBound) },
+                    { "contentWorldBound", RectToDictionary(ContentWorldBound) },
                     { "error", Error },
                 };
             }
@@ -2311,11 +2434,26 @@ namespace UnityMCP.Editor
                 state.ActiveUxmlPath = documentType.GetProperty("uxmlPath", flags)?.GetValue(document)?.ToString() ?? "";
                 state.DocumentPathMatches = string.Equals(NormalizeAssetPath(state.ActiveUxmlPath, ""),
                     NormalizeAssetPath(expectedUxmlPath, ""), StringComparison.OrdinalIgnoreCase);
+                var documentSettings = documentType.GetProperty("settings", flags)?.GetValue(document);
+                if (TryReadFloatMember(documentSettings, "CanvasWidth", out float configuredCanvasWidth))
+                    state.ConfiguredCanvasWidth = configuredCanvasWidth;
+                if (TryReadFloatMember(documentSettings, "CanvasHeight", out float configuredCanvasHeight))
+                    state.ConfiguredCanvasHeight = configuredCanvasHeight;
+                if (TryReadBoolMember(documentSettings, "MatchGameView", out bool settingsMatchGameView))
+                {
+                    state.MatchGameView = settingsMatchGameView;
+                    state.MatchGameViewKnown = true;
+                }
 
                 var documentRoot = windowType.GetProperty("documentRootElement", flags)?.GetValue(window)
                     as UnityEngine.UIElements.VisualElement;
-                var canvas = windowType.GetProperty("canvas", flags)?.GetValue(window)
-                    as UnityEngine.UIElements.VisualElement;
+                object canvasObject = windowType.GetProperty("canvas", flags)?.GetValue(window);
+                var canvas = canvasObject as UnityEngine.UIElements.VisualElement;
+                if (TryReadBoolMember(canvasObject, "matchGameView", out bool canvasMatchGameView))
+                {
+                    state.MatchGameView = canvasMatchGameView;
+                    state.MatchGameViewKnown = true;
+                }
 
                 state.DocumentRoot = documentRoot;
                 state.Canvas = canvas;
@@ -2337,6 +2475,11 @@ namespace UnityMCP.Editor
                     state.DocumentRootWorldBound = documentRoot.worldBound;
                 }
 
+                if (IsPositiveFinite(state.ConfiguredCanvasWidth) == false)
+                    state.ConfiguredCanvasWidth = state.DocumentRootWidth;
+                if (IsPositiveFinite(state.ConfiguredCanvasHeight) == false)
+                    state.ConfiguredCanvasHeight = state.DocumentRootHeight;
+
                 if (canvas != null)
                 {
                     state.CanvasWidth = canvas.layout.width;
@@ -2347,6 +2490,7 @@ namespace UnityMCP.Editor
                 if (viewport != null)
                     state.ViewportWorldBound = viewport.worldBound;
 
+                MeasureUIBuilderContentBounds(state);
                 state.Ready = state.DocumentPathMatches && state.DocumentRootChildCount > 0 &&
                               state.CanvasChildCount > 0 && IsPositiveFinite(state.DocumentRootWidth) &&
                               IsPositiveFinite(state.DocumentRootHeight) && IsPositiveFinite(state.CanvasWidth) &&
@@ -2360,6 +2504,221 @@ namespace UnityMCP.Editor
             }
 
             return state;
+        }
+
+        private static bool TryEnableUIBuilderMatchGameView(EditorWindow window, out string error)
+        {
+            error = "";
+            if (window == null)
+            {
+                error = "UI Builder window was not found.";
+                return false;
+            }
+
+            try
+            {
+                const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                var windowType = window.GetType();
+                object canvasObject = windowType.GetProperty("canvas", flags)?.GetValue(window);
+                if (canvasObject == null)
+                {
+                    error = "UI Builder canvas is not initialized.";
+                    return false;
+                }
+
+                bool matchGameViewSet = TryWriteBoolMember(canvasObject, "matchGameView", true);
+                if (matchGameViewSet == false)
+                {
+                    object document = windowType.GetProperty("document", flags)?.GetValue(window);
+                    object documentSettings = document?.GetType().GetProperty("settings", flags)?.GetValue(document);
+                    matchGameViewSet = TryWriteBoolMember(documentSettings, "MatchGameView", true);
+                }
+
+                if (matchGameViewSet == false)
+                {
+                    error = "This Unity version does not expose a writable UI Builder Match Game View setting.";
+                    return false;
+                }
+
+                var updateRenderSize = canvasObject.GetType().GetMethod("UpdateRenderSize", flags, null,
+                    Type.EmptyTypes, null);
+                updateRenderSize?.Invoke(canvasObject, null);
+                if (canvasObject is UnityEngine.UIElements.VisualElement canvas)
+                    canvas.MarkDirtyRepaint();
+                window.rootVisualElement?.MarkDirtyRepaint();
+                window.Repaint();
+                return true;
+            }
+            catch (TargetInvocationException ex)
+            {
+                error = ex.InnerException?.Message ?? ex.Message;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryReadFloatMember(object target, string memberName, out float value)
+        {
+            value = 0;
+            if (target == null)
+                return false;
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            object rawValue = target.GetType().GetProperty(memberName, flags)?.GetValue(target);
+            if (rawValue == null)
+                rawValue = target.GetType().GetField(memberName, flags)?.GetValue(target);
+            if (rawValue == null)
+                return false;
+
+            try
+            {
+                value = Convert.ToSingle(rawValue);
+                return float.IsNaN(value) == false && float.IsInfinity(value) == false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryReadBoolMember(object target, string memberName, out bool value)
+        {
+            value = false;
+            if (target == null)
+                return false;
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            object rawValue = target.GetType().GetProperty(memberName, flags)?.GetValue(target);
+            if (rawValue == null)
+                rawValue = target.GetType().GetField(memberName, flags)?.GetValue(target);
+            if (rawValue == null)
+                return false;
+
+            try
+            {
+                value = Convert.ToBoolean(rawValue);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryWriteBoolMember(object target, string memberName, bool value)
+        {
+            if (target == null)
+                return false;
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var property = target.GetType().GetProperty(memberName, flags);
+            if (property != null && property.CanWrite)
+            {
+                property.SetValue(target, value);
+                return true;
+            }
+
+            var field = target.GetType().GetField(memberName, flags);
+            if (field == null || field.IsInitOnly)
+                return false;
+
+            field.SetValue(target, value);
+            return true;
+        }
+
+        private static void MeasureUIBuilderContentBounds(UIBuilderPreviewState state)
+        {
+            state.ContentFitsCanvas = true;
+            state.CanvasTooSmall = false;
+            state.RequiredCanvasWidth = state.ConfiguredCanvasWidth;
+            state.RequiredCanvasHeight = state.ConfiguredCanvasHeight;
+            if (state.DocumentRoot == null || IsUsableWorldRect(state.DocumentRootWorldBound) == false)
+                return;
+
+            bool hasContentBounds = false;
+            Rect contentBounds = default;
+            var pending = new Stack<UnityEngine.UIElements.VisualElement>();
+            foreach (var child in state.DocumentRoot.Children())
+                pending.Push(child);
+
+            while (pending.Count > 0)
+            {
+                var element = pending.Pop();
+                if (element == null)
+                    continue;
+
+                bool visible = true;
+                try
+                {
+                    visible = element.resolvedStyle.display != UnityEngine.UIElements.DisplayStyle.None &&
+                              element.resolvedStyle.visibility == UnityEngine.UIElements.Visibility.Visible;
+                }
+                catch
+                {
+                }
+
+                if (visible && IsUsableWorldRect(element.worldBound))
+                {
+                    contentBounds = hasContentBounds
+                        ? Rect.MinMaxRect(
+                            Math.Min(contentBounds.xMin, element.worldBound.xMin),
+                            Math.Min(contentBounds.yMin, element.worldBound.yMin),
+                            Math.Max(contentBounds.xMax, element.worldBound.xMax),
+                            Math.Max(contentBounds.yMax, element.worldBound.yMax))
+                        : element.worldBound;
+                    hasContentBounds = true;
+                    state.ContentElementCount++;
+                }
+
+                foreach (var child in element.Children())
+                    pending.Push(child);
+            }
+
+            if (hasContentBounds == false)
+                return;
+
+            state.ContentWorldBound = contentBounds;
+            Rect canvasBounds = state.DocumentRootWorldBound;
+            state.ContentOverflowLeft = Math.Max(0, canvasBounds.xMin - contentBounds.xMin);
+            state.ContentOverflowTop = Math.Max(0, canvasBounds.yMin - contentBounds.yMin);
+            state.ContentOverflowRight = Math.Max(0, contentBounds.xMax - canvasBounds.xMax);
+            state.ContentOverflowBottom = Math.Max(0, contentBounds.yMax - canvasBounds.yMax);
+
+            const float containmentTolerance = 0.5f;
+            state.ContentFitsCanvas = state.ContentOverflowLeft <= containmentTolerance &&
+                                      state.ContentOverflowTop <= containmentTolerance &&
+                                      state.ContentOverflowRight <= containmentTolerance &&
+                                      state.ContentOverflowBottom <= containmentTolerance;
+            state.CanvasTooSmall = state.ContentFitsCanvas == false;
+
+            float scaleX = IsPositiveFinite(state.DocumentRootWidth)
+                ? canvasBounds.width / state.DocumentRootWidth
+                : 0;
+            float scaleY = IsPositiveFinite(state.DocumentRootHeight)
+                ? canvasBounds.height / state.DocumentRootHeight
+                : 0;
+            if (IsPositiveFinite(scaleX))
+            {
+                state.RequiredCanvasWidth = state.ConfiguredCanvasWidth +
+                                            (state.ContentOverflowLeft + state.ContentOverflowRight) / scaleX;
+            }
+
+            if (IsPositiveFinite(scaleY))
+            {
+                state.RequiredCanvasHeight = state.ConfiguredCanvasHeight +
+                                             (state.ContentOverflowTop + state.ContentOverflowBottom) / scaleY;
+            }
+        }
+
+        private static bool IsUsableWorldRect(Rect rect)
+        {
+            return IsPositiveFinite(rect.width) && IsPositiveFinite(rect.height) &&
+                   float.IsNaN(rect.x) == false && float.IsInfinity(rect.x) == false &&
+                   float.IsNaN(rect.y) == false && float.IsInfinity(rect.y) == false;
         }
 
         private static Dictionary<string, object> AnalyzeUIBuilderScreenshot(
@@ -3450,31 +3809,203 @@ namespace UnityMCP.Editor
                 foreach (Match ruleMatch in Regex.Matches(text, @"(?<selector>[^{}]+)\{(?<body>[^{}]*)\}",
                              RegexOptions.Singleline))
                 {
-                    string selector = ruleMatch.Groups["selector"].Value;
+                    string selectorList = ruleMatch.Groups["selector"].Value;
                     string body = ruleMatch.Groups["body"].Value;
                     var declarations = ParseUssDeclarations(body);
                     if (declarations.Count == 0)
                         continue;
 
-                    foreach (Match classMatch in Regex.Matches(selector, @"\.([A-Za-z_][A-Za-z0-9_-]*)"))
+                    foreach (string selector in SplitUssSelectorList(selectorList))
                     {
-                        string className = classMatch.Groups[1].Value;
-                        if (!styles.TryGetValue(className, out var style))
+                        var targetClassNames = GetTargetClassNames(selector);
+                        if (targetClassNames.Count == 0)
+                            continue;
+
+                        var pseudoStates = GetSelectorPseudoStates(selector);
+                        string standaloneClassName = "";
+                        bool isUnconditionalClassSelector = pseudoStates.Count == 0 &&
+                                                            TryGetStandaloneClassSelector(selector,
+                                                                out standaloneClassName);
+                        foreach (string className in targetClassNames)
                         {
-                            style = new UssClassStyle { ClassName = className };
-                            styles[className] = style;
+                            if (!styles.TryGetValue(className, out var style))
+                            {
+                                style = new UssClassStyle { ClassName = className };
+                                styles[className] = style;
+                            }
+
+                            if (!style.SourcePaths.Contains(ussPath, StringComparer.OrdinalIgnoreCase))
+                                style.SourcePaths.Add(ussPath);
+
+                            if (isUnconditionalClassSelector &&
+                                string.Equals(className, standaloneClassName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!style.DefaultSelectors.Contains(selector, StringComparer.Ordinal))
+                                    style.DefaultSelectors.Add(selector);
+
+                                foreach (var pair in declarations)
+                                    style.Declarations[pair.Key] = pair.Value;
+                                continue;
+                            }
+
+                            var rule = new UssSelectorRule
+                            {
+                                Selector = selector,
+                                SourcePath = ussPath,
+                            };
+                            rule.PseudoStates.AddRange(pseudoStates);
+                            foreach (var pair in declarations)
+                                rule.Declarations[pair.Key] = pair.Value;
+
+                            if (pseudoStates.Count > 0)
+                                style.StateRules.Add(rule);
+                            else
+                                style.ContextRules.Add(rule);
                         }
-
-                        if (!style.SourcePaths.Contains(ussPath, StringComparer.OrdinalIgnoreCase))
-                            style.SourcePaths.Add(ussPath);
-
-                        foreach (var pair in declarations)
-                            style.Declarations[pair.Key] = pair.Value;
                     }
                 }
             }
 
             return styles;
+        }
+
+        private static List<string> SplitUssSelectorList(string selectorList)
+        {
+            var selectors = new List<string>();
+            if (string.IsNullOrWhiteSpace(selectorList))
+                return selectors;
+
+            int start = 0;
+            int parenthesisDepth = 0;
+            int bracketDepth = 0;
+            char quote = '\0';
+            for (int index = 0; index < selectorList.Length; index++)
+            {
+                char character = selectorList[index];
+                if (quote != '\0')
+                {
+                    if (character == quote && (index == 0 || selectorList[index - 1] != '\\'))
+                        quote = '\0';
+                    continue;
+                }
+
+                if (character == '"' || character == '\'')
+                {
+                    quote = character;
+                    continue;
+                }
+
+                switch (character)
+                {
+                    case '(':
+                        parenthesisDepth++;
+                        break;
+                    case ')':
+                        parenthesisDepth = Math.Max(0, parenthesisDepth - 1);
+                        break;
+                    case '[':
+                        bracketDepth++;
+                        break;
+                    case ']':
+                        bracketDepth = Math.Max(0, bracketDepth - 1);
+                        break;
+                    case ',' when parenthesisDepth == 0 && bracketDepth == 0:
+                        AddUssSelector(selectorList, start, index - start, selectors);
+                        start = index + 1;
+                        break;
+                }
+            }
+
+            AddUssSelector(selectorList, start, selectorList.Length - start, selectors);
+            return selectors;
+        }
+
+        private static void AddUssSelector(string selectorList, int start, int length, List<string> selectors)
+        {
+            string selector = selectorList.Substring(start, length).Trim();
+            if (selector.Length > 0)
+                selectors.Add(selector);
+        }
+
+        private static List<string> GetTargetClassNames(string selector)
+        {
+            string targetCompound = GetRightmostSelectorCompound(selector);
+            return Regex.Matches(targetCompound, @"\.([A-Za-z_][A-Za-z0-9_-]*)")
+                .Cast<Match>()
+                .Select(match => match.Groups[1].Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string GetRightmostSelectorCompound(string selector)
+        {
+            int parenthesisDepth = 0;
+            int bracketDepth = 0;
+            char quote = '\0';
+            int compoundStart = 0;
+            for (int index = 0; index < selector.Length; index++)
+            {
+                char character = selector[index];
+                if (quote != '\0')
+                {
+                    if (character == quote && (index == 0 || selector[index - 1] != '\\'))
+                        quote = '\0';
+                    continue;
+                }
+
+                if (character == '"' || character == '\'')
+                {
+                    quote = character;
+                    continue;
+                }
+
+                switch (character)
+                {
+                    case '(':
+                        parenthesisDepth++;
+                        continue;
+                    case ')':
+                        parenthesisDepth = Math.Max(0, parenthesisDepth - 1);
+                        continue;
+                    case '[':
+                        bracketDepth++;
+                        continue;
+                    case ']':
+                        bracketDepth = Math.Max(0, bracketDepth - 1);
+                        continue;
+                }
+
+                if (parenthesisDepth == 0 && bracketDepth == 0 &&
+                    (char.IsWhiteSpace(character) || character == '>' || character == '+' || character == '~'))
+                {
+                    while (index + 1 < selector.Length &&
+                           (char.IsWhiteSpace(selector[index + 1]) || selector[index + 1] == '>' ||
+                            selector[index + 1] == '+' || selector[index + 1] == '~'))
+                    {
+                        index++;
+                    }
+
+                    compoundStart = index + 1;
+                }
+            }
+
+            return selector.Substring(Math.Min(compoundStart, selector.Length)).Trim();
+        }
+
+        private static List<string> GetSelectorPseudoStates(string selector)
+        {
+            return Regex.Matches(selector, @":{1,2}([A-Za-z_][A-Za-z0-9_-]*)")
+                .Cast<Match>()
+                .Select(match => match.Groups[1].Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static bool TryGetStandaloneClassSelector(string selector, out string className)
+        {
+            var match = Regex.Match(selector.Trim(), @"^\.([A-Za-z_][A-Za-z0-9_-]*)$");
+            className = match.Success ? match.Groups[1].Value : "";
+            return match.Success;
         }
 
         private static Dictionary<string, string> ParseUssDeclarations(string body)
@@ -4116,8 +4647,11 @@ namespace UnityMCP.Editor
         {
             public string ClassName;
             public readonly List<string> SourcePaths = new List<string>();
+            public readonly List<string> DefaultSelectors = new List<string>();
             public readonly Dictionary<string, string> Declarations =
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            public readonly List<UssSelectorRule> ContextRules = new List<UssSelectorRule>();
+            public readonly List<UssSelectorRule> StateRules = new List<UssSelectorRule>();
 
             public Dictionary<string, object> ToDictionary()
             {
@@ -4125,6 +4659,30 @@ namespace UnityMCP.Editor
                 {
                     { "className", ClassName },
                     { "sourcePaths", SourcePaths },
+                    { "defaultSelectors", DefaultSelectors },
+                    { "declarations", Declarations },
+                    { "defaultSize", BuildDefaultSizeDictionary(Declarations) },
+                    { "contextRules", ContextRules.Select(rule => rule.ToDictionary()).ToList() },
+                    { "stateRules", StateRules.Select(rule => rule.ToDictionary()).ToList() },
+                };
+            }
+        }
+
+        private sealed class UssSelectorRule
+        {
+            public string Selector;
+            public string SourcePath;
+            public readonly List<string> PseudoStates = new List<string>();
+            public readonly Dictionary<string, string> Declarations =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            public Dictionary<string, object> ToDictionary()
+            {
+                return new Dictionary<string, object>
+                {
+                    { "selector", Selector },
+                    { "sourcePath", SourcePath },
+                    { "pseudoStates", PseudoStates },
                     { "declarations", Declarations },
                     { "defaultSize", BuildDefaultSizeDictionary(Declarations) },
                 };

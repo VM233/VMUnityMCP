@@ -77,7 +77,7 @@ http://127.0.0.1:7890/api/ping
 | Animator editing | `unity_animation_update_state` | `animation/update-state` | Modify an existing Animator state, including motion, speed, tag, position, write defaults, and default state. |
 | Animator editing | `unity_animation_update_transition` | `animation/update-transition` | Modify an existing transition and add, update, remove, or replace transition conditions. |
 | Animator editing | `unity_animation_connect_states` | `animation/connect-states` | Create directed pairwise transitions between a list of Animator states. |
-| UI Toolkit assets | `unity_uitoolkit_asset_inspect` | `uitoolkit/asset-inspect` | Inspect UXML/USS assets for VisualElement names, type matches, USS classes, and default size declarations. |
+| UI Toolkit assets | `unity_uitoolkit_asset_inspect` | `uitoolkit/asset-inspect` | Inspect UXML/USS assets for VisualElement names, type matches, unconditional class defaults, contextual selectors, and pseudo-state rules. |
 | UI Toolkit runtime | `unity_uitoolkit_runtime_documents` | `uitoolkit/runtime-documents` | List runtime UIDocuments and their root visual element metadata. |
 | UI Toolkit runtime | `unity_uitoolkit_runtime_tree` | `uitoolkit/runtime-tree` | Read a UIDocument visual tree, including optional style and bounds data. |
 | UI Toolkit runtime | `unity_uitoolkit_runtime_query` | `uitoolkit/runtime-query` | Query runtime VisualElements by tree path, VisualElementPath name list, name, class, type, or text. |
@@ -90,7 +90,7 @@ http://127.0.0.1:7890/api/ping
 | UI Toolkit visual QA | `unity_uitoolkit_compare_element` | `uitoolkit/compare-element` | Capture a UI Toolkit element and compare the crop with a reference image, optionally writing a diff image. |
 | UI Toolkit visual QA | `unity_uitoolkit_generated_children` | `uitoolkit/generated-children` | Inspect generated UI Toolkit children such as arrows, checkmarks, scrollers, TabView internals, and unnamed `unity-*` subparts. |
 | UI Toolkit visual QA | `unity_uitoolkit_resource_audit` | `uitoolkit/resource-audit` | Audit target elements and descendants for resolved background assets, highlighted-state misuse, and missing or forbidden assets. |
-| UI Builder | `unity_uitoolkit_builder_preview` | `uitoolkit/builder-preview` | Open a UXML asset in UI Builder, wait for the preview to settle, and optionally capture the UI Builder window. |
+| UI Builder | `unity_uitoolkit_builder_preview` | `uitoolkit/builder-preview` | Open a UXML asset, enable Match Game View when visible content overflows the canvas, wait for a stable preview, and optionally capture the UI Builder window. |
 | Screenshot utilities | `unity_screenshot_crop` | `screenshot/crop` | Crop a screenshot or image file to a PNG for focused visual inspection. |
 | Screenshot utilities | `unity_screenshot_scene` | `screenshot/scene` | Capture the Scene View once and return a file, base64 PNG, or both. |
 | Graphics utilities | `unity_graphics_asset_preview` | `graphics/asset-preview` | Render Unity's preview for a prefab or other supported asset as a base64 PNG. |

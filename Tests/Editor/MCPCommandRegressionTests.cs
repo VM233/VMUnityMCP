@@ -1531,6 +1531,63 @@ namespace UnityMCP.Editor.Tests
             Assert.That(result["outputTruncated"], Is.EqualTo(false));
         }
 
+        [Test]
+        public void UIToolkitAssetInspect_SeparatesPseudoStateAndContextRulesFromDefaults()
+        {
+            const string uxmlPath = TEST_FOLDER + "/State Inspect.uxml";
+            const string ussPath = TEST_FOLDER + "/State Inspect.uss";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:VisualElement name=\"Container\" class=\"container\"><ui:Button name=\"Target\" class=\"target-class\"/></ui:VisualElement></ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                ".target-class { width: 10px; background-image: url(\"normal.png\"); }\n" +
+                ".target-class:hover { width: 20px; height: 21px; background-image: url(\"highlight.png\"); }\n" +
+                ".container .target-class:checked { width: 30px; }\n" +
+                ".container .target-class { height: 40px; }\n" +
+                ".container { min-width: 100px; }\n");
+            AssetDatabase.ImportAsset(uxmlPath, ImportAssetOptions.ForceSynchronousImport);
+            AssetDatabase.ImportAsset(ussPath, ImportAssetOptions.ForceSynchronousImport);
+
+            var result = RequireDictionary(MCPUICommands.InspectUIToolkitAsset(new Dictionary<string, object>
+            {
+                { "uxmlPath", uxmlPath },
+                { "ussPath", ussPath },
+                { "name", "Target" },
+                { "includeUss", true },
+                { "includeAllUssClasses", true },
+            }));
+
+            Assert.That(result["valid"], Is.EqualTo(true));
+            var elements = (List<Dictionary<string, object>>)result["elements"];
+            Assert.That(elements, Has.Count.EqualTo(1));
+            var resolvedDeclarations = (Dictionary<string, string>)elements[0]["ussResolvedDeclarations"];
+            Assert.That(resolvedDeclarations["width"], Is.EqualTo("10px"));
+            Assert.That(resolvedDeclarations["background-image"], Does.Contain("normal.png"));
+            Assert.That(resolvedDeclarations.ContainsKey("height"), Is.False);
+            Assert.That(resolvedDeclarations.Values.Any(value => value.Contains("highlight.png")), Is.False);
+
+            var ussClasses = (Dictionary<string, object>)result["ussClasses"];
+            var targetClass = RequireDictionary(ussClasses["target-class"]);
+            var defaultDeclarations = (Dictionary<string, string>)targetClass["declarations"];
+            Assert.That(defaultDeclarations["width"], Is.EqualTo("10px"));
+            Assert.That(defaultDeclarations.ContainsKey("height"), Is.False);
+
+            var stateRules = (List<Dictionary<string, object>>)targetClass["stateRules"];
+            Assert.That(stateRules, Has.Count.EqualTo(2));
+            Assert.That(stateRules.SelectMany(rule => (List<string>)rule["pseudoStates"]),
+                Is.EquivalentTo(new[] { "hover", "checked" }));
+
+            var contextRules = (List<Dictionary<string, object>>)targetClass["contextRules"];
+            Assert.That(contextRules, Has.Count.EqualTo(1));
+            Assert.That(contextRules[0]["selector"], Is.EqualTo(".container .target-class"));
+
+            var containerClass = RequireDictionary(ussClasses["container"]);
+            var containerDefaults = (Dictionary<string, string>)containerClass["declarations"];
+            Assert.That(containerDefaults["min-width"], Is.EqualTo("100px"));
+            Assert.That(containerDefaults.ContainsKey("width"), Is.False);
+            Assert.That(containerClass["stateRules"], Is.Empty);
+            Assert.That(containerClass["contextRules"], Is.Empty);
+        }
+
         [UnityTest]
         public IEnumerator UIBuilderPreview_WaitsForRequestedDocumentAndCanvas()
         {
@@ -1560,6 +1617,74 @@ namespace UnityMCP.Editor.Tests
             Assert.That(preview["ready"], Is.EqualTo(true));
             Assert.That(preview["documentPathMatches"], Is.EqualTo(true));
             Assert.That(preview["activeUxmlPath"], Is.EqualTo(uxmlPath));
+        }
+
+        [UnityTest]
+        public IEnumerator UIBuilderPreview_EnablesMatchGameViewWhenCanvasClipsVisibleContent()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Builder Canvas Resize.uxml";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:VisualElement name=\"Oversized\" style=\"position: absolute; left: 0; top: 0; width: 500px; height: 300px; background-color: rgb(120, 80, 40);\"/></ui:UXML>");
+            AssetDatabase.ImportAsset(uxmlPath, ImportAssetOptions.ForceSynchronousImport);
+
+            object initialResponse = null;
+            MCPUICommands.OpenUIBuilderPreview(new Dictionary<string, object>
+            {
+                { "uxmlPath", uxmlPath },
+                { "waitFrames", 1 },
+                { "stableFrames", 1 },
+                { "timeoutMs", 10000 },
+                { "capture", false },
+                { "autoMatchGameView", false },
+                { "requireContentFit", false },
+            }, value => initialResponse = value);
+
+            double initialTimeoutAt = EditorApplication.timeSinceStartup + 12;
+            while (initialResponse == null && EditorApplication.timeSinceStartup < initialTimeoutAt)
+                yield return null;
+
+            Assert.That(initialResponse, Is.Not.Null);
+            ConfigureUIBuilderCanvasForTest(320, 240, false);
+            yield return null;
+            yield return null;
+
+            object adjustedResponse = null;
+            MCPUICommands.OpenUIBuilderPreview(new Dictionary<string, object>
+            {
+                { "uxmlPath", uxmlPath },
+                { "waitFrames", 1 },
+                { "stableFrames", 2 },
+                { "timeoutMs", 10000 },
+                { "capture", false },
+                { "autoMatchGameView", true },
+                { "requireContentFit", true },
+            }, value => adjustedResponse = value);
+
+            double adjustedTimeoutAt = EditorApplication.timeSinceStartup + 12;
+            while (adjustedResponse == null && EditorApplication.timeSinceStartup < adjustedTimeoutAt)
+                yield return null;
+
+            Assert.That(adjustedResponse, Is.Not.Null);
+            var result = RequireDictionary(adjustedResponse);
+            Assert.That(result["success"], Is.EqualTo(true));
+
+            var adjustment = RequireDictionary(result["canvasAdjustment"]);
+            Assert.That(adjustment["attempted"], Is.EqualTo(true));
+            Assert.That(adjustment["applied"], Is.EqualTo(true));
+            Assert.That(adjustment["initialMatchGameView"], Is.EqualTo(false));
+            Assert.That(adjustment["finalMatchGameView"], Is.EqualTo(true));
+            Assert.That(adjustment["contentFitsCanvas"], Is.EqualTo(true));
+
+            var initialCanvasSize = RequireDictionary(adjustment["initialCanvasSize"]);
+            var finalCanvasSize = RequireDictionary(adjustment["finalCanvasSize"]);
+            Assert.That(Convert.ToSingle(initialCanvasSize["width"]), Is.EqualTo(320).Within(0.5f));
+            Assert.That(Convert.ToSingle(initialCanvasSize["height"]), Is.EqualTo(240).Within(0.5f));
+            Assert.That(Convert.ToSingle(finalCanvasSize["width"]), Is.GreaterThan(320));
+            Assert.That(Convert.ToSingle(finalCanvasSize["height"]), Is.GreaterThan(240));
+
+            var preview = RequireDictionary(result["preview"]);
+            Assert.That(preview["canvasTooSmall"], Is.EqualTo(false));
+            Assert.That(preview["contentFitsCanvas"], Is.EqualTo(true));
         }
 
         [Test]
@@ -4174,6 +4299,44 @@ namespace UnityMCP.Editor.Tests
             {
                 PrefabUtility.UnloadPrefabContents(root);
             }
+        }
+
+        private static void ConfigureUIBuilderCanvasForTest(float width, float height, bool matchGameView)
+        {
+            var builderType = Type.GetType("Unity.UI.Builder.Builder, UnityEditor.UIBuilderModule", false);
+            Assert.That(builderType, Is.Not.Null);
+            var window = Resources.FindObjectsOfTypeAll(builderType).OfType<EditorWindow>().FirstOrDefault();
+            Assert.That(window, Is.Not.Null);
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            object canvas = builderType.GetProperty("canvas", flags)?.GetValue(window);
+            Assert.That(canvas, Is.Not.Null);
+            var matchGameViewProperty = canvas.GetType().GetProperty("matchGameView", flags);
+            Assert.That(matchGameViewProperty, Is.Not.Null);
+            matchGameViewProperty.SetValue(canvas, matchGameView);
+
+            object document = builderType.GetProperty("document", flags)?.GetValue(window);
+            Assert.That(document, Is.Not.Null);
+            object settings = document.GetType().GetProperty("settings", flags)?.GetValue(document);
+            Assert.That(settings, Is.Not.Null);
+            SetUIBuilderSettingForTest(settings, "CanvasWidth", width);
+            SetUIBuilderSettingForTest(settings, "CanvasHeight", height);
+            SetUIBuilderSettingForTest(settings, "MatchGameView", matchGameView);
+
+            canvas.GetType().GetMethod("SetSizeFromDocumentSettings", flags, null, Type.EmptyTypes, null)
+                ?.Invoke(canvas, null);
+            canvas.GetType().GetMethod("UpdateRenderSize", flags, null, Type.EmptyTypes, null)
+                ?.Invoke(canvas, null);
+            window.rootVisualElement?.MarkDirtyRepaint();
+            window.Repaint();
+        }
+
+        private static void SetUIBuilderSettingForTest(object settings, string fieldName, object value)
+        {
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var field = settings.GetType().GetField(fieldName, flags);
+            Assert.That(field, Is.Not.Null);
+            field.SetValue(settings, Convert.ChangeType(value, field.FieldType));
         }
 
         private static Dictionary<string, object> RequireDictionary(object value)

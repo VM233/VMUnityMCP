@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.23] - 2026-07-28
+
+- Keep pseudo-state and contextual USS rules separate from unconditional class declarations in `uitoolkit/asset-inspect`, preventing `:hover` and `:checked` values from leaking into default style results.
+- Detect visible UI Builder content that overflows the configured canvas and automatically enable Match Game View before stable preview capture.
+
 ## [3.3.22] - 2026-07-27
 
 - Synchronize Single Sprite sub-asset names and every TextureImporter name table when `asset/rename` or a filename-changing `asset/move` renames the texture, including immediate and frame-batched move execution.
