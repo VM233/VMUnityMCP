@@ -40,6 +40,7 @@ namespace UnityMCP.Editor
             int stableFrames = (int)normalizedArgs["stableFrames"];
             int stableMs = (int)normalizedArgs["stableMs"];
             int resumeCount = (int)normalizedArgs["resumeCount"];
+            bool hasDeadline = TryGetUtcDateTime(args, "_deadlineUtc", out DateTime deadlineUtc);
             double startTime = EditorApplication.timeSinceStartup;
             double stableStartTime = -1;
             int currentStableFrames = 0;
@@ -77,6 +78,15 @@ namespace UnityMCP.Editor
                 double stableDurationMs = stableStartTime >= 0
                     ? (EditorApplication.timeSinceStartup - stableStartTime) * 1000d
                     : 0;
+                double elapsedMs = (EditorApplication.timeSinceStartup - startTime) * 1000d;
+
+                if (elapsedMs >= timeoutMs || hasDeadline && DateTime.UtcNow >= deadlineUtc)
+                {
+                    EditorApplication.update -= Tick;
+                    Resolve(BuildIdleResult(false, true, timeoutMs, stableFrames, stableMs,
+                        currentStableFrames, stableDurationMs, startTime, snapshot, lastBusyReasons, resumeCount));
+                    return;
+                }
 
                 if (currentStableFrames >= stableFrames && stableDurationMs >= stableMs)
                 {
@@ -84,14 +94,6 @@ namespace UnityMCP.Editor
                     Resolve(BuildIdleResult(true, false, timeoutMs, stableFrames, stableMs,
                         currentStableFrames, stableDurationMs, startTime, snapshot, lastBusyReasons, resumeCount));
                     return;
-                }
-
-                double elapsedMs = (EditorApplication.timeSinceStartup - startTime) * 1000d;
-                if (elapsedMs >= timeoutMs)
-                {
-                    EditorApplication.update -= Tick;
-                    Resolve(BuildIdleResult(false, true, timeoutMs, stableFrames, stableMs,
-                        currentStableFrames, stableDurationMs, startTime, snapshot, lastBusyReasons, resumeCount));
                 }
             }
 
@@ -1138,16 +1140,33 @@ namespace UnityMCP.Editor
 
             if (value is UnityEngine.Object unityObject)
             {
-                string assetPath = AssetDatabase.GetAssetPath(unityObject);
-                var unityResult = new Dictionary<string, object>
+                // Unity keeps a CLR wrapper after the native object is destroyed. Such a wrapper
+                // passes the C# type check but compares equal to null through Unity's overloaded
+                // equality operator, and reading name/instance ID can throw from native bindings.
+                if (unityObject == null)
+                    return null;
+
+                try
                 {
-                    { "name", unityObject.name },
-                    { "type", unityObject.GetType().FullName },
-                    { "instanceId", unityObject.GetInstanceID() },
-                };
-                if (!string.IsNullOrEmpty(assetPath))
-                    unityResult["assetPath"] = assetPath;
-                return unityResult;
+                    string assetPath = AssetDatabase.GetAssetPath(unityObject);
+                    var unityResult = new Dictionary<string, object>
+                    {
+                        { "name", unityObject.name },
+                        { "type", unityObject.GetType().FullName },
+                        { "instanceId", unityObject.GetInstanceID() },
+                    };
+                    if (!string.IsNullOrEmpty(assetPath))
+                        unityResult["assetPath"] = assetPath;
+                    return unityResult;
+                }
+                catch (MissingReferenceException)
+                {
+                    return null;
+                }
+                catch (NullReferenceException)
+                {
+                    return null;
+                }
             }
 
             bool trackReference = !type.IsValueType;
@@ -1288,7 +1307,7 @@ namespace UnityMCP.Editor
             EditorIdleSnapshot snapshot, List<string> lastBusyReasons, int resumeCount)
         {
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-            return new Dictionary<string, object>
+            var result = new Dictionary<string, object>
             {
                 { "success", success },
                 { "timedOut", timedOut },
@@ -1311,6 +1330,15 @@ namespace UnityMCP.Editor
                 { "resumedAfterReload", resumeCount > 0 },
                 { "resumeCount", resumeCount },
             };
+            if (timedOut)
+            {
+                const string message = "Timed out waiting for the Unity Editor to become idle.";
+                result["error"] = message;
+                result["message"] = message;
+                result["errorCode"] = "editor_idle_timeout";
+                result["retryable"] = true;
+            }
+            return result;
         }
 
         private static EditorIdleSnapshot GetEditorIdleSnapshot()
@@ -1355,6 +1383,17 @@ namespace UnityMCP.Editor
                 return defaultValue;
 
             return int.TryParse(args[key].ToString(), out int value) ? value : defaultValue;
+        }
+
+        private static bool TryGetUtcDateTime(Dictionary<string, object> args, string key, out DateTime value)
+        {
+            value = default;
+            if (args == null || !args.TryGetValue(key, out object raw) || raw == null ||
+                !DateTime.TryParse(raw.ToString(), out value))
+                return false;
+
+            value = value.ToUniversalTime();
+            return true;
         }
     }
 

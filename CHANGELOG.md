@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.24] - 2026-07-28
+
+- Serialize destroyed or otherwise Unity-null `UnityEngine.Object` values from `editor/execute-code` as JSON `null` instead of dereferencing stale native wrappers.
+- Expire editor-idle tickets against their persisted absolute deadline while queued or recovering from Domain Reload, and restore expired waits as terminal timeout results instead of stale queued work.
+
 ## [3.3.23] - 2026-07-28
 
 - Keep pseudo-state and contextual USS rules separate from unconditional class declarations in `uitoolkit/asset-inspect`, preventing `:hover` and `:checked` values from leaking into default style results.

@@ -807,6 +807,80 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void EditorIdleWait_ExpiredReloadSnapshotRestoresAsTerminalTimeout()
+        {
+            long ticketId = DateTime.UtcNow.Ticks;
+            var persistentArguments = new Dictionary<string, object>
+            {
+                { "timeoutMs", 5000 },
+                { "_originalTimeoutMs", 5000 },
+                { "stableFrames", 3 },
+                { "stableMs", 500 },
+                { "_resumeCount", 0 },
+                { "_deadlineUtc", DateTime.UtcNow.AddSeconds(-1).ToString("O") },
+            };
+            var snapshot = new Dictionary<string, object>
+            {
+                { "ticketId", ticketId },
+                { "agentId", "expired-reload-regression" },
+                { "actionName", "wait/editor-idle" },
+                { "status", MCPRequestQueue.RequestStatus.Executing.ToString() },
+                { "queuePosition", 0 },
+                { "submittedAt", DateTime.UtcNow.AddSeconds(-6).ToString("O") },
+                { "requestKey", "wait/editor-idle|5000|3|500" },
+                { "persistentArguments", persistentArguments },
+                { "resumeCount", 0 },
+            };
+
+            var method = typeof(MCPRequestQueue).GetMethod("TryRestoreEditorIdleWait",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+            var invokeArguments = new object[] { snapshot, null };
+            Assert.That(method.Invoke(null, invokeArguments), Is.EqualTo(true));
+
+            var restored = (MCPRequestQueue.RequestTicket)invokeArguments[1];
+            Assert.That(restored.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.TimedOut));
+            Assert.That(restored.CompletedAt, Is.Not.Null);
+            Assert.That(restored.ErrorCode, Is.EqualTo("editor_idle_timeout"));
+            Assert.That(restored.Retryable, Is.True);
+            Assert.That(restored.ResumeCount, Is.EqualTo(1));
+            var result = RequireDictionary(restored.Result);
+            Assert.That(result["success"], Is.EqualTo(false));
+            Assert.That(result["timedOut"], Is.EqualTo(true));
+            Assert.That(result["deadlineExceededBeforeCompletion"], Is.EqualTo(true));
+            Assert.That(result["resumedAfterReload"], Is.EqualTo(true));
+
+            var deferredProperty = typeof(MCPRequestQueue.RequestTicket).GetProperty(
+                "ProgressiveDeferredAction", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(deferredProperty, Is.Not.Null);
+            Assert.That(deferredProperty.GetValue(restored), Is.Null);
+        }
+
+        [Test]
+        public void EditorIdleWait_PollingExpiresAQueuedTicketPastItsDeadline()
+        {
+            string agentId = "queued-idle-timeout-" + Guid.NewGuid().ToString("N");
+            var ticket = MCPRequestQueue.SubmitResumableEditorIdleWait(agentId,
+                new Dictionary<string, object>
+                {
+                    { "timeoutMs", 5 },
+                    { "stableFrames", 997 },
+                    { "stableMs", 999 },
+                }, out bool reused);
+            Assert.That(reused, Is.False);
+
+            System.Threading.Thread.Sleep(20);
+            var status = MCPRequestQueue.GetTicketStatus(ticket.TicketId);
+
+            Assert.That(status, Is.Not.Null);
+            Assert.That(status["status"], Is.EqualTo(MCPRequestQueue.RequestStatus.TimedOut.ToString()));
+            Assert.That(status["errorCode"], Is.EqualTo("editor_idle_timeout"));
+            var result = RequireDictionary(status["result"]);
+            Assert.That(result["timedOut"], Is.EqualTo(true));
+            Assert.That(result["deadlineExceededBeforeCompletion"], Is.EqualTo(true));
+        }
+
+        [Test]
         public void EditorIdleWait_CompletedSnapshotRestoresTerminalResult()
         {
             var completedResult = new Dictionary<string, object>
@@ -1452,6 +1526,34 @@ namespace UnityMCP.Editor.Tests
             Assert.That(System.Convert.ToInt32(response["count"]), Is.EqualTo(10));
             var result = (List<object>)response["result"];
             CollectionAssert.AreEqual(new object[] { 0, 1, "<truncated>" }, result);
+        }
+
+        [Test]
+        public void ExecuteCode_DestroyedUnityObjectSerializesAsNull()
+        {
+            var liveObject = new GameObject("Execute Code Live Object");
+            UnityEngine.Object destroyedObject = new GameObject("Execute Code Destroyed Object");
+            UnityEngine.Object.DestroyImmediate(destroyedObject);
+            Assert.That(destroyedObject == null, Is.True);
+
+            try
+            {
+                var response = MCPEditorCommands.SerializeResult(new Dictionary<string, object>
+                {
+                    { "live", liveObject },
+                    { "destroyed", destroyedObject },
+                }, new Dictionary<string, object>());
+                var result = RequireDictionary(response["result"]);
+
+                Assert.That(result["destroyed"], Is.Null);
+                var live = RequireDictionary(result["live"]);
+                Assert.That(live["name"], Is.EqualTo(liveObject.name));
+                Assert.That(live["instanceId"], Is.EqualTo(liveObject.GetInstanceID()));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(liveObject);
+            }
         }
 
         [Test]
