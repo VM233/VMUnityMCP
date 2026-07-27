@@ -1531,29 +1531,23 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ExecuteCode_DestroyedUnityObjectSerializesAsNull()
         {
-            var liveObject = new GameObject("Execute Code Live Object");
-            UnityEngine.Object destroyedObject = new GameObject("Execute Code Destroyed Object");
-            UnityEngine.Object.DestroyImmediate(destroyedObject);
-            Assert.That(destroyedObject == null, Is.True);
-
-            try
-            {
-                var response = MCPEditorCommands.SerializeResult(new Dictionary<string, object>
+            var response = RequireDictionary(MCPEditorCommands.ExecuteCode(
+                new Dictionary<string, object>
                 {
-                    { "live", liveObject },
-                    { "destroyed", destroyedObject },
-                }, new Dictionary<string, object>());
-                var result = RequireDictionary(response["result"]);
+                    {
+                        "code",
+                        "var temporary = new GameObject(\"Execute Code Destroyed Object\"); " +
+                        "UnityEngine.Object destroyed = temporary; " +
+                        "UnityEngine.Object.DestroyImmediate(temporary); " +
+                        "return new Dictionary<string, object> " +
+                        "{ { \"destroyed\", destroyed }, { \"ordinaryValue\", 7 } };"
+                    },
+                }));
+            Assert.That(response["success"], Is.EqualTo(true));
+            var result = RequireDictionary(response["result"]);
 
-                Assert.That(result["destroyed"], Is.Null);
-                var live = RequireDictionary(result["live"]);
-                Assert.That(live["name"], Is.EqualTo(liveObject.name));
-                Assert.That(live["instanceId"], Is.EqualTo(liveObject.GetInstanceID()));
-            }
-            finally
-            {
-                UnityEngine.Object.DestroyImmediate(liveObject);
-            }
+            Assert.That(result["destroyed"], Is.Null);
+            Assert.That(result["ordinaryValue"], Is.EqualTo(7));
         }
 
         [Test]
