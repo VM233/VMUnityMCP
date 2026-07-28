@@ -1598,6 +1598,10 @@ namespace UnityMCP.Editor
                     return MCPUICommands.SetUIText(ParseJson(body));
                 case "ui/set-image":
                     return MCPUICommands.SetUIImage(ParseJson(body));
+                case "uitoolkit/audit-uss-styles":
+                    return MCPUIToolkitUssAuditCommands.AuditUssStyles(ParseJson(body));
+                case "uitoolkit/audit-uxml-layout":
+                    return MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(ParseJson(body));
                 case "uitoolkit/windows":
                     return MCPUICommands.ListEditorUIWindows(ParseJson(body));
                 case "uitoolkit/tree":

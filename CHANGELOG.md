@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.32] - 2026-07-28
+
+- Add first-class, read-only UI Toolkit static audits for single-consumer USS selectors and layout-only manually centered UXML containers.
+- Make automatic import and filesystem-write auditing an opt-in project policy through `ProjectSettings/UnityMCPUIToolkitAudit.json`, with configurable asset roots, runtime source roots, and exclusions.
+
 ## [3.3.31] - 2026-07-28
 
 - Collapse test-job summaries that repeat progress counters and normalize named result pagination to the same collection/total/next-offset contract used by ordinary list tools.

@@ -1712,6 +1712,86 @@ namespace UnityMCP.Editor.Tests
             Assert.That(containerClass["contextRules"], Is.Empty);
         }
 
+        [Test]
+        public void UIToolkitStaticAudits_AreScopedAndKeepDeterministicRuleCoverage()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Audit.uxml";
+            const string ussPath = TEST_FOLDER + "/Audit.uss";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<ui:VisualElement style=\"width: 200px; height: 100px;\">" +
+                "<ui:VisualElement name=\"ManualCenter\" class=\"single\" " +
+                "style=\"position: absolute; left: 50px; width: 100px; height: 20px; " +
+                "flex-direction: row; justify-content: center;\"><ui:Label/></ui:VisualElement>" +
+                "<ui:VisualElement class=\"shared\"/><ui:VisualElement class=\"shared\"/>" +
+                "</ui:VisualElement></ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                ".single { color: white; }\n.shared { color: red; }\n");
+
+            var common = new Dictionary<string, object>
+            {
+                { "roots", new[] { TEST_FOLDER } },
+                { "runtimeSourceRoots", new[] { TEST_FOLDER } },
+                { "useProjectSettings", false },
+                { "runSelfTests", true },
+            };
+            var ussResult = RequireDictionary(
+                MCPUIToolkitUssAuditCommands.AuditUssStyles(
+                    new Dictionary<string, object>(common)
+                    {
+                        { "paths", new[] { ussPath } },
+                    }));
+            Assert.That(ussResult["success"], Is.EqualTo(true));
+            Assert.That(ussResult["warningCount"], Is.EqualTo(1));
+            var ussIssues = (List<Dictionary<string, object>>)ussResult["issues"];
+            Assert.That(ussIssues.Single()["kind"], Is.EqualTo("single-use-class"));
+            Assert.That(ussIssues.Single()["token"], Is.EqualTo("single"));
+            Assert.That(RequireDictionary(ussResult["selfTests"])["passed"], Is.EqualTo(true));
+
+            var uxmlResult = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>(common)
+                    {
+                        { "paths", new[] { uxmlPath } },
+                    }));
+            Assert.That(uxmlResult["success"], Is.EqualTo(true));
+            Assert.That(uxmlResult["warningCount"], Is.EqualTo(1));
+            var uxmlIssues = (List<Dictionary<string, object>>)uxmlResult["issues"];
+            Assert.That(uxmlIssues.Single()["kind"], Is.EqualTo("manual-centered-layout-box"));
+            Assert.That(RequireDictionary(uxmlResult["selfTests"])["passed"], Is.EqualTo(true));
+        }
+
+        [Test]
+        public void UIToolkitStaticAudits_AreFirstClassReadOnlyLongRunningTools()
+        {
+            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
+            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
+
+            foreach (string route in new[]
+                     {
+                         "uitoolkit/audit-uss-styles",
+                         "uitoolkit/audit-uxml-layout",
+                     })
+            {
+                var tool = tools.Single(item => item["route"].ToString() == route);
+                Assert.That(tool["firstClass"], Is.EqualTo(true), route);
+                Assert.That(tool["readOnly"], Is.EqualTo(true), route);
+                Assert.That(tool["longRunning"], Is.EqualTo(true), route);
+                Assert.That(tool["toolName"],
+                    Is.EqualTo("unity_" + route.Replace('/', '_').Replace('-', '_')), route);
+
+                var schema = RequireDictionary(tool["inputSchema"]);
+                var properties = RequireDictionary(schema["properties"]);
+                Assert.That(properties.Keys,
+                    Is.SupersetOf(new[]
+                    {
+                        "paths", "roots", "excludePaths", "useProjectSettings",
+                        "includeSuppressed", "runSelfTests", "maxIssues",
+                    }), route);
+            }
+        }
+
         [UnityTest]
         public IEnumerator UIBuilderPreview_WaitsForRequestedDocumentAndCanvas()
         {

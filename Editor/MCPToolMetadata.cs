@@ -150,6 +150,8 @@ namespace UnityMCP.Editor
             AddProfile(profiles, ToolProfile.FirstClass(readOnly: true, longRunning: true),
                 "wait/editor-idle",
                 "testing/list-tests",
+                "uitoolkit/audit-uss-styles",
+                "uitoolkit/audit-uxml-layout",
                 "uitoolkit/builder-preview",
                 "profiler/frame-data",
                 "profiler/analyze",
@@ -893,6 +895,10 @@ namespace UnityMCP.Editor
                     return "Create transitions between every pair of the provided Animator states.";
                 case "animation/validate-controller":
                     return "Validate Animator parameters, states, motions, required transitions, and pairwise state connections.";
+                case "uitoolkit/audit-uss-styles":
+                    return "Audit USS selectors that serve exactly one authored UXML element without a pseudo-state, shared, generated, runtime-class, or other reusable contract.";
+                case "uitoolkit/audit-uxml-layout":
+                    return "Audit authored UXML for layout-only absolute containers that use fixed dimensions and calculated offsets only to center their children.";
                 case "uitoolkit/windows":
                     return "List open Unity Editor windows with UI Toolkit root metadata.";
                 case "uitoolkit/tree":
@@ -1696,6 +1702,29 @@ namespace UnityMCP.Editor
                         Prop("toolName", "string", "Project tool name from project-tools/list."),
                         Prop("args", "object", "Arguments passed to the project tool as Dictionary<string, object>.")
                     ), "toolName");
+                case "uitoolkit/audit-uss-styles":
+                    return Schema(Props(
+                        Prop("paths", "array", "Optional Assets-relative USS files. Omit to audit every USS file in the effective roots."),
+                        Prop("roots", "array", "Assets-relative roots used to index USS and UXML files. Defaults to the project audit settings, then Assets."),
+                        Prop("runtimeSourceRoots", "array", "Assets-relative roots scanned for UI Toolkit runtime class API references. Defaults to the project audit settings, then Assets."),
+                        Prop("excludePaths", "array", "Assets-relative files or folders excluded from indexing."),
+                        Prop("useProjectSettings", "boolean", "Use ProjectSettings/UnityMCPUIToolkitAudit.json as the default scope. Defaults to true."),
+                        Prop("includeSuppressed", "boolean", "Include findings with a reasoned uss-audit suppression comment. Defaults to false."),
+                        Prop("logWarnings", "boolean", "Also write active findings to the Unity Console. Defaults to false."),
+                        Prop("runSelfTests", "boolean", "Run deterministic in-memory rule tests and return their result. Defaults to false."),
+                        Prop("maxIssues", "number", "Maximum returned findings. Defaults to 200; capped at 5000.")
+                    ));
+                case "uitoolkit/audit-uxml-layout":
+                    return Schema(Props(
+                        Prop("paths", "array", "Optional Assets-relative UXML files. Omit to audit every UXML file in the effective roots."),
+                        Prop("roots", "array", "Assets-relative roots used to index UXML and USS files. Defaults to the project audit settings, then Assets."),
+                        Prop("excludePaths", "array", "Assets-relative files or folders excluded from indexing."),
+                        Prop("useProjectSettings", "boolean", "Use ProjectSettings/UnityMCPUIToolkitAudit.json as the default scope. Defaults to true."),
+                        Prop("includeSuppressed", "boolean", "Include findings with a reasoned uxml-layout-audit suppression comment. Defaults to false."),
+                        Prop("logWarnings", "boolean", "Also write active findings to the Unity Console. Defaults to false."),
+                        Prop("runSelfTests", "boolean", "Run deterministic in-memory rule tests and return their result. Defaults to false."),
+                        Prop("maxIssues", "number", "Maximum returned findings. Defaults to 200; capped at 5000.")
+                    ));
                 case "uitoolkit/windows":
                     return Schema(Props());
                 case "uitoolkit/tree":

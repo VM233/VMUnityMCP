@@ -385,6 +385,8 @@ namespace UnityMCP.Editor
             "ui/set-text",
             "uitoolkit/assert-layout",
             "uitoolkit/asset-inspect",
+            "uitoolkit/audit-uss-styles",
+            "uitoolkit/audit-uxml-layout",
             "uitoolkit/authoring-transaction",
             "uitoolkit/builder-preview",
             "uitoolkit/capture-element",
