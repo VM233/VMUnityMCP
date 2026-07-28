@@ -898,7 +898,7 @@ namespace UnityMCP.Editor
                 case "uitoolkit/audit-uss-styles":
                     return "Audit USS selectors that serve exactly one authored UXML element without a pseudo-state, shared, generated, runtime-class, or other reusable contract.";
                 case "uitoolkit/audit-uxml-layout":
-                    return "Audit authored UXML for layout-only manually centered containers, visually inert centered-label stretching, repeated inline layout variants, and inline declarations already owned by loaded USS defaults.";
+                    return "Audit authored UXML for layout-only manually centered containers, visually inert centered-label stretching or growth, repeated inline layout variants, and inline declarations already owned by loaded USS defaults.";
                 case "uitoolkit/windows":
                     return "List open Unity Editor windows with UI Toolkit root metadata.";
                 case "uitoolkit/tree":

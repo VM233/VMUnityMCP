@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.40] - 2026-07-29
+
+- Extend the UXML layout audit to report a sole transparent Label whose inline main-axis growth leaves its centered glyph at the same position already established by the parent.
+
 ## [3.3.39] - 2026-07-29
 
 - Extend the UXML layout audit to report centered Labels whose inline cross-axis stretch changes only a transparent layout box while leaving the centered glyph position unchanged.

@@ -2093,6 +2093,66 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUxmlAudit_ReportsVisuallyInertCenteredSingleLabelGrow()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Inert Centered Label Grow.uxml";
+            const string ussPath = TEST_FOLDER + "/Inert Centered Label Grow.uss";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<Style src=\"Inert Centered Label Grow.uss\"/>" +
+                "<ui:VisualElement style=\"justify-content: center;\">" +
+                "<ui:Label name=\"Inert\" style=\"flex-grow: 1; " +
+                "margin-bottom: 3px; -unity-text-align: middle-center;\"/>" +
+                "</ui:VisualElement>" +
+                "<ui:VisualElement style=\"justify-content: center;\">" +
+                "<ui:Label name=\"HasSibling\" style=\"flex-grow: 1; " +
+                "-unity-text-align: middle-center;\"/>" +
+                "<ui:Label text=\"Sibling\"/>" +
+                "</ui:VisualElement>" +
+                "<ui:VisualElement style=\"justify-content: flex-start;\">" +
+                "<ui:Label name=\"ParentStarts\" style=\"flex-grow: 1; " +
+                "-unity-text-align: middle-center;\"/>" +
+                "</ui:VisualElement>" +
+                "<ui:VisualElement style=\"justify-content: center;\">" +
+                "<ui:Label name=\"VisualBox\" style=\"flex-grow: 1; " +
+                "background-color: rgb(1, 2, 3); " +
+                "-unity-text-align: middle-center;\"/>" +
+                "</ui:VisualElement>" +
+                "<ui:VisualElement style=\"justify-content: center;\">" +
+                "<ui:Label name=\"FixedHeight\" style=\"flex-grow: 1; " +
+                "height: 24px; -unity-text-align: middle-center;\"/>" +
+                "</ui:VisualElement>" +
+                "</ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                ".unity-label { padding-top: 0; padding-right: 0; " +
+                "padding-bottom: 0; padding-left: 0; }\n");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { uxmlPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            var issue = issues.Single();
+            Assert.That(issue["kind"], Is.EqualTo("visually-inert-text-grow"));
+            Assert.That(issue["element"], Is.EqualTo("#Inert"));
+            Assert.That(issue["axis"], Is.EqualTo("vertical"));
+            Assert.That((List<string>)issue["fixedProperties"],
+                Is.EqualTo(new[] { "flex-grow" }));
+            Assert.That((Dictionary<string, string>)issue["inlineDeclarations"],
+                Is.EquivalentTo(new Dictionary<string, string>
+                {
+                    { "flex-grow", "1" }
+                }));
+        }
+
+        [Test]
         public void UIToolkitStaticAudits_AreFirstClassReadOnlyLongRunningTools()
         {
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(

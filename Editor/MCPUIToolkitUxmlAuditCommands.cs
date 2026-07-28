@@ -94,6 +94,8 @@ namespace UnityMCP.Editor
             "uxml-layout-audit: allow-redundant-inline";
         internal const string INERT_TEXT_STRETCH_SUPPRESSION_MARKER =
             "uxml-layout-audit: allow-inert-text-stretch";
+        internal const string INERT_TEXT_GROW_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-inert-text-grow";
 
         private const float CENTER_EPSILON = 0.01f;
 
@@ -119,6 +121,10 @@ namespace UnityMCP.Editor
 
         private static readonly Regex inertTextStretchSuppressionRegex =
             new Regex(@"^\s*uxml-layout-audit:\s*allow-inert-text-stretch\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex inertTextGrowSuppressionRegex =
+            new Regex(@"^\s*uxml-layout-audit:\s*allow-inert-text-grow\s+(?<reason>.+?)\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private static readonly Regex ussCommentRegex =
@@ -417,6 +423,83 @@ namespace UnityMCP.Editor
                 suppressedInertStretch.SuppressedCount == 1 &&
                 suppressedInertStretch.Issues.Single().Suppressed);
 
+            const string inertGrow =
+                "<ui:VisualElement style=\"justify-content: center;\">" +
+                "<ui:Label name=\"Title\" style=\"flex-grow: 1; margin-bottom: 3px; " +
+                "-unity-text-align: middle-center;\"/>" +
+                "</ui:VisualElement>";
+            var inertTextGrow = AuditFixture(inertGrow);
+            AddSelfTestCase(cases, "centered sole label grow warns",
+                inertTextGrow.WarningCount == 1 &&
+                inertTextGrow.Issues.Single().Kind == "visually-inert-text-grow" &&
+                inertTextGrow.Issues.Single().Axis == "vertical");
+
+            var siblingGrow = AuditFixture(
+                inertGrow.Replace("</ui:VisualElement>",
+                    "<ui:Label text=\"Sibling\"/></ui:VisualElement>"));
+            AddSelfTestCase(cases, "label grow with sibling passes",
+                siblingGrow.WarningCount == 0);
+
+            var parentStartGrow = AuditFixture(
+                inertGrow.Replace("justify-content: center",
+                    "justify-content: flex-start"));
+            AddSelfTestCase(cases, "non-centered parent grow passes",
+                parentStartGrow.WarningCount == 0);
+
+            var upperTextGrow = AuditFixture(
+                inertGrow.Replace("middle-center", "upper-center"));
+            AddSelfTestCase(cases, "non-centered main-axis text grow passes",
+                upperTextGrow.WarningCount == 0);
+
+            var visualBoxGrow = AuditFixture(
+                inertGrow.Replace("flex-grow: 1;",
+                    "flex-grow: 1; background-color: rgb(1, 2, 3);"));
+            AddSelfTestCase(cases, "visually owned label grow passes",
+                visualBoxGrow.WarningCount == 0);
+
+            var fixedHeightGrow = AuditFixture(
+                inertGrow.Replace("flex-grow: 1;",
+                    "flex-grow: 1; height: 24px;"));
+            AddSelfTestCase(cases, "fixed main-size label grow passes",
+                fixedHeightGrow.WarningCount == 0);
+
+            const string horizontalGrow =
+                "<ui:VisualElement style=\"flex-direction: row; justify-content: center;\">" +
+                "<ui:Label name=\"Title\" style=\"flex-grow: 2; " +
+                "-unity-text-align: middle-center;\"/>" +
+                "</ui:VisualElement>";
+            var horizontalTextGrow = AuditFixture(horizontalGrow);
+            AddSelfTestCase(cases, "centered row label grow warns",
+                horizontalTextGrow.WarningCount == 1 &&
+                horizontalTextGrow.Issues.Single().Axis == "horizontal");
+
+            var zeroDefaultPaddingGrow = AuditFixture(inertGrow,
+                inlineStyleContracts: labelDefaultStyleIndex);
+            AddSelfTestCase(cases, "neutral label defaults do not hide inert grow",
+                zeroDefaultPaddingGrow.WarningCount == 1 &&
+                zeroDefaultPaddingGrow.Issues.Single().Kind ==
+                "visually-inert-text-grow");
+
+            var growDefaultStyleIndex = new UxmlInlineStyleContractIndex();
+            IndexInlineStyleSheetText("Assets/Grow Default.uss",
+                ".unity-label { flex-grow: 1; }", growDefaultStyleIndex);
+            var redundantDefaultGrow = AuditFixture(inertGrow,
+                inlineStyleContracts: growDefaultStyleIndex);
+            AddSelfTestCase(cases, "loaded grow default reports only its owning rule",
+                redundantDefaultGrow.WarningCount == 1 &&
+                redundantDefaultGrow.Issues.Single().Kind ==
+                "redundant-inline-declaration");
+
+            var suppressedInertGrow = AuditFixture(
+                inertGrow.Replace("<ui:Label",
+                    $"<!-- {INERT_TEXT_GROW_SUPPRESSION_MARKER} " +
+                    "fixture reserves a hit region --><ui:Label"),
+                includeSuppressed: true);
+            AddSelfTestCase(cases, "reasoned inert-grow suppression is retained",
+                suppressedInertGrow.WarningCount == 0 &&
+                suppressedInertGrow.SuppressedCount == 1 &&
+                suppressedInertGrow.Issues.Single().Suppressed);
+
             return new Dictionary<string, object>
             {
                 { "passed", cases.All(testCase => (bool)testCase["passed"]) },
@@ -462,6 +545,8 @@ namespace UnityMCP.Editor
             AuditRedundantInlineDeclarations(assetPath, document, inlineStyleContracts, report,
                 includeSuppressed);
             AuditVisuallyInertTextStretch(assetPath, document, inlineStyleContracts,
+                layoutContracts, report, includeSuppressed);
+            AuditVisuallyInertTextGrow(assetPath, document, inlineStyleContracts,
                 layoutContracts, report, includeSuppressed);
             AuditRepeatedInlineLayoutVariants(assetPath, document, layoutContracts, report,
                 includeSuppressed);
@@ -970,7 +1055,7 @@ namespace UnityMCP.Editor
                          StringComparison.Ordinal) == false) ||
                     (vertical && textAlignment.StartsWith("middle-",
                          StringComparison.Ordinal) == false) ||
-                    HasCrossAxisSizeContract(elementStyle, horizontal) ||
+                    HasAxisSizeContract(elementStyle, horizontal) ||
                     HasVisualBoxContract(element, elementStyle, layoutContracts) ||
                     HasSymmetricCrossAxisMargins(elementStyle, horizontal) == false)
                 {
@@ -1011,6 +1096,135 @@ namespace UnityMCP.Editor
             }
         }
 
+        private static void AuditVisuallyInertTextGrow(string assetPath,
+            XDocument document, UxmlInlineStyleContractIndex inlineStyleContracts,
+            UxmlLayoutContractIndex layoutContracts, MCPUxmlLayoutAuditReport report,
+            bool includeSuppressed)
+        {
+            foreach (var element in document.Descendants())
+            {
+                var parent = element.Parent as XElement;
+                if (parent == null)
+                {
+                    continue;
+                }
+
+                var elementType = ResolveVisualElementType(element);
+                if (elementType == null ||
+                    typeof(Label).IsAssignableFrom(elementType) == false ||
+                    ResolveVisualElementType(parent) != typeof(VisualElement))
+                {
+                    continue;
+                }
+
+                var inlineStyle = ParseStyle(AttributeValue(element, "style"));
+                if (inlineStyle.TryGetValue("flex-grow", out var inlineGrow) == false ||
+                    float.TryParse(inlineGrow, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out var grow) == false ||
+                    float.IsNaN(grow) || float.IsInfinity(grow) || grow <= 0)
+                {
+                    continue;
+                }
+
+                var stylesheetStyle = inlineStyleContracts.Resolve(element);
+                if (stylesheetStyle.TryGetValue("flex-grow",
+                        out var stylesheetGrow) &&
+                    StyleValuesEqual(stylesheetGrow.Value, inlineGrow))
+                {
+                    continue;
+                }
+
+                var parentStyle = ResolveAuthoredStyle(parent, inlineStyleContracts);
+                if (StyleValue(parentStyle, "justify-content") != "center" ||
+                    IsOnlyVisualContentChild(parent, element) == false)
+                {
+                    continue;
+                }
+
+                var flexDirection = StyleValue(parentStyle, "flex-direction");
+                if (string.IsNullOrWhiteSpace(flexDirection))
+                {
+                    flexDirection = "column";
+                }
+
+                var horizontal = flexDirection == "row" ||
+                                 flexDirection == "row-reverse";
+                var vertical = flexDirection == "column" ||
+                               flexDirection == "column-reverse";
+                if (horizontal == false && vertical == false)
+                {
+                    continue;
+                }
+
+                var elementStyle = ResolveAuthoredStyle(element, inlineStyleContracts);
+                var textAlignment = StyleValue(elementStyle, "-unity-text-align");
+                if ((horizontal && textAlignment.EndsWith("-center",
+                         StringComparison.Ordinal) == false) ||
+                    (vertical && textAlignment.StartsWith("middle-",
+                         StringComparison.Ordinal) == false) ||
+                    HasAxisSizeContract(elementStyle, horizontal) ||
+                    HasVisualBoxContract(element, elementStyle, layoutContracts))
+                {
+                    continue;
+                }
+
+                var name = AttributeValue(element, "name");
+                var elementLabel = string.IsNullOrWhiteSpace(name)
+                    ? $"<{element.Name.LocalName}>"
+                    : $"#{name}";
+                var axis = horizontal ? "horizontal" : "vertical";
+                var suppressionReason = GetSuppressionReason(element,
+                    inertTextGrowSuppressionRegex);
+                var issue = new MCPUxmlLayoutAuditIssue
+                {
+                    AssetPath = assetPath,
+                    Line = GetLineNumber(element),
+                    Element = elementLabel,
+                    ElementName = name,
+                    Kind = "visually-inert-text-grow",
+                    Axis = axis,
+                    FixedProperties = new List<string> { "flex-grow" },
+                    InlineDeclarations = new Dictionary<string, string>(
+                        StringComparer.OrdinalIgnoreCase)
+                    {
+                        { "flex-grow", inlineGrow }
+                    },
+                    Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                    SuppressionReason = suppressionReason,
+                    Message =
+                        $"Inline flex-grow: {inlineGrow} expands the transparent {elementLabel} " +
+                        $"along its parent's {axis} main axis, but the plain VisualElement parent " +
+                        "has no other visual child and already centers that axis with " +
+                        $"justify-content: center. With text alignment {textAlignment}, the glyph " +
+                        "center is unchanged at the Label's natural size; remove the inert grow " +
+                        "declaration."
+                };
+                report.Record(issue, includeSuppressed);
+            }
+        }
+
+        private static bool IsOnlyVisualContentChild(XElement parent, XElement element)
+        {
+            var visualChildren = parent.Elements()
+                .Where(child => IsUxmlMetadataElement(child) == false)
+                .ToList();
+            return visualChildren.Count == 1 && visualChildren[0] == element;
+        }
+
+        private static bool IsUxmlMetadataElement(XElement element)
+        {
+            switch (element.Name.LocalName)
+            {
+                case "Bindings":
+                case "Style":
+                case "Template":
+                case "AttributeOverrides":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private static Dictionary<string, string> ResolveAuthoredStyle(XElement element,
             UxmlInlineStyleContractIndex inlineStyleContracts)
         {
@@ -1026,7 +1240,7 @@ namespace UnityMCP.Editor
             return result;
         }
 
-        private static bool HasCrossAxisSizeContract(
+        private static bool HasAxisSizeContract(
             IReadOnlyDictionary<string, string> style, bool horizontal)
         {
             var properties = horizontal
@@ -1853,7 +2067,8 @@ namespace UnityMCP.Editor
                         $"<!-- {MCPUxmlLayoutAuditor.SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.REPEATED_INLINE_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.REDUNDANT_INLINE_SUPPRESSION_MARKER} <reason> -->",
-                        $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_STRETCH_SUPPRESSION_MARKER} <reason> -->"
+                        $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_STRETCH_SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_GROW_SUPPRESSION_MARKER} <reason> -->"
                     }
                 }
             };
@@ -1927,6 +2142,8 @@ namespace UnityMCP.Editor
                 result["stylesheetRules"] = StylesheetRules.ToList();
             }
             else if (string.Equals(Kind, "visually-inert-text-stretch",
+                         StringComparison.Ordinal) ||
+                     string.Equals(Kind, "visually-inert-text-grow",
                          StringComparison.Ordinal))
             {
                 result["inlineDeclarations"] =
