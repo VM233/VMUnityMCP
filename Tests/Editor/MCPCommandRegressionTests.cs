@@ -2040,6 +2040,59 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUxmlAudit_ReportsVisuallyInertCenteredLabelStretch()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Inert Centered Label Stretch.uxml";
+            const string ussPath = TEST_FOLDER + "/Inert Centered Label Stretch.uss";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<Style src=\"Inert Centered Label Stretch.uss\"/>" +
+                "<ui:VisualElement style=\"align-items: center;\">" +
+                "<ui:Label name=\"Inert\" style=\"align-self: stretch; " +
+                "margin-left: 18px; margin-right: 18px; " +
+                "-unity-text-align: middle-center;\"/>" +
+                "<ui:Label name=\"Asymmetric\" style=\"align-self: stretch; " +
+                "margin-left: 18px; margin-right: 21px; " +
+                "-unity-text-align: middle-center;\"/>" +
+                "<ui:Label name=\"LeftAligned\" style=\"align-self: stretch; " +
+                "-unity-text-align: middle-left;\"/>" +
+                "<ui:Label name=\"VisualBox\" style=\"align-self: stretch; " +
+                "background-color: rgb(1, 2, 3); " +
+                "-unity-text-align: middle-center;\"/>" +
+                "<ui:Label name=\"FixedWidth\" style=\"align-self: stretch; " +
+                "width: 120px; -unity-text-align: middle-center;\"/>" +
+                "</ui:VisualElement>" +
+                "</ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                ".unity-label { padding-top: 0; padding-right: 0; " +
+                "padding-bottom: 0; padding-left: 0; }\n");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { uxmlPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            var issue = issues.Single();
+            Assert.That(issue["kind"], Is.EqualTo("visually-inert-text-stretch"));
+            Assert.That(issue["element"], Is.EqualTo("#Inert"));
+            Assert.That(issue["axis"], Is.EqualTo("horizontal"));
+            Assert.That((List<string>)issue["fixedProperties"],
+                Is.EqualTo(new[] { "align-self" }));
+            Assert.That((Dictionary<string, string>)issue["inlineDeclarations"],
+                Is.EquivalentTo(new Dictionary<string, string>
+                {
+                    { "align-self", "stretch" }
+                }));
+        }
+
+        [Test]
         public void UIToolkitStaticAudits_AreFirstClassReadOnlyLongRunningTools()
         {
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(

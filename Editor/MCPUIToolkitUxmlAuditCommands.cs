@@ -92,6 +92,8 @@ namespace UnityMCP.Editor
             "uxml-layout-audit: allow-repeated-inline";
         internal const string REDUNDANT_INLINE_SUPPRESSION_MARKER =
             "uxml-layout-audit: allow-redundant-inline";
+        internal const string INERT_TEXT_STRETCH_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-inert-text-stretch";
 
         private const float CENTER_EPSILON = 0.01f;
 
@@ -113,6 +115,10 @@ namespace UnityMCP.Editor
 
         private static readonly Regex redundantInlineSuppressionRegex =
             new Regex(@"^\s*uxml-layout-audit:\s*allow-redundant-inline\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex inertTextStretchSuppressionRegex =
+            new Regex(@"^\s*uxml-layout-audit:\s*allow-inert-text-stretch\s+(?<reason>.+?)\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private static readonly Regex ussCommentRegex =
@@ -344,6 +350,73 @@ namespace UnityMCP.Editor
                 suppressedRedundantInline.SuppressedCount == 1 &&
                 suppressedRedundantInline.Issues.Single().Suppressed);
 
+            const string inertStretch =
+                "<ui:VisualElement style=\"align-items: center;\">" +
+                "<ui:Label name=\"Title\" style=\"align-self: stretch; margin-left: 18px; " +
+                "margin-right: 18px; -unity-text-align: middle-center;\"/>" +
+                "</ui:VisualElement>";
+            var inertTextStretch = AuditFixture(inertStretch);
+            AddSelfTestCase(cases, "centered intrinsic label stretch warns",
+                inertTextStretch.WarningCount == 1 &&
+                inertTextStretch.Issues.Single().Kind ==
+                "visually-inert-text-stretch" &&
+                inertTextStretch.Issues.Single().Axis == "horizontal");
+
+            var asymmetricStretch = AuditFixture(
+                inertStretch.Replace("margin-right: 18px", "margin-right: 21px"));
+            AddSelfTestCase(cases, "asymmetric label stretch passes",
+                asymmetricStretch.WarningCount == 0);
+
+            var nonCenteredTextStretch = AuditFixture(
+                inertStretch.Replace("middle-center", "middle-left"));
+            AddSelfTestCase(cases, "non-centered text stretch passes",
+                nonCenteredTextStretch.WarningCount == 0);
+
+            var visualBoxStretch = AuditFixture(
+                inertStretch.Replace("align-self: stretch;",
+                    "align-self: stretch; background-color: rgb(1, 2, 3);"));
+            AddSelfTestCase(cases, "visually owned label stretch passes",
+                visualBoxStretch.WarningCount == 0);
+
+            var fixedWidthStretch = AuditFixture(
+                inertStretch.Replace("align-self: stretch;",
+                    "align-self: stretch; width: 120px;"));
+            AddSelfTestCase(cases, "fixed cross-size label stretch passes",
+                fixedWidthStretch.WarningCount == 0);
+
+            var labelDefaultStyleIndex = new UxmlInlineStyleContractIndex();
+            IndexInlineStyleSheetText("Assets/Basics.uss",
+                ".unity-label { padding-top: 0; padding-right: 0; " +
+                "padding-bottom: 0; padding-left: 0; }",
+                labelDefaultStyleIndex);
+            var zeroDefaultPaddingStretch = AuditFixture(inertStretch,
+                inlineStyleContracts: labelDefaultStyleIndex);
+            AddSelfTestCase(cases, "neutral label defaults do not hide inert stretch",
+                zeroDefaultPaddingStretch.WarningCount == 1 &&
+                zeroDefaultPaddingStretch.Issues.Single().Kind ==
+                "visually-inert-text-stretch");
+
+            var labelBoxIndex = new UxmlLayoutContractIndex();
+            IndexStyleSheetText(
+                ".intentional-label-box { background-image: url(\"Title.png\"); }",
+                labelBoxIndex);
+            var styledBoxStretch = AuditFixture(
+                inertStretch.Replace("name=\"Title\"",
+                    "name=\"Title\" class=\"intentional-label-box\""),
+                layoutContracts: labelBoxIndex);
+            AddSelfTestCase(cases, "explicit USS label box passes",
+                styledBoxStretch.WarningCount == 0);
+
+            var suppressedInertStretch = AuditFixture(
+                inertStretch.Replace("<ui:Label",
+                    $"<!-- {INERT_TEXT_STRETCH_SUPPRESSION_MARKER} " +
+                    "fixture reserves a hit region --><ui:Label"),
+                includeSuppressed: true);
+            AddSelfTestCase(cases, "reasoned inert-stretch suppression is retained",
+                suppressedInertStretch.WarningCount == 0 &&
+                suppressedInertStretch.SuppressedCount == 1 &&
+                suppressedInertStretch.Issues.Single().Suppressed);
+
             return new Dictionary<string, object>
             {
                 { "passed", cases.All(testCase => (bool)testCase["passed"]) },
@@ -388,6 +461,8 @@ namespace UnityMCP.Editor
 
             AuditRedundantInlineDeclarations(assetPath, document, inlineStyleContracts, report,
                 includeSuppressed);
+            AuditVisuallyInertTextStretch(assetPath, document, inlineStyleContracts,
+                layoutContracts, report, includeSuppressed);
             AuditRepeatedInlineLayoutVariants(assetPath, document, layoutContracts, report,
                 includeSuppressed);
         }
@@ -833,6 +908,274 @@ namespace UnityMCP.Editor
             }
         }
 
+        private static void AuditVisuallyInertTextStretch(string assetPath,
+            XDocument document, UxmlInlineStyleContractIndex inlineStyleContracts,
+            UxmlLayoutContractIndex layoutContracts, MCPUxmlLayoutAuditReport report,
+            bool includeSuppressed)
+        {
+            foreach (var element in document.Descendants())
+            {
+                var parent = element.Parent as XElement;
+                if (parent == null)
+                {
+                    continue;
+                }
+
+                var elementType = ResolveVisualElementType(element);
+                if (elementType == null ||
+                    typeof(Label).IsAssignableFrom(elementType) == false ||
+                    ResolveVisualElementType(parent) != typeof(VisualElement))
+                {
+                    continue;
+                }
+
+                var inlineStyle = ParseStyle(AttributeValue(element, "style"));
+                if (StyleValue(inlineStyle, "align-self") != "stretch")
+                {
+                    continue;
+                }
+
+                var stylesheetStyle = inlineStyleContracts.Resolve(element);
+                if (stylesheetStyle.TryGetValue("align-self",
+                        out var stylesheetAlignment) &&
+                    StyleValuesEqual(stylesheetAlignment.Value, "stretch"))
+                {
+                    continue;
+                }
+
+                var parentStyle = ResolveAuthoredStyle(parent, inlineStyleContracts);
+                if (StyleValue(parentStyle, "align-items") != "center")
+                {
+                    continue;
+                }
+
+                var flexDirection = StyleValue(parentStyle, "flex-direction");
+                if (string.IsNullOrWhiteSpace(flexDirection))
+                {
+                    flexDirection = "column";
+                }
+
+                var horizontal = flexDirection == "column" ||
+                                 flexDirection == "column-reverse";
+                var vertical = flexDirection == "row" ||
+                               flexDirection == "row-reverse";
+                if (horizontal == false && vertical == false)
+                {
+                    continue;
+                }
+
+                var elementStyle = ResolveAuthoredStyle(element, inlineStyleContracts);
+                var textAlignment = StyleValue(elementStyle, "-unity-text-align");
+                if ((horizontal && textAlignment.EndsWith("-center",
+                         StringComparison.Ordinal) == false) ||
+                    (vertical && textAlignment.StartsWith("middle-",
+                         StringComparison.Ordinal) == false) ||
+                    HasCrossAxisSizeContract(elementStyle, horizontal) ||
+                    HasVisualBoxContract(element, elementStyle, layoutContracts) ||
+                    HasSymmetricCrossAxisMargins(elementStyle, horizontal) == false)
+                {
+                    continue;
+                }
+
+                var name = AttributeValue(element, "name");
+                var elementLabel = string.IsNullOrWhiteSpace(name)
+                    ? $"<{element.Name.LocalName}>"
+                    : $"#{name}";
+                var axis = horizontal ? "horizontal" : "vertical";
+                var suppressionReason = GetSuppressionReason(element,
+                    inertTextStretchSuppressionRegex);
+                var issue = new MCPUxmlLayoutAuditIssue
+                {
+                    AssetPath = assetPath,
+                    Line = GetLineNumber(element),
+                    Element = elementLabel,
+                    ElementName = name,
+                    Kind = "visually-inert-text-stretch",
+                    Axis = axis,
+                    FixedProperties = new List<string> { "align-self" },
+                    InlineDeclarations = new Dictionary<string, string>(
+                        StringComparer.OrdinalIgnoreCase)
+                    {
+                        { "align-self", inlineStyle["align-self"] }
+                    },
+                    Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                    SuppressionReason = suppressionReason,
+                    Message =
+                        $"Inline align-self: stretch expands the transparent {elementLabel} " +
+                        $"{axis} layout box, but its plain VisualElement parent already centers " +
+                        $"the cross axis, the text alignment is {textAlignment}, and the opposing " +
+                        "margins are equal. The glyph center is unchanged at the element's natural " +
+                        "size; remove the inert stretch declaration."
+                };
+                report.Record(issue, includeSuppressed);
+            }
+        }
+
+        private static Dictionary<string, string> ResolveAuthoredStyle(XElement element,
+            UxmlInlineStyleContractIndex inlineStyleContracts)
+        {
+            var result = inlineStyleContracts.Resolve(element)
+                .ToDictionary(declaration => declaration.Key,
+                    declaration => declaration.Value.Value,
+                    StringComparer.OrdinalIgnoreCase);
+            foreach (var declaration in ParseStyle(AttributeValue(element, "style")))
+            {
+                result[declaration.Key] = declaration.Value;
+            }
+
+            return result;
+        }
+
+        private static bool HasCrossAxisSizeContract(
+            IReadOnlyDictionary<string, string> style, bool horizontal)
+        {
+            var properties = horizontal
+                ? new[] { "width", "min-width", "max-width" }
+                : new[] { "height", "min-height", "max-height" };
+            return properties.Any(property =>
+                style.TryGetValue(property, out var value) &&
+                string.IsNullOrWhiteSpace(value) == false &&
+                string.Equals(value.Trim(), "auto", StringComparison.OrdinalIgnoreCase) == false &&
+                string.Equals(value.Trim(), "none", StringComparison.OrdinalIgnoreCase) == false);
+        }
+
+        private static bool HasVisualBoxContract(XElement element,
+            IReadOnlyDictionary<string, string> style,
+            UxmlLayoutContractIndex layoutContracts)
+        {
+            if (style.Any(property =>
+                    IsMeaningfulVisualBoxProperty(property.Key, property.Value)))
+            {
+                return true;
+            }
+
+            var name = AttributeValue(element, "name");
+            if (string.IsNullOrWhiteSpace(name) == false &&
+                layoutContracts.BoxIds.Contains(name))
+            {
+                return true;
+            }
+
+            return SplitWhitespace(AttributeValue(element, "class"))
+                .Any(className => layoutContracts.BoxClasses.Contains(className));
+        }
+
+        private static bool IsMeaningfulVisualBoxProperty(string property, string value)
+        {
+            if (IsBoxContractProperty(property, value) == false)
+            {
+                return false;
+            }
+
+            var normalizedProperty = (property ?? "").Trim().ToLowerInvariant();
+            var normalizedValue = Regex.Replace((value ?? "").Trim().ToLowerInvariant(),
+                @"\s+", " ");
+            if ((normalizedProperty == "padding" ||
+                 normalizedProperty.StartsWith("padding-", StringComparison.Ordinal) ||
+                 normalizedProperty.EndsWith("-width", StringComparison.Ordinal)) &&
+                IsZeroBoxValue(normalizedValue))
+            {
+                return false;
+            }
+
+            if (normalizedProperty == "background-image" &&
+                (normalizedValue == "none" || normalizedValue == "initial"))
+            {
+                return false;
+            }
+
+            if (normalizedProperty == "background-color" &&
+                (normalizedValue == "transparent" ||
+                 Regex.IsMatch(normalizedValue,
+                     @"^rgba\([^,]+,[^,]+,[^,]+,\s*0(?:\.0+)?\)$")))
+            {
+                return false;
+            }
+
+            if (normalizedProperty == "opacity" && normalizedValue == "1" ||
+                normalizedProperty == "visibility" && normalizedValue == "visible" ||
+                normalizedProperty == "scale" &&
+                (normalizedValue == "1" || normalizedValue == "1 1") ||
+                normalizedProperty == "rotate" &&
+                (normalizedValue == "0" || normalizedValue == "0deg") ||
+                normalizedProperty == "translate" && IsZeroBoxValue(normalizedValue))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsZeroBoxValue(string value)
+        {
+            var parts = SplitWhitespace(value).ToList();
+            return parts.Count > 0 && parts.All(part =>
+                Regex.IsMatch(part, @"^[+-]?0(?:\.0+)?(?:px|%|em|rem)?$",
+                    RegexOptions.IgnoreCase));
+        }
+
+        private static bool HasSymmetricCrossAxisMargins(
+            IReadOnlyDictionary<string, string> style, bool horizontal)
+        {
+            var firstSide = horizontal ? "left" : "top";
+            var secondSide = horizontal ? "right" : "bottom";
+            if (style.ContainsKey("margin") &&
+                (style.ContainsKey("margin-" + firstSide) ||
+                 style.ContainsKey("margin-" + secondSide)))
+            {
+                return false;
+            }
+
+            return TryGetBoxSideValue(style, "margin", firstSide, out var first) &&
+                   TryGetBoxSideValue(style, "margin", secondSide, out var second) &&
+                   StyleValuesEqual(first, second);
+        }
+
+        private static bool TryGetBoxSideValue(
+            IReadOnlyDictionary<string, string> style, string shorthandProperty,
+            string side, out string value)
+        {
+            var sideProperty = shorthandProperty + "-" + side;
+            if (style.TryGetValue(sideProperty, out value))
+            {
+                return true;
+            }
+
+            if (style.TryGetValue(shorthandProperty, out var shorthand) == false)
+            {
+                value = "0";
+                return true;
+            }
+
+            var values = SplitWhitespace(shorthand).ToList();
+            if (values.Count < 1 || values.Count > 4)
+            {
+                value = "";
+                return false;
+            }
+
+            switch (side)
+            {
+                case "top":
+                    value = values[0];
+                    return true;
+                case "right":
+                    value = values.Count == 1 ? values[0] : values[1];
+                    return true;
+                case "bottom":
+                    value = values.Count < 3 ? values[0] : values[2];
+                    return true;
+                case "left":
+                    value = values.Count == 1
+                        ? values[0]
+                        : values.Count < 4 ? values[1] : values[3];
+                    return true;
+                default:
+                    value = "";
+                    return false;
+            }
+        }
+
         private static bool StyleValuesEqual(string left, string right)
         {
             return string.Equals(
@@ -896,6 +1239,14 @@ namespace UnityMCP.Editor
             var result = classes.OrderBy(value => value, StringComparer.Ordinal).ToList();
             implicitElementClassesByType[fullTypeName] = result;
             return result;
+        }
+
+        private static Type ResolveVisualElementType(XElement element)
+        {
+            var namespaceName = element?.Name.NamespaceName;
+            return string.IsNullOrWhiteSpace(namespaceName)
+                ? null
+                : ResolveVisualElementType(namespaceName + "." + element.Name.LocalName);
         }
 
         private static Type ResolveVisualElementType(string fullTypeName)
@@ -1501,7 +1852,8 @@ namespace UnityMCP.Editor
                     {
                         $"<!-- {MCPUxmlLayoutAuditor.SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.REPEATED_INLINE_SUPPRESSION_MARKER} <reason> -->",
-                        $"<!-- {MCPUxmlLayoutAuditor.REDUNDANT_INLINE_SUPPRESSION_MARKER} <reason> -->"
+                        $"<!-- {MCPUxmlLayoutAuditor.REDUNDANT_INLINE_SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_STRETCH_SUPPRESSION_MARKER} <reason> -->"
                     }
                 }
             };
@@ -1573,6 +1925,13 @@ namespace UnityMCP.Editor
                     new Dictionary<string, string>(InlineDeclarations,
                         StringComparer.OrdinalIgnoreCase);
                 result["stylesheetRules"] = StylesheetRules.ToList();
+            }
+            else if (string.Equals(Kind, "visually-inert-text-stretch",
+                         StringComparison.Ordinal))
+            {
+                result["inlineDeclarations"] =
+                    new Dictionary<string, string>(InlineDeclarations,
+                        StringComparer.OrdinalIgnoreCase);
             }
 
             return result;

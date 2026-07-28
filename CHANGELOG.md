@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.39] - 2026-07-29
+
+- Extend the UXML layout audit to report centered Labels whose inline cross-axis stretch changes only a transparent layout box while leaving the centered glyph position unchanged.
+
 ## [3.3.38] - 2026-07-29
 
 - Extend the UXML layout audit to report inline declarations that repeat the winning default from a loaded USS file, including defaults supplied through implicit UI Toolkit classes such as `.unity-base-field`.
