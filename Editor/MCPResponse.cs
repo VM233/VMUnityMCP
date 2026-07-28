@@ -420,6 +420,20 @@ namespace UnityMCP.Editor
                 string collectionKey = stem + "s";
                 if (dictionary.TryGetValue(collectionKey, out object collection) &&
                     collection is IList list && list.Count == count)
+                {
+                    removableKeys.Add(pair.Key);
+                    continue;
+                }
+
+                const string returnedPrefix = "returned";
+                if (!stem.StartsWith(returnedPrefix, StringComparison.Ordinal) ||
+                    stem.Length <= returnedPrefix.Length)
+                    continue;
+
+                string returnedStem = LowerFirst(stem.Substring(returnedPrefix.Length));
+                collectionKey = Pluralize(returnedStem);
+                if (dictionary.TryGetValue(collectionKey, out collection) &&
+                    collection is IList returnedList && returnedList.Count == count)
                     removableKeys.Add(pair.Key);
             }
 
@@ -519,6 +533,25 @@ namespace UnityMCP.Editor
             if (string.IsNullOrEmpty(value) || char.IsLower(value[0]))
                 return value;
             return char.ToLowerInvariant(value[0]) + value.Substring(1);
+        }
+
+        private static string Pluralize(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return value;
+            if (value.EndsWith("y", StringComparison.Ordinal) && value.Length > 1)
+            {
+                char beforeY = char.ToLowerInvariant(value[value.Length - 2]);
+                if ("aeiou".IndexOf(beforeY) < 0)
+                    return value.Substring(0, value.Length - 1) + "ies";
+            }
+            if (value.EndsWith("s", StringComparison.Ordinal) ||
+                value.EndsWith("x", StringComparison.Ordinal) ||
+                value.EndsWith("z", StringComparison.Ordinal) ||
+                value.EndsWith("ch", StringComparison.Ordinal) ||
+                value.EndsWith("sh", StringComparison.Ordinal))
+                return value + "es";
+            return value + "s";
         }
 
         private static bool ToBool(object value)

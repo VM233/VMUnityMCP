@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.30] - 2026-07-28
+
+- Recognize `returned<Collection>Count` aliases such as `returnedIssueCount` when their value exactly matches the corresponding returned collection.
+
 ## [3.3.29] - 2026-07-28
 
 - Compact completed queue-ticket results as independent wire-response roots so asynchronous tools receive the same success-envelope removal as synchronous routes without removing per-item success values from batch results.

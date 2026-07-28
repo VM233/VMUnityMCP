@@ -4527,6 +4527,8 @@ namespace UnityMCP.Editor.Tests
                         { "warnings", new List<object>() },
                         { "warningCount", 0 },
                         { "hasWarnings", false },
+                        { "issues", new List<object>() },
+                        { "returnedIssueCount", 0 },
                     },
                     new Dictionary<string, object> { { "toolName", "fixture/audit" } })
                 },
@@ -4542,7 +4544,9 @@ namespace UnityMCP.Editor.Tests
             Assert.That(compacted.ContainsKey("toolName"), Is.False);
             Assert.That(compacted.ContainsKey("warningCount"), Is.False);
             Assert.That(compacted.ContainsKey("hasWarnings"), Is.False);
+            Assert.That(compacted.ContainsKey("returnedIssueCount"), Is.False);
             Assert.That((IList)compacted["warnings"], Is.Empty);
+            Assert.That((IList)compacted["issues"], Is.Empty);
         }
 
         [Test]
