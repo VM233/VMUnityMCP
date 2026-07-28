@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.36] - 2026-07-28
+
+- Validate modal-free scene save success through the same response normalization used by the bridge.
+
 ## [3.3.35] - 2026-07-28
 
 - Make modal-scene regression fixtures compatible with Unity Test Runner's initial untitled scene.

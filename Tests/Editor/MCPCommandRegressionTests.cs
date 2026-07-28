@@ -1305,8 +1305,9 @@ namespace UnityMCP.Editor.Tests
                 Assert.That(untitledScene.isLoaded, Is.True);
                 Assert.That(untitledScene.isDirty, Is.True);
 
-                var saveResult = RequireDictionary(MCPSceneCommands.SaveScene(
+                var saveResult = MCPResponse.ToDictionary(MCPSceneCommands.SaveScene(
                     new Dictionary<string, object> { { "path", UNTITLED_SCENE_PATH } }));
+                Assert.That(saveResult, Is.Not.Null);
                 Assert.That(saveResult["success"], Is.EqualTo(true));
                 Assert.That(saveResult["path"], Is.EqualTo(UNTITLED_SCENE_PATH));
                 Assert.That(saveResult["savedAs"], Is.EqualTo(true));
