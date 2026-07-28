@@ -65,6 +65,7 @@ namespace UnityMCP.Editor.Tests
         private const string SCENE_PATH = TEST_FOLDER + "/MCP Test Scene.unity";
         private const string SOURCE_SCENE_PATH = TEST_FOLDER + "/MCP Source Scene.unity";
         private const string UNTITLED_SCENE_PATH = TEST_FOLDER + "/Saved Untitled Scene.unity";
+        private const string TEST_HOST_SCENE_PATH = TEST_FOLDER + "/Test Host Scene.unity";
         private const string RUNTIME_MUTATION_TOOL_NAME = "unity-mcp-tests/set-runtime-state";
         private const string LAZY_READ_TOOL_NAME = "unity-mcp-tests/read-lazy-state";
 
@@ -1241,16 +1242,18 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void SceneTransitions_RejectDirtyScenesWithoutOpeningModalDialogs()
         {
-            Scene originalActiveScene = SceneManager.GetActiveScene();
-            Scene targetScene = EditorSceneManager.NewScene(
-                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.That(EditorSceneManager.SaveScene(targetScene, SCENE_PATH), Is.True);
-            Assert.That(EditorSceneManager.CloseScene(targetScene, true), Is.True);
-
-            Scene dirtyScene = EditorSceneManager.NewScene(
-                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            Scene originalActiveScene = PrepareAdditiveSceneTest(out bool restoreUntitledScene);
+            Scene targetScene = default;
+            Scene dirtyScene = default;
             try
             {
+                targetScene = EditorSceneManager.NewScene(
+                    NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                Assert.That(EditorSceneManager.SaveScene(targetScene, SCENE_PATH), Is.True);
+                Assert.That(EditorSceneManager.CloseScene(targetScene, true), Is.True);
+
+                dirtyScene = EditorSceneManager.NewScene(
+                    NewSceneSetup.EmptyScene, NewSceneMode.Additive);
                 EditorSceneManager.MarkSceneDirty(dirtyScene);
                 if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
                     SceneManager.SetActiveScene(originalActiveScene);
@@ -1277,17 +1280,21 @@ namespace UnityMCP.Editor.Tests
                     SceneManager.SetActiveScene(originalActiveScene);
                 if (dirtyScene.IsValid() && dirtyScene.isLoaded)
                     EditorSceneManager.CloseScene(dirtyScene, true);
+                if (targetScene.IsValid() && targetScene.isLoaded)
+                    EditorSceneManager.CloseScene(targetScene, true);
+                RestoreAdditiveSceneTest(originalActiveScene, restoreUntitledScene);
             }
         }
 
         [Test]
         public void SceneSave_RequiresExplicitPathAndSavesUntitledSceneWithoutModalDialog()
         {
-            Scene originalActiveScene = SceneManager.GetActiveScene();
-            Scene untitledScene = EditorSceneManager.NewScene(
-                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            Scene originalActiveScene = PrepareAdditiveSceneTest(out bool restoreUntitledScene);
+            Scene untitledScene = default;
             try
             {
+                untitledScene = EditorSceneManager.NewScene(
+                    NewSceneSetup.EmptyScene, NewSceneMode.Additive);
                 SceneManager.SetActiveScene(untitledScene);
                 EditorSceneManager.MarkSceneDirty(untitledScene);
 
@@ -1311,23 +1318,26 @@ namespace UnityMCP.Editor.Tests
                     SceneManager.SetActiveScene(originalActiveScene);
                 if (untitledScene.IsValid() && untitledScene.isLoaded)
                     EditorSceneManager.CloseScene(untitledScene, true);
+                RestoreAdditiveSceneTest(originalActiveScene, restoreUntitledScene);
             }
         }
 
         [Test]
         public void AssetMutations_RejectLoadedSceneAssetsBeforeImportOrRefresh()
         {
-            Scene originalActiveScene = SceneManager.GetActiveScene();
-            Scene sourceScene = EditorSceneManager.NewScene(
-                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.That(EditorSceneManager.SaveScene(sourceScene, SOURCE_SCENE_PATH), Is.True);
-            Assert.That(EditorSceneManager.CloseScene(sourceScene, true), Is.True);
-
-            Scene loadedScene = EditorSceneManager.NewScene(
-                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.That(EditorSceneManager.SaveScene(loadedScene, SCENE_PATH), Is.True);
+            Scene originalActiveScene = PrepareAdditiveSceneTest(out bool restoreUntitledScene);
+            Scene sourceScene = default;
+            Scene loadedScene = default;
             try
             {
+                sourceScene = EditorSceneManager.NewScene(
+                    NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                Assert.That(EditorSceneManager.SaveScene(sourceScene, SOURCE_SCENE_PATH), Is.True);
+                Assert.That(EditorSceneManager.CloseScene(sourceScene, true), Is.True);
+
+                loadedScene = EditorSceneManager.NewScene(
+                    NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                Assert.That(EditorSceneManager.SaveScene(loadedScene, SCENE_PATH), Is.True);
                 if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
                     SceneManager.SetActiveScene(originalActiveScene);
 
@@ -1408,6 +1418,9 @@ namespace UnityMCP.Editor.Tests
                     SceneManager.SetActiveScene(originalActiveScene);
                 if (loadedScene.IsValid() && loadedScene.isLoaded)
                     EditorSceneManager.CloseScene(loadedScene, true);
+                if (sourceScene.IsValid() && sourceScene.isLoaded)
+                    EditorSceneManager.CloseScene(sourceScene, true);
+                RestoreAdditiveSceneTest(originalActiveScene, restoreUntitledScene);
             }
         }
 
@@ -5312,6 +5325,30 @@ namespace UnityMCP.Editor.Tests
             Assert.That(rewritten, Is.Not.EqualTo(block));
             File.WriteAllText(absolutePath, text.Replace(block, rewritten));
             AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+        }
+
+        private static Scene PrepareAdditiveSceneTest(out bool restoreUntitledScene)
+        {
+            Scene activeScene = SceneManager.GetActiveScene();
+            restoreUntitledScene = activeScene.IsValid() && activeScene.isLoaded &&
+                                   string.IsNullOrEmpty(activeScene.path);
+            if (restoreUntitledScene)
+            {
+                Assert.That(EditorSceneManager.SaveScene(activeScene, TEST_HOST_SCENE_PATH), Is.True,
+                    "The Test Runner's untitled host scene must be saved before additive scenes can be created.");
+            }
+
+            return activeScene;
+        }
+
+        private static void RestoreAdditiveSceneTest(Scene originalActiveScene, bool restoreUntitledScene)
+        {
+            if (!restoreUntitledScene)
+                return;
+
+            if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
+                SceneManager.SetActiveScene(originalActiveScene);
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         }
 
         private static string GetAbsolutePath(string assetPath)

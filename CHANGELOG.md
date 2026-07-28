@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.35] - 2026-07-28
+
+- Make modal-scene regression fixtures compatible with Unity Test Runner's initial untitled scene.
+
 ## [3.3.34] - 2026-07-28
 
 - Prevent MCP scene transitions from opening modal save/reload dialogs; dirty scenes now return a structured error that requires an explicit save decision, and untitled scenes accept an explicit save path.
