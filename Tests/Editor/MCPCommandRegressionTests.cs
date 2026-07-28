@@ -7,7 +7,9 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using UnityEngine.UIElements;
 using Object = UnityEngine.Object;
@@ -60,6 +62,9 @@ namespace UnityMCP.Editor.Tests
     {
         private const string TEST_FOLDER = "Assets/__UnityMCPTests";
         private const string PREFAB_PATH = TEST_FOLDER + "/MCP Test Prefab.prefab";
+        private const string SCENE_PATH = TEST_FOLDER + "/MCP Test Scene.unity";
+        private const string SOURCE_SCENE_PATH = TEST_FOLDER + "/MCP Source Scene.unity";
+        private const string UNTITLED_SCENE_PATH = TEST_FOLDER + "/Saved Untitled Scene.unity";
         private const string RUNTIME_MUTATION_TOOL_NAME = "unity-mcp-tests/set-runtime-state";
         private const string LAZY_READ_TOOL_NAME = "unity-mcp-tests/read-lazy-state";
 
@@ -1230,6 +1235,179 @@ namespace UnityMCP.Editor.Tests
             finally
             {
                 Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        [Test]
+        public void SceneTransitions_RejectDirtyScenesWithoutOpeningModalDialogs()
+        {
+            Scene originalActiveScene = SceneManager.GetActiveScene();
+            Scene targetScene = EditorSceneManager.NewScene(
+                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            Assert.That(EditorSceneManager.SaveScene(targetScene, SCENE_PATH), Is.True);
+            Assert.That(EditorSceneManager.CloseScene(targetScene, true), Is.True);
+
+            Scene dirtyScene = EditorSceneManager.NewScene(
+                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                EditorSceneManager.MarkSceneDirty(dirtyScene);
+                if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
+                    SceneManager.SetActiveScene(originalActiveScene);
+                int sceneCount = SceneManager.sceneCount;
+
+                var openResult = RequireDictionary(MCPSceneCommands.OpenScene(
+                    new Dictionary<string, object> { { "path", SCENE_PATH } }));
+                Assert.That(openResult["success"], Is.EqualTo(false));
+                Assert.That(openResult["errorCode"],
+                    Is.EqualTo("dirty_scenes_require_explicit_save"));
+                Assert.That(SceneManager.sceneCount, Is.EqualTo(sceneCount));
+                Assert.That(dirtyScene.isLoaded, Is.True);
+
+                var newResult = RequireDictionary(MCPSceneCommands.NewScene());
+                Assert.That(newResult["success"], Is.EqualTo(false));
+                Assert.That(newResult["errorCode"],
+                    Is.EqualTo("dirty_scenes_require_explicit_save"));
+                Assert.That(SceneManager.sceneCount, Is.EqualTo(sceneCount));
+                Assert.That(dirtyScene.isLoaded, Is.True);
+            }
+            finally
+            {
+                if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
+                    SceneManager.SetActiveScene(originalActiveScene);
+                if (dirtyScene.IsValid() && dirtyScene.isLoaded)
+                    EditorSceneManager.CloseScene(dirtyScene, true);
+            }
+        }
+
+        [Test]
+        public void SceneSave_RequiresExplicitPathAndSavesUntitledSceneWithoutModalDialog()
+        {
+            Scene originalActiveScene = SceneManager.GetActiveScene();
+            Scene untitledScene = EditorSceneManager.NewScene(
+                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                SceneManager.SetActiveScene(untitledScene);
+                EditorSceneManager.MarkSceneDirty(untitledScene);
+
+                var missingPathResult = RequireDictionary(MCPSceneCommands.SaveScene());
+
+                Assert.That(missingPathResult["success"], Is.EqualTo(false));
+                Assert.That(missingPathResult["errorCode"], Is.EqualTo("scene_path_required"));
+                Assert.That(untitledScene.isLoaded, Is.True);
+                Assert.That(untitledScene.isDirty, Is.True);
+
+                var saveResult = RequireDictionary(MCPSceneCommands.SaveScene(
+                    new Dictionary<string, object> { { "path", UNTITLED_SCENE_PATH } }));
+                Assert.That(saveResult["success"], Is.EqualTo(true));
+                Assert.That(saveResult["path"], Is.EqualTo(UNTITLED_SCENE_PATH));
+                Assert.That(saveResult["savedAs"], Is.EqualTo(true));
+                Assert.That(untitledScene.isDirty, Is.False);
+            }
+            finally
+            {
+                if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
+                    SceneManager.SetActiveScene(originalActiveScene);
+                if (untitledScene.IsValid() && untitledScene.isLoaded)
+                    EditorSceneManager.CloseScene(untitledScene, true);
+            }
+        }
+
+        [Test]
+        public void AssetMutations_RejectLoadedSceneAssetsBeforeImportOrRefresh()
+        {
+            Scene originalActiveScene = SceneManager.GetActiveScene();
+            Scene sourceScene = EditorSceneManager.NewScene(
+                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            Assert.That(EditorSceneManager.SaveScene(sourceScene, SOURCE_SCENE_PATH), Is.True);
+            Assert.That(EditorSceneManager.CloseScene(sourceScene, true), Is.True);
+
+            Scene loadedScene = EditorSceneManager.NewScene(
+                NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            Assert.That(EditorSceneManager.SaveScene(loadedScene, SCENE_PATH), Is.True);
+            try
+            {
+                if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
+                    SceneManager.SetActiveScene(originalActiveScene);
+
+                var deleteResult = RequireDictionary(MCPAssetCommands.Delete(
+                    new Dictionary<string, object> { { "path", SCENE_PATH } }));
+                Assert.That(deleteResult["errorCode"],
+                    Is.EqualTo("loaded_scene_asset_mutation_blocked"));
+
+                var renameResult = RequireDictionary(MCPAssetCommands.Rename(
+                    new Dictionary<string, object>
+                    {
+                        { "path", SCENE_PATH },
+                        { "newName", "Renamed Test Scene.unity" },
+                    }));
+                Assert.That(renameResult["errorCode"],
+                    Is.EqualTo("loaded_scene_asset_mutation_blocked"));
+
+                var moveResult = RequireDictionary(MCPAssetCommands.Move(
+                    new Dictionary<string, object>
+                    {
+                        { "moves", new List<object>
+                            {
+                                new Dictionary<string, object>
+                                {
+                                    { "path", SCENE_PATH },
+                                    { "destinationPath", TEST_FOLDER + "/Moved Test Scene.unity" },
+                                },
+                            }
+                        },
+                    }));
+                Assert.That(moveResult["errorCode"],
+                    Is.EqualTo("loaded_scene_asset_mutation_blocked"));
+
+                var copyResult = RequireDictionary(MCPAssetWorkspaceCommands.Copy(
+                    new Dictionary<string, object>
+                    {
+                        { "sourcePath", SOURCE_SCENE_PATH },
+                        { "targetPath", SCENE_PATH },
+                        { "overwrite", true },
+                    }));
+                Assert.That(copyResult["errorCode"],
+                    Is.EqualTo("loaded_scene_asset_mutation_blocked"));
+
+                var refreshResult = RequireDictionary(MCPAssetCommands.ExecuteRefreshImmediate(
+                    new Dictionary<string, object>
+                    {
+                        { "assetPaths", new List<object> { SCENE_PATH } },
+                    }));
+                Assert.That(refreshResult["errorCode"],
+                    Is.EqualTo("loaded_scene_asset_mutation_blocked"));
+
+                var transactionResult = RequireDictionary(MCPAssetWorkspaceCommands.Transaction(
+                    new Dictionary<string, object>
+                    {
+                        { "operations", new List<object>
+                            {
+                                new Dictionary<string, object>
+                                {
+                                    { "type", "delete" },
+                                    { "path", SCENE_PATH },
+                                },
+                            }
+                        },
+                    }));
+                Assert.That(transactionResult["errorCode"],
+                    Is.EqualTo("loaded_scene_asset_mutation_blocked"));
+
+                Assert.That(MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    new[] { TEST_FOLDER }, "delete a folder", out object folderError), Is.True);
+                Assert.That(RequireDictionary(folderError)["errorCode"],
+                    Is.EqualTo("loaded_scene_asset_mutation_blocked"));
+                Assert.That(AssetDatabase.LoadAssetAtPath<SceneAsset>(SCENE_PATH), Is.Not.Null);
+                Assert.That(loadedScene.isLoaded, Is.True);
+            }
+            finally
+            {
+                if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
+                    SceneManager.SetActiveScene(originalActiveScene);
+                if (loadedScene.IsValid() && loadedScene.isLoaded)
+                    EditorSceneManager.CloseScene(loadedScene, true);
             }
         }
 

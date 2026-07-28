@@ -66,6 +66,10 @@ namespace UnityMCP.Editor
 
             if (dryRun)
                 return BuildCopyResult(prepared, true, false, new List<string>());
+            if (MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    prepared.Select(request => request.TargetPath), "copy or overwrite assets",
+                    out object sceneMutationError))
+                return sceneMutationError;
 
             var snapshots = new List<FileSnapshot>();
             var created = new List<string>();
@@ -214,6 +218,26 @@ namespace UnityMCP.Editor
                     { "operationCount", prepared.Count }, { "operations", prepared },
                 };
             }
+            var sceneMutationPaths = new List<string>();
+            foreach (var operation in prepared)
+            {
+                string type = GetString(operation, "type");
+                if (type == "copy")
+                    sceneMutationPaths.Add(GetString(operation, "targetPath"));
+                else if (type == "move")
+                {
+                    sceneMutationPaths.Add(GetString(operation, "sourcePath"));
+                    sceneMutationPaths.Add(GetString(operation, "targetPath"));
+                }
+                else if (type == "delete")
+                    sceneMutationPaths.Add(GetString(operation, "path"));
+                else if (type == "serialized-set")
+                    sceneMutationPaths.Add(GetString(operation, "assetPath"));
+            }
+            if (MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    sceneMutationPaths, "execute an asset transaction",
+                    out object sceneMutationError))
+                return sceneMutationError;
 
             var rollback = new Stack<Action>();
             var rollbackErrors = new List<string>();

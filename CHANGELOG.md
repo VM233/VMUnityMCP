@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.34] - 2026-07-28
+
+- Prevent MCP scene transitions from opening modal save/reload dialogs; dirty scenes now return a structured error that requires an explicit save decision, and untitled scenes accept an explicit save path.
+- Reject asset-level delete, rename, move, overwrite, transaction, and targeted refresh operations that would mutate a loaded scene asset.
+
 ## [3.3.33] - 2026-07-28
 
 - Omit empty arrays and objects from every transported tool response while preserving non-empty diagnostics, including deprecated compiler warnings.

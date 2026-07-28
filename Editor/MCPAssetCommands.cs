@@ -88,6 +88,10 @@ namespace UnityMCP.Editor
                 return preparationError;
             if (GetBool(args, "dryRun", false))
                 return BuildImportResult(entries, execution, true, new List<string>());
+            if (MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    entries.Select(entry => entry.DestinationPath), "import or overwrite assets",
+                    out object sceneMutationError))
+                return sceneMutationError;
             return ExecutePreparedImports(entries, execution);
         }
 
@@ -107,6 +111,13 @@ namespace UnityMCP.Editor
             if (GetBool(args, "dryRun", false))
             {
                 resolve(BuildImportResult(entries, execution, true, new List<string>()));
+                return;
+            }
+            if (MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    entries.Select(entry => entry.DestinationPath), "import or overwrite assets",
+                    out object sceneMutationError))
+            {
+                resolve(sceneMutationError);
                 return;
             }
             if (execution.ResolveMode(entries.Count) == MCPExecutionMode.Immediate)
@@ -1078,6 +1089,10 @@ namespace UnityMCP.Editor
             bool forceUpdate = GetBool(args, "forceUpdate", false);
             bool saveAssets = GetBool(args, "saveAssets", false);
             var assetPaths = GetStringList(args, "assetPaths");
+            if (assetPaths.Count > 0 &&
+                MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    assetPaths, "refresh or reimport assets", out object sceneMutationError))
+                return sceneMutationError;
 
             var importedPaths = new List<string>();
             var forceUpdateSkippedPaths = new List<string>();
@@ -1271,9 +1286,14 @@ namespace UnityMCP.Editor
 
         public static object Delete(Dictionary<string, object> args)
         {
-            string path = args.ContainsKey("path") ? args["path"].ToString() : "";
+            string path = NormalizeAssetPath(args != null && args.ContainsKey("path")
+                ? args["path"]?.ToString()
+                : "");
             if (string.IsNullOrEmpty(path))
                 return new { error = "path is required" };
+            if (MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    new[] { path }, "delete assets", out object sceneMutationError))
+                return sceneMutationError;
 
             bool deleted = AssetDatabase.DeleteAsset(path);
             return new { success = deleted, path };
@@ -1333,6 +1353,9 @@ namespace UnityMCP.Editor
                     { "oldMetaExists", oldMetaExists },
                 };
             }
+            if (MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    new[] { path }, "rename assets", out object sceneMutationError))
+                return sceneMutationError;
 
             string error = AssetDatabase.RenameAsset(path, renameName);
             if (!string.IsNullOrEmpty(error))
@@ -1469,6 +1492,10 @@ namespace UnityMCP.Editor
 
             if (dryRun)
                 return BuildMoveResult(entries, execution, true, new List<string>());
+            if (MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    entries.Select(entry => entry.OldPath), "move assets",
+                    out object sceneMutationError))
+                return sceneMutationError;
             return ExecutePreparedMoves(entries, execution);
         }
 
@@ -1488,6 +1515,13 @@ namespace UnityMCP.Editor
             if (GetBool(args, "dryRun", false))
             {
                 resolve(BuildMoveResult(entries, execution, true, new List<string>()));
+                return;
+            }
+            if (MCPSceneCommands.TryRejectLoadedSceneAssetMutation(
+                    entries.Select(entry => entry.OldPath), "move assets",
+                    out object sceneMutationError))
+            {
+                resolve(sceneMutationError);
                 return;
             }
             if (execution.ResolveMode(entries.Count) == MCPExecutionMode.Immediate)
