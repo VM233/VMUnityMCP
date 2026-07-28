@@ -197,6 +197,7 @@ namespace UnityMCP.Editor
             CompactPersistenceMetadata(compacted);
             CompactOperationMetadata(compacted);
             CompactCollectionAndPaginationMetadata(compacted);
+            CompactNamedResultPagination(compacted);
             RemoveFalseTruncationFlags(compacted);
 
             if (isRoot)
@@ -239,11 +240,21 @@ namespace UnityMCP.Editor
                 !(summaryValue is Dictionary<string, object> summary))
                 return;
 
+            Dictionary<string, object> progress = null;
+            if (dictionary.TryGetValue("progress", out object progressValue))
+                progress = progressValue as Dictionary<string, object>;
+
             var duplicateKeys = new List<string>();
             foreach (KeyValuePair<string, object> pair in summary)
             {
                 if (dictionary.TryGetValue(pair.Key, out object parentValue) &&
                     ValuesEqual(parentValue, pair.Value))
+                {
+                    duplicateKeys.Add(pair.Key);
+                    continue;
+                }
+                if (progress != null && progress.TryGetValue(pair.Key, out object progressValueForKey) &&
+                    ValuesEqual(progressValueForKey, pair.Value))
                     duplicateKeys.Add(pair.Key);
             }
 
@@ -381,6 +392,62 @@ namespace UnityMCP.Editor
                      hasMoreValue is bool falseHasMore && !falseHasMore)
             {
                 dictionary.Remove("hasMore");
+            }
+        }
+
+        private static void CompactNamedResultPagination(Dictionary<string, object> dictionary)
+        {
+            bool hasPaginationMetadata = dictionary.ContainsKey("resultOffset") ||
+                                         dictionary.ContainsKey("resultLimit") ||
+                                         dictionary.ContainsKey("totalResults") ||
+                                         dictionary.ContainsKey("returnedResults") ||
+                                         dictionary.ContainsKey("hasMoreResults") ||
+                                         dictionary.ContainsKey("nextResultOffset");
+            if (!hasPaginationMetadata)
+                return;
+
+            long offset = 0;
+            if (dictionary.TryGetValue("resultOffset", out object offsetValue))
+                TryGetInteger(offsetValue, out offset);
+
+            long returned = 0;
+            bool hasReturned = dictionary.TryGetValue("returnedResults", out object returnedValue) &&
+                               TryGetInteger(returnedValue, out returned);
+            long total = 0;
+            bool hasTotal = dictionary.TryGetValue("totalResults", out object totalValue) &&
+                            TryGetInteger(totalValue, out total);
+            bool hasNextOffset = dictionary.TryGetValue("nextResultOffset", out object nextOffsetValue) &&
+                                 nextOffsetValue != null;
+            bool hasMore = dictionary.TryGetValue("hasMoreResults", out object hasMoreValue) &&
+                           hasMoreValue is bool hasMoreBoolean && hasMoreBoolean;
+            if (!hasMore && hasTotal && hasReturned)
+                hasMore = offset + returned < total;
+            if (hasNextOffset)
+                hasMore = true;
+
+            if (hasMore && !hasNextOffset && hasReturned && returned > 0)
+            {
+                dictionary["nextResultOffset"] = offset + returned;
+                hasNextOffset = true;
+            }
+            else if (!hasNextOffset)
+            {
+                dictionary.Remove("nextResultOffset");
+            }
+
+            dictionary.Remove("resultOffset");
+            dictionary.Remove("resultLimit");
+            dictionary.Remove("returnedResults");
+
+            if (!hasMore)
+            {
+                dictionary.Remove("totalResults");
+                dictionary.Remove("hasMoreResults");
+            }
+            else if (hasNextOffset)
+            {
+                dictionary.Remove("hasMoreResults");
+                dictionary.Remove("resultsTruncated");
             }
         }
 

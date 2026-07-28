@@ -4658,6 +4658,71 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void TransportCompaction_CollapsesProgressSummaryAndNamedResultPagination()
+        {
+            var complete = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "progress", new Dictionary<string, object>
+                        {
+                            { "total", 2 },
+                            { "passed", 2 },
+                            { "failed", 0 },
+                            { "skipped", 0 },
+                            { "duration", 1.25 },
+                        }
+                    },
+                    { "summary", new Dictionary<string, object>
+                        {
+                            { "total", 2 },
+                            { "passed", 2 },
+                            { "failed", 0 },
+                            { "skipped", 0 },
+                            { "duration", 1.25 },
+                        }
+                    },
+                    { "tests", new List<object> { "first", "second" } },
+                    { "resultOffset", 0 },
+                    { "resultLimit", 100 },
+                    { "totalResults", 2 },
+                    { "returnedResults", 2 },
+                    { "resultsTruncated", false },
+                    { "hasMoreResults", false },
+                    { "nextResultOffset", null },
+                }));
+
+            Assert.That(complete.ContainsKey("summary"), Is.False);
+            Assert.That(complete.ContainsKey("resultOffset"), Is.False);
+            Assert.That(complete.ContainsKey("resultLimit"), Is.False);
+            Assert.That(complete.ContainsKey("totalResults"), Is.False);
+            Assert.That(complete.ContainsKey("returnedResults"), Is.False);
+            Assert.That(complete.ContainsKey("resultsTruncated"), Is.False);
+            Assert.That(complete.ContainsKey("hasMoreResults"), Is.False);
+            Assert.That(complete.ContainsKey("nextResultOffset"), Is.False);
+
+            var partial = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "tests", new List<object> { "first", "second" } },
+                    { "resultOffset", 0 },
+                    { "resultLimit", 2 },
+                    { "totalResults", 5 },
+                    { "returnedResults", 2 },
+                    { "resultsTruncated", true },
+                    { "hasMoreResults", true },
+                    { "nextResultOffset", 2 },
+                }));
+
+            Assert.That(partial.Keys, Is.EquivalentTo(new[]
+            {
+                "tests", "totalResults", "nextResultOffset",
+            }));
+            Assert.That(Convert.ToInt32(partial["totalResults"]), Is.EqualTo(5));
+            Assert.That(Convert.ToInt32(partial["nextResultOffset"]), Is.EqualTo(2));
+        }
+
+        [Test]
         public void TransportCompaction_PreservesNestedSuccessAndTrueTruncation()
         {
             var compacted = RequireDictionary(MCPResponse.CompactForTransport(

@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.31] - 2026-07-28
+
+- Collapse test-job summaries that repeat progress counters and normalize named result pagination to the same collection/total/next-offset contract used by ordinary list tools.
+
 ## [3.3.30] - 2026-07-28
 
 - Recognize `returned<Collection>Count` aliases such as `returnedIssueCount` when their value exactly matches the corresponding returned collection.
