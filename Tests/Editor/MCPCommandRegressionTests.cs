@@ -4131,33 +4131,21 @@ namespace UnityMCP.Editor.Tests
                 Assert.That(flagsProperty, Is.Not.Null);
                 Assert.That(flagsProperty.enumValueIndex, Is.EqualTo(-1));
 
-                var getSerializedValue = typeof(MCPComponentCommands).GetMethod(
-                    "GetSerializedValue", BindingFlags.Static | BindingFlags.NonPublic,
-                    null, new[] { typeof(SerializedProperty) }, null);
-                var setSerializedValue = typeof(MCPComponentCommands).GetMethod(
-                    "SetSerializedValue", BindingFlags.Static | BindingFlags.NonPublic,
-                    null, new[] { typeof(SerializedProperty), typeof(object) }, null);
-                Assert.That(getSerializedValue, Is.Not.Null);
-                Assert.That(setSerializedValue, Is.Not.Null);
-
-                var configs = RequireDictionary(getSerializedValue.Invoke(
-                    null, new object[] { configsProperty }));
+                var configs = RequireDictionary(
+                    MCPComponentCommands.GetSerializedValue(configsProperty));
                 var items = (List<object>)configs["items"];
                 var firstConfig = RequireDictionary(items.Single());
                 Assert.That(Convert.ToInt32(firstConfig["factionType"]), Is.EqualTo(combinedValue));
 
-                setSerializedValue.Invoke(null, new object[]
-                {
-                    flagsProperty,
-                    nameof(SerializedEnumFlagsTestValue.Friendly)
-                });
+                MCPComponentCommands.SetSerializedValue(
+                    flagsProperty, nameof(SerializedEnumFlagsTestValue.Friendly));
                 serialized.ApplyModifiedProperties();
                 Assert.That(target.configs.Single().factionType,
                     Is.EqualTo(SerializedEnumFlagsTestValue.Friendly));
 
                 serialized.Update();
                 flagsProperty = serialized.FindProperty("configs.Array.data[0].factionType");
-                setSerializedValue.Invoke(null, new object[] { flagsProperty, combinedValue });
+                MCPComponentCommands.SetSerializedValue(flagsProperty, combinedValue);
                 serialized.ApplyModifiedProperties();
                 Assert.That(target.configs.Single().factionType,
                     Is.EqualTo(SerializedEnumFlagsTestValue.Friendly |
