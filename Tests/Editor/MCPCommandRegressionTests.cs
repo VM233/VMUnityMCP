@@ -4514,18 +4514,28 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void TransportCompaction_UnwrapsProjectToolSuccessEnvelope()
         {
-            var result = MCPResponse.Success(
-                new Dictionary<string, object>
-                {
-                    { "valid", true },
-                    { "warnings", new List<object>() },
-                    { "warningCount", 0 },
-                    { "hasWarnings", false },
+            var result = new Dictionary<string, object>
+            {
+                { "ticketId", 42L },
+                { "actionName", "project-tools/execute" },
+                { "status", "Completed" },
+                { "queuePosition", 0 },
+                { "result", MCPResponse.Success(
+                    new Dictionary<string, object>
+                    {
+                        { "valid", true },
+                        { "warnings", new List<object>() },
+                        { "warningCount", 0 },
+                        { "hasWarnings", false },
+                    },
+                    new Dictionary<string, object> { { "toolName", "fixture/audit" } })
                 },
-                new Dictionary<string, object> { { "toolName", "fixture/audit" } });
+            };
 
-            var compacted = RequireDictionary(MCPResponse.CompactForTransport(result));
+            var ticket = RequireDictionary(MCPResponse.CompactForTransport(result));
+            var compacted = RequireDictionary(ticket["result"]);
 
+            Assert.That(ticket["ticketId"], Is.EqualTo(42L));
             Assert.That(compacted["valid"], Is.EqualTo(true));
             Assert.That(compacted.ContainsKey("success"), Is.False);
             Assert.That(compacted.ContainsKey("result"), Is.False);
@@ -4533,6 +4543,30 @@ namespace UnityMCP.Editor.Tests
             Assert.That(compacted.ContainsKey("warningCount"), Is.False);
             Assert.That(compacted.ContainsKey("hasWarnings"), Is.False);
             Assert.That((IList)compacted["warnings"], Is.Empty);
+        }
+
+        [Test]
+        public void TransportCompaction_DoesNotTreatOrdinaryNestedResultsAsResponseRoots()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "results", new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "success", true },
+                                { "result", "first" },
+                            },
+                        }
+                    },
+                }));
+
+            var results = (IList)compacted["results"];
+            var item = RequireDictionary(results[0]);
+            Assert.That(item["success"], Is.EqualTo(true));
+            Assert.That(item["result"], Is.EqualTo("first"));
         }
 
         [Test]

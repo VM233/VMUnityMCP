@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.29] - 2026-07-28
+
+- Compact completed queue-ticket results as independent wire-response roots so asynchronous tools receive the same success-envelope removal as synchronous routes without removing per-item success values from batch results.
+
 ## [3.3.28] - 2026-07-28
 
 - Compact all HTTP tool responses at the transport boundary by removing redundant success envelopes, duplicate error messages, derivable collection counts and presence flags, completed-pagination metadata, false truncation flags, and overlapping array, persistence, operation, and summary aliases.

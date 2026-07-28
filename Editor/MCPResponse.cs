@@ -184,9 +184,11 @@ namespace UnityMCP.Editor
             if (isRoot && IsProjectToolSuccessEnvelope(source))
                 return CompactValue(source["result"], true);
 
+            bool isQueueTicketEnvelope = IsQueueTicketEnvelope(source);
             var compacted = new Dictionary<string, object>();
             foreach (KeyValuePair<string, object> pair in source)
-                compacted[pair.Key] = CompactValue(pair.Value, false);
+                compacted[pair.Key] = CompactValue(
+                    pair.Value, isQueueTicketEnvelope && pair.Key == "result");
 
             RemoveDuplicateSummaryValues(compacted);
             RemoveDuplicateErrorMessage(compacted);
@@ -222,6 +224,13 @@ namespace UnityMCP.Editor
             }
 
             return true;
+        }
+
+        private static bool IsQueueTicketEnvelope(Dictionary<string, object> dictionary)
+        {
+            return dictionary.ContainsKey("ticketId") &&
+                   dictionary.ContainsKey("status") &&
+                   (dictionary.ContainsKey("actionName") || dictionary.ContainsKey("queuePosition"));
         }
 
         private static void RemoveDuplicateSummaryValues(Dictionary<string, object> dictionary)
