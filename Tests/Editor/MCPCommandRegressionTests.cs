@@ -1954,6 +1954,50 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUxmlAudit_ReportsRepeatedInlineAuthoredLayoutVariant()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Repeated Inline Variant.uxml";
+            const string ussPath = TEST_FOLDER + "/Repeated Inline Variant.uss";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<ui:VisualElement class=\"stage-label stage-label-above\"/>" +
+                "<ui:VisualElement name=\"Stage2Label\" class=\"stage-label\" " +
+                "style=\"top: 57px; background-image: url(&quot;Stage2.png&quot;);\"/>" +
+                "<ui:VisualElement name=\"Stage3Label\" class=\"stage-label\" " +
+                "style=\"background-image: url(&quot;Stage3.png&quot;); top: 57px;\"/>" +
+                "</ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                ".stage-label { position: absolute; }\n" +
+                ".stage-label-above { top: -18px; }\n");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { uxmlPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            var issue = issues.Single();
+            Assert.That(issue["kind"], Is.EqualTo("repeated-inline-layout-variant"));
+            Assert.That(issue["baseClass"], Is.EqualTo("stage-label"));
+            Assert.That(issue["authoredUsageCount"], Is.EqualTo(2));
+            Assert.That((Dictionary<string, string>)issue["inlineDeclarations"],
+                Is.EquivalentTo(new Dictionary<string, string> { { "top", "57px" } }));
+            Assert.That((List<string>)issue["relatedVariantClasses"],
+                Is.EqualTo(new[] { "stage-label-above" }));
+            Assert.That((List<Dictionary<string, object>>)issue["usageLocations"],
+                Has.Count.EqualTo(2));
+            Assert.That(issue.ContainsKey("parentSize"), Is.False);
+            Assert.That(issue.ContainsKey("offset"), Is.False);
+            Assert.That(issue.ContainsKey("size"), Is.False);
+        }
+
+        [Test]
         public void UIToolkitStaticAudits_AreFirstClassReadOnlyLongRunningTools()
         {
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(

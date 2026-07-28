@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.37] - 2026-07-28
+
+- Extend the UXML layout audit to report repeated inline layout declarations when authored elements already use a shared semantic layout variant for the same properties.
+- Rename the automatic UXML audit setting to `automaticAudit.uxmlLayoutContracts` to reflect its broader contract coverage.
+
 ## [3.3.36] - 2026-07-28
 
 - Validate modal-free scene save success through the same response normalization used by the bridge.

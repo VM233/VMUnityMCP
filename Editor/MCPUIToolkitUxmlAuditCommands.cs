@@ -87,6 +87,8 @@ namespace UnityMCP.Editor
     internal static class MCPUxmlLayoutAuditor
     {
         internal const string SUPPRESSION_MARKER = "uxml-layout-audit: allow-manual-center";
+        internal const string REPEATED_INLINE_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-repeated-inline";
 
         private const float CENTER_EPSILON = 0.01f;
 
@@ -100,6 +102,10 @@ namespace UnityMCP.Editor
 
         private static readonly Regex suppressionRegex =
             new Regex(@"^\s*uxml-layout-audit:\s*allow-manual-center\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex repeatedInlineSuppressionRegex =
+            new Regex(@"^\s*uxml-layout-audit:\s*allow-repeated-inline\s+(?<reason>.+?)\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private static readonly Regex ussCommentRegex =
@@ -117,6 +123,44 @@ namespace UnityMCP.Editor
             new Regex(@"(?<![A-Za-z0-9_-])#(?<token>[A-Za-z_][A-Za-z0-9_-]*)",
                 RegexOptions.Compiled);
 
+        private static readonly HashSet<string> variantLayoutProperties =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "position",
+                "left",
+                "right",
+                "top",
+                "bottom",
+                "width",
+                "height",
+                "min-width",
+                "max-width",
+                "min-height",
+                "max-height",
+                "flex",
+                "flex-basis",
+                "flex-grow",
+                "flex-shrink",
+                "flex-direction",
+                "flex-wrap",
+                "align-content",
+                "align-items",
+                "align-self",
+                "justify-content",
+                "margin",
+                "margin-left",
+                "margin-right",
+                "margin-top",
+                "margin-bottom",
+                "padding",
+                "padding-left",
+                "padding-right",
+                "padding-top",
+                "padding-bottom",
+                "row-gap",
+                "column-gap"
+            };
+
         internal static MCPUxmlLayoutAuditReport Audit(IEnumerable<string> requestedPaths,
             bool includeSuppressed, int maxIssues, MCPUIToolkitAuditOptions options)
         {
@@ -132,7 +176,7 @@ namespace UnityMCP.Editor
                 .OrderBy(path => path, StringComparer.Ordinal)
                 .ToList();
             var targetPaths = requestedPathList.Count == 0 ? allUxmlPaths : requested;
-            var boxContracts = BuildBoxContractIndex(report, options);
+            var layoutContracts = BuildLayoutContractIndex(report, options, allUxmlPaths);
 
             report.ScannedUxmlCount = targetPaths.Count;
             report.IndexedUxmlCount = allUxmlPaths.Count;
@@ -143,7 +187,7 @@ namespace UnityMCP.Editor
                 {
                     AuditText(path,
                         File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(path)),
-                        boxContracts, report,
+                        layoutContracts, report,
                         includeSuppressed);
                 }
                 catch (Exception exception)
@@ -187,13 +231,13 @@ namespace UnityMCP.Editor
                     "position: absolute; background-color: rgb(1, 2, 3);"));
             AddSelfTestCase(cases, "inline visual region passes", visualInline.WarningCount == 0);
 
-            var visualClassIndex = new UxmlBoxContractIndex();
+            var visualClassIndex = new UxmlLayoutContractIndex();
             IndexStyleSheetText(".intentional-region { background-image: url(\"Panel.png\"); }",
                 visualClassIndex);
             var visualClass = AuditFixture(
                 suspiciousElement.Replace("name=\"Navigation\"",
                     "name=\"Navigation\" class=\"intentional-region\""),
-                boxContracts: visualClassIndex);
+                layoutContracts: visualClassIndex);
             AddSelfTestCase(cases, "USS visual contract passes", visualClass.WarningCount == 0);
 
             var noParentWidth = AuditFixture(suspiciousElement, "height: 492px;");
@@ -212,6 +256,54 @@ namespace UnityMCP.Editor
                 suppressed.SuppressedCount == 1 &&
                 suppressed.Issues.Single().Suppressed);
 
+            var variantIndex = new UxmlLayoutContractIndex();
+            IndexStyleSheetText(
+                ".stage-label { position: absolute; } " +
+                ".stage-label-above { top: -18px; }",
+                variantIndex);
+            const string repeatedInlineVariantElements =
+                "<ui:VisualElement class=\"stage-label stage-label-above\"/>" +
+                "<ui:VisualElement name=\"Stage2Label\" class=\"stage-label\" " +
+                "style=\"top: 57px; background-image: url(&quot;Stage2.png&quot;);\"/>" +
+                "<ui:VisualElement name=\"Stage3Label\" class=\"stage-label\" " +
+                "style=\"background-image: url(&quot;Stage3.png&quot;); top: 57px;\"/>";
+            var repeatedInlineVariant = AuditFixture(repeatedInlineVariantElements,
+                layoutContracts: variantIndex);
+            AddSelfTestCase(cases, "repeated inline authored variant warns",
+                repeatedInlineVariant.WarningCount == 1 &&
+                repeatedInlineVariant.Issues.Single().Kind ==
+                "repeated-inline-layout-variant" &&
+                repeatedInlineVariant.Issues.Single().AuthoredUsageCount == 2);
+
+            var distinctInlineVariants = AuditFixture(
+                repeatedInlineVariantElements.Replace(
+                    "background-image: url(&quot;Stage3.png&quot;); top: 57px;",
+                    "background-image: url(&quot;Stage3.png&quot;); top: 60px;"),
+                layoutContracts: variantIndex);
+            AddSelfTestCase(cases, "distinct inline variants pass",
+                distinctInlineVariants.WarningCount == 0);
+
+            var prefixOnlyIndex = new UxmlLayoutContractIndex();
+            IndexStyleSheetText(".stage-label-glyph { top: -18px; }", prefixOnlyIndex);
+            var unprovenVariant = AuditFixture(
+                "<ui:VisualElement class=\"stage-label-glyph\"/>" +
+                "<ui:VisualElement class=\"stage-label\" style=\"top: 57px;\"/>" +
+                "<ui:VisualElement class=\"stage-label\" style=\"top: 57px;\"/>",
+                layoutContracts: prefixOnlyIndex);
+            AddSelfTestCase(cases, "class-name prefix without co-usage passes",
+                unprovenVariant.WarningCount == 0);
+
+            var suppressedInlineVariant = AuditFixture(
+                "<ui:VisualElement class=\"stage-label stage-label-above\"/>" +
+                $"<!-- {REPEATED_INLINE_SUPPRESSION_MARKER} fixture mirrors runtime layout -->" +
+                "<ui:VisualElement class=\"stage-label\" style=\"top: 57px;\"/>" +
+                "<ui:VisualElement class=\"stage-label\" style=\"top: 57px;\"/>",
+                includeSuppressed: true, layoutContracts: variantIndex);
+            AddSelfTestCase(cases, "reasoned repeated-inline suppression is retained",
+                suppressedInlineVariant.WarningCount == 0 &&
+                suppressedInlineVariant.SuppressedCount == 1 &&
+                suppressedInlineVariant.Issues.Single().Suppressed);
+
             return new Dictionary<string, object>
             {
                 { "passed", cases.All(testCase => (bool)testCase["passed"]) },
@@ -221,7 +313,7 @@ namespace UnityMCP.Editor
 
         private static MCPUxmlLayoutAuditReport AuditFixture(string element,
             string parentStyle = "width: 807px; height: 492px;", bool includeSuppressed = false,
-            UxmlBoxContractIndex boxContracts = null)
+            UxmlLayoutContractIndex layoutContracts = null)
         {
             var text =
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
@@ -233,23 +325,28 @@ namespace UnityMCP.Editor
                 IndexedUxmlCount = 1
             };
             AuditText("Assets/__UxmlLayoutAuditSelfTest.uxml", text,
-                boxContracts ?? new UxmlBoxContractIndex(), report, includeSuppressed);
+                layoutContracts ?? new UxmlLayoutContractIndex(), report, includeSuppressed);
             report.SortIssues();
             return report;
         }
 
-        private static void AuditText(string assetPath, string text, UxmlBoxContractIndex boxContracts,
+        private static void AuditText(string assetPath, string text,
+            UxmlLayoutContractIndex layoutContracts,
             MCPUxmlLayoutAuditReport report, bool includeSuppressed)
         {
             var document = XDocument.Parse(text, LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
+            IndexUxmlDocument(document, layoutContracts);
             foreach (var element in document.Descendants())
             {
-                AuditElement(assetPath, element, boxContracts, report, includeSuppressed);
+                AuditElement(assetPath, element, layoutContracts, report, includeSuppressed);
             }
+
+            AuditRepeatedInlineLayoutVariants(assetPath, document, layoutContracts, report,
+                includeSuppressed);
         }
 
         private static void AuditElement(string assetPath, XElement element,
-            UxmlBoxContractIndex boxContracts, MCPUxmlLayoutAuditReport report,
+            UxmlLayoutContractIndex layoutContracts, MCPUxmlLayoutAuditReport report,
             bool includeSuppressed)
         {
             var parent = element.Parent as XElement;
@@ -273,7 +370,7 @@ namespace UnityMCP.Editor
                 width <= 0 ||
                 parentWidth <= 0 ||
                 Math.Abs(left * 2 + width - parentWidth) > CENTER_EPSILON ||
-                HasBoxContract(element, style, boxContracts))
+                HasBoxContract(element, style, layoutContracts))
             {
                 return;
             }
@@ -326,7 +423,7 @@ namespace UnityMCP.Editor
         }
 
         private static bool HasBoxContract(XElement element, IReadOnlyDictionary<string, string> style,
-            UxmlBoxContractIndex boxContracts)
+            UxmlLayoutContractIndex layoutContracts)
         {
             if (style.Any(property => IsBoxContractProperty(property.Key, property.Value)))
             {
@@ -334,14 +431,14 @@ namespace UnityMCP.Editor
             }
 
             var name = AttributeValue(element, "name");
-            if (string.IsNullOrWhiteSpace(name) == false && boxContracts.Ids.Contains(name))
+            if (string.IsNullOrWhiteSpace(name) == false && layoutContracts.BoxIds.Contains(name))
             {
                 return true;
             }
 
             foreach (var className in SplitWhitespace(AttributeValue(element, "class")))
             {
-                if (boxContracts.Classes.Contains(className))
+                if (layoutContracts.BoxClasses.Contains(className))
                 {
                     return true;
                 }
@@ -365,10 +462,11 @@ namespace UnityMCP.Editor
             return false;
         }
 
-        private static UxmlBoxContractIndex BuildBoxContractIndex(
-            MCPUxmlLayoutAuditReport report, MCPUIToolkitAuditOptions options)
+        private static UxmlLayoutContractIndex BuildLayoutContractIndex(
+            MCPUxmlLayoutAuditReport report, MCPUIToolkitAuditOptions options,
+            IEnumerable<string> uxmlPaths)
         {
-            var index = new UxmlBoxContractIndex();
+            var index = new UxmlLayoutContractIndex();
             foreach (var path in MCPUIToolkitAuditUtility.FindAssetFiles(".uss", options))
             {
                 try
@@ -383,31 +481,255 @@ namespace UnityMCP.Editor
                 }
             }
 
+            foreach (var path in uxmlPaths ?? Enumerable.Empty<string>())
+            {
+                try
+                {
+                    var document = XDocument.Parse(
+                        File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(path)),
+                        LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
+                    IndexUxmlDocument(document, index);
+                }
+                catch (Exception exception)
+                {
+                    report.Errors.Add($"Failed to index UXML layout variants in '{path}': " +
+                                      exception.Message);
+                }
+            }
+
             return index;
         }
 
-        private static void IndexStyleSheetText(string text, UxmlBoxContractIndex index)
+        private static void IndexStyleSheetText(string text, UxmlLayoutContractIndex index)
         {
             var sanitized = ussCommentRegex.Replace(text ?? "", "");
             foreach (Match rule in ussRuleRegex.Matches(sanitized))
             {
                 var declarations = ParseStyle(rule.Groups["body"].Value);
-                if (declarations.Any(property => IsBoxContractProperty(property.Key, property.Value)) == false)
+                var selector = rule.Groups["selector"].Value;
+                var classNames = classTokenRegex.Matches(selector)
+                    .Cast<Match>()
+                    .Select(match => match.Groups["token"].Value)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                foreach (var className in classNames)
+                {
+                    foreach (var declaration in declarations.Where(declaration =>
+                                 IsVariantLayoutProperty(declaration.Key)))
+                    {
+                        index.AddClassLayoutProperty(className, declaration.Key);
+                    }
+                }
+
+                if (declarations.Any(property =>
+                        IsBoxContractProperty(property.Key, property.Value)))
+                {
+                    foreach (var className in classNames)
+                    {
+                        index.BoxClasses.Add(className);
+                    }
+
+                    foreach (Match match in idTokenRegex.Matches(selector))
+                    {
+                        index.BoxIds.Add(match.Groups["token"].Value);
+                    }
+                }
+            }
+        }
+
+        private static void IndexUxmlDocument(XDocument document,
+            UxmlLayoutContractIndex index)
+        {
+            foreach (var element in document.Descendants())
+            {
+                var classNames = SplitWhitespace(AttributeValue(element, "class"))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                foreach (var baseClass in classNames)
+                {
+                    foreach (var variantClass in classNames.Where(candidate =>
+                                 candidate.StartsWith(baseClass + "-",
+                                     StringComparison.Ordinal)))
+                    {
+                        index.AddAuthoredVariant(baseClass, variantClass);
+                    }
+                }
+            }
+        }
+
+        private static void AuditRepeatedInlineLayoutVariants(string assetPath,
+            XDocument document, UxmlLayoutContractIndex layoutContracts,
+            MCPUxmlLayoutAuditReport report, bool includeSuppressed)
+        {
+            var candidates = new List<RepeatedInlineLayoutCandidate>();
+            foreach (var element in document.Descendants())
+            {
+                var inlineLayout = ParseStyle(AttributeValue(element, "style"))
+                    .Where(declaration => IsVariantLayoutProperty(declaration.Key))
+                    .ToDictionary(declaration => declaration.Key,
+                        declaration => declaration.Value,
+                        StringComparer.OrdinalIgnoreCase);
+                if (inlineLayout.Count == 0)
                 {
                     continue;
                 }
 
-                var selector = rule.Groups["selector"].Value;
-                foreach (Match match in classTokenRegex.Matches(selector))
+                foreach (var baseClass in SplitWhitespace(AttributeValue(element, "class"))
+                             .Distinct(StringComparer.Ordinal))
                 {
-                    index.Classes.Add(match.Groups["token"].Value);
-                }
+                    var relatedVariants = layoutContracts
+                        .GetRelatedVariants(baseClass, inlineLayout.Keys)
+                        .ToList();
+                    if (relatedVariants.Count == 0)
+                    {
+                        continue;
+                    }
 
-                foreach (Match match in idTokenRegex.Matches(selector))
-                {
-                    index.Ids.Add(match.Groups["token"].Value);
+                    var variantProperties = new HashSet<string>(
+                        relatedVariants.SelectMany(layoutContracts.GetClassLayoutProperties),
+                        StringComparer.OrdinalIgnoreCase);
+                    var relevantDeclarations = inlineLayout
+                        .Where(declaration => variantProperties.Contains(declaration.Key))
+                        .OrderBy(declaration => declaration.Key,
+                            StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(declaration => declaration.Key,
+                            declaration => declaration.Value,
+                            StringComparer.OrdinalIgnoreCase);
+                    if (relevantDeclarations.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    candidates.Add(new RepeatedInlineLayoutCandidate
+                    {
+                        Element = element,
+                        BaseClass = baseClass,
+                        Declarations = relevantDeclarations,
+                        Signature = BuildDeclarationSignature(relevantDeclarations),
+                        RelatedVariantClasses = relatedVariants
+                    });
                 }
             }
+
+            foreach (var group in candidates
+                         .GroupBy(candidate => candidate.BaseClass + "\n" + candidate.Signature,
+                             StringComparer.Ordinal)
+                         .Where(group => group.Count() > 1))
+            {
+                var ordered = group.OrderBy(candidate => GetLineNumber(candidate.Element)).ToList();
+                var first = ordered[0];
+                var elementName = AttributeValue(first.Element, "name");
+                var elementLabel = string.IsNullOrWhiteSpace(elementName)
+                    ? $".{first.BaseClass}"
+                    : $"#{elementName}";
+                var relatedVariants = ordered
+                    .SelectMany(candidate => candidate.RelatedVariantClasses)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(className => className, StringComparer.Ordinal)
+                    .ToList();
+                var suppressionReason = GetSuppressionReason(first.Element,
+                    repeatedInlineSuppressionRegex);
+                var issue = new MCPUxmlLayoutAuditIssue
+                {
+                    AssetPath = assetPath,
+                    Line = GetLineNumber(first.Element),
+                    Element = elementLabel,
+                    ElementName = elementName,
+                    Kind = "repeated-inline-layout-variant",
+                    Axis = GetLayoutAxis(first.Declarations.Keys),
+                    FixedProperties = first.Declarations.Keys
+                        .OrderBy(property => property, StringComparer.OrdinalIgnoreCase)
+                        .ToList(),
+                    BaseClass = first.BaseClass,
+                    AuthoredUsageCount = ordered.Count,
+                    InlineDeclarations =
+                        new Dictionary<string, string>(first.Declarations,
+                            StringComparer.OrdinalIgnoreCase),
+                    RelatedVariantClasses = relatedVariants,
+                    UsageLocations = ordered.Select(candidate =>
+                        new Dictionary<string, object>
+                        {
+                            { "path", assetPath },
+                            { "line", GetLineNumber(candidate.Element) },
+                            {
+                                "element",
+                                FormatElementLabel(candidate.Element, candidate.BaseClass)
+                            }
+                        }).ToList(),
+                    Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                    SuppressionReason = suppressionReason,
+                    Message =
+                        $"Inline layout {FormatDeclarations(first.Declarations)} is repeated on " +
+                        $"{ordered.Count} authored elements using .{first.BaseClass}, while " +
+                        $"{string.Join(", ", relatedVariants.Select(value => "." + value))} already " +
+                        "expresses a shared authored variant for the same layout properties. " +
+                        "Move the repeated declarations into a semantic shared class and apply that " +
+                        "class to these elements."
+                };
+                report.Record(issue, includeSuppressed);
+            }
+        }
+
+        private static string BuildDeclarationSignature(
+            IReadOnlyDictionary<string, string> declarations)
+        {
+            return string.Join(";", declarations
+                .OrderBy(declaration => declaration.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(declaration =>
+                    declaration.Key.Trim().ToLowerInvariant() + ":" +
+                    Regex.Replace(declaration.Value.Trim(), @"\s+", " ")
+                        .ToLowerInvariant()));
+        }
+
+        private static string FormatDeclarations(
+            IReadOnlyDictionary<string, string> declarations)
+        {
+            return "{" + string.Join("; ", declarations
+                .OrderBy(declaration => declaration.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(declaration => declaration.Key + ": " + declaration.Value)) + "}";
+        }
+
+        private static string FormatElementLabel(XElement element, string fallbackClass)
+        {
+            var name = AttributeValue(element, "name");
+            return string.IsNullOrWhiteSpace(name) ? "." + fallbackClass : "#" + name;
+        }
+
+        private static string GetLayoutAxis(IEnumerable<string> properties)
+        {
+            var propertyList = (properties ?? Enumerable.Empty<string>())
+                .Select(property => (property ?? "").Trim().ToLowerInvariant())
+                .ToList();
+            var horizontal = propertyList.Any(property =>
+                property == "left" ||
+                property == "right" ||
+                property.Contains("width") ||
+                property.EndsWith("-left", StringComparison.Ordinal) ||
+                property.EndsWith("-right", StringComparison.Ordinal) ||
+                property == "column-gap");
+            var vertical = propertyList.Any(property =>
+                property == "top" ||
+                property == "bottom" ||
+                property.Contains("height") ||
+                property.EndsWith("-top", StringComparison.Ordinal) ||
+                property.EndsWith("-bottom", StringComparison.Ordinal) ||
+                property == "row-gap");
+            if (horizontal && vertical)
+            {
+                return "mixed";
+            }
+
+            if (horizontal)
+            {
+                return "horizontal";
+            }
+
+            return vertical ? "vertical" : "layout";
+        }
+
+        private static bool IsVariantLayoutProperty(string property)
+        {
+            return variantLayoutProperties.Contains((property ?? "").Trim());
         }
 
         private static bool IsBoxContractProperty(string property, string value)
@@ -478,6 +800,11 @@ namespace UnityMCP.Editor
 
         private static string GetSuppressionReason(XElement element)
         {
+            return GetSuppressionReason(element, suppressionRegex);
+        }
+
+        private static string GetSuppressionReason(XElement element, Regex markerRegex)
+        {
             var previous = element.NodesBeforeSelf().Reverse().FirstOrDefault(node =>
                 !(node is XText) || string.IsNullOrWhiteSpace(((XText)node).Value) == false);
             var comment = previous as XComment;
@@ -486,7 +813,7 @@ namespace UnityMCP.Editor
                 return "";
             }
 
-            var match = suppressionRegex.Match(comment.Value);
+            var match = markerRegex.Match(comment.Value);
             return match.Success ? match.Groups["reason"].Value.Trim() : "";
         }
 
@@ -547,12 +874,72 @@ namespace UnityMCP.Editor
             });
         }
 
-        private sealed class UxmlBoxContractIndex
+        private sealed class RepeatedInlineLayoutCandidate
         {
-            public readonly HashSet<string> Classes =
+            public XElement Element;
+            public string BaseClass;
+            public string Signature;
+            public Dictionary<string, string> Declarations;
+            public List<string> RelatedVariantClasses;
+        }
+
+        private sealed class UxmlLayoutContractIndex
+        {
+            public readonly HashSet<string> BoxClasses =
                 new HashSet<string>(StringComparer.Ordinal);
-            public readonly HashSet<string> Ids =
+            public readonly HashSet<string> BoxIds =
                 new HashSet<string>(StringComparer.Ordinal);
+
+            private readonly Dictionary<string, HashSet<string>> classLayoutProperties =
+                new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            private readonly Dictionary<string, HashSet<string>> authoredVariants =
+                new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+            public void AddClassLayoutProperty(string className, string property)
+            {
+                if (!classLayoutProperties.TryGetValue(className, out var properties))
+                {
+                    properties = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    classLayoutProperties[className] = properties;
+                }
+
+                properties.Add(property);
+            }
+
+            public void AddAuthoredVariant(string baseClass, string variantClass)
+            {
+                if (!authoredVariants.TryGetValue(baseClass, out var variants))
+                {
+                    variants = new HashSet<string>(StringComparer.Ordinal);
+                    authoredVariants[baseClass] = variants;
+                }
+
+                variants.Add(variantClass);
+            }
+
+            public IEnumerable<string> GetRelatedVariants(string baseClass,
+                IEnumerable<string> inlineProperties)
+            {
+                if (!authoredVariants.TryGetValue(baseClass, out var variants))
+                {
+                    return Enumerable.Empty<string>();
+                }
+
+                var propertySet = new HashSet<string>(
+                    inlineProperties ?? Enumerable.Empty<string>(),
+                    StringComparer.OrdinalIgnoreCase);
+                return variants.Where(variant =>
+                        classLayoutProperties.TryGetValue(variant, out var properties) &&
+                        properties.Overlaps(propertySet))
+                    .OrderBy(variant => variant, StringComparer.Ordinal);
+            }
+
+            public IEnumerable<string> GetClassLayoutProperties(string className)
+            {
+                return classLayoutProperties.TryGetValue(className, out var properties)
+                    ? properties
+                    : Enumerable.Empty<string>();
+            }
         }
     }
 
@@ -633,8 +1020,14 @@ namespace UnityMCP.Editor
                 { "truncated", truncated },
                 { "issues", Issues.Select(issue => issue.ToDictionary()).ToList() },
                 { "errors", Errors.ToList() },
-                { "suppressionSyntax",
-                    $"<!-- {MCPUxmlLayoutAuditor.SUPPRESSION_MARKER} <reason> -->" }
+                {
+                    "suppressionSyntax",
+                    new[]
+                    {
+                        $"<!-- {MCPUxmlLayoutAuditor.SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.REPEATED_INLINE_SUPPRESSION_MARKER} <reason> -->"
+                    }
+                }
             };
         }
     }
@@ -651,13 +1044,20 @@ namespace UnityMCP.Editor
         public float ParentSize;
         public float Offset;
         public float Size;
+        public string BaseClass;
+        public int AuthoredUsageCount;
+        public Dictionary<string, string> InlineDeclarations =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        public List<string> RelatedVariantClasses = new List<string>();
+        public List<Dictionary<string, object>> UsageLocations =
+            new List<Dictionary<string, object>>();
         public bool Suppressed;
         public string SuppressionReason;
         public string Message;
 
         public Dictionary<string, object> ToDictionary()
         {
-            return new Dictionary<string, object>
+            var result = new Dictionary<string, object>
             {
                 { "assetPath", AssetPath },
                 { "line", Line },
@@ -666,13 +1066,30 @@ namespace UnityMCP.Editor
                 { "kind", Kind },
                 { "axis", Axis },
                 { "fixedProperties", FixedProperties.ToList() },
-                { "parentSize", ParentSize },
-                { "offset", Offset },
-                { "size", Size },
                 { "suppressed", Suppressed },
                 { "suppressionReason", SuppressionReason ?? "" },
                 { "message", Message }
             };
+            if (string.Equals(Kind, "manual-centered-layout-box",
+                    StringComparison.Ordinal))
+            {
+                result["parentSize"] = ParentSize;
+                result["offset"] = Offset;
+                result["size"] = Size;
+            }
+            else if (string.Equals(Kind, "repeated-inline-layout-variant",
+                    StringComparison.Ordinal))
+            {
+                result["baseClass"] = BaseClass ?? "";
+                result["authoredUsageCount"] = AuthoredUsageCount;
+                result["inlineDeclarations"] =
+                    new Dictionary<string, string>(InlineDeclarations,
+                        StringComparer.OrdinalIgnoreCase);
+                result["relatedVariantClasses"] = RelatedVariantClasses.ToList();
+                result["usageLocations"] = UsageLocations.ToList();
+            }
+
+            return result;
         }
     }
 }

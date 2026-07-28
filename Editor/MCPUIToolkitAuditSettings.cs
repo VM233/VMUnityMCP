@@ -19,7 +19,7 @@ namespace UnityMCP.Editor
         internal bool Valid = true;
         internal string Error = "";
         internal bool AutomaticUssSingleUseStyles;
-        internal bool AutomaticUxmlManualCentering;
+        internal bool AutomaticUxmlLayoutContracts;
         internal readonly List<string> AssetRoots = new List<string> { "Assets" };
         internal readonly List<string> RuntimeSourceRoots = new List<string> { "Assets" };
         internal readonly List<string> ExcludePaths = new List<string>();
@@ -42,8 +42,8 @@ namespace UnityMCP.Editor
                 Dictionary<string, object> automatic = GetDictionary(values, "automaticAudit");
                 settings.AutomaticUssSingleUseStyles =
                     MCPUIToolkitAuditUtility.GetBool(automatic, "ussSingleUseStyles", false);
-                settings.AutomaticUxmlManualCentering =
-                    MCPUIToolkitAuditUtility.GetBool(automatic, "uxmlManualCentering", false);
+                settings.AutomaticUxmlLayoutContracts =
+                    MCPUIToolkitAuditUtility.GetBool(automatic, "uxmlLayoutContracts", false);
 
                 ReplaceListWhenPresent(values, "assetRoots", settings.AssetRoots);
                 ReplaceListWhenPresent(values, "runtimeSourceRoots", settings.RuntimeSourceRoots);
@@ -62,7 +62,7 @@ namespace UnityMCP.Editor
                 settings.Valid = false;
                 settings.Error = exception.Message;
                 settings.AutomaticUssSingleUseStyles = false;
-                settings.AutomaticUxmlManualCentering = false;
+                settings.AutomaticUxmlLayoutContracts = false;
             }
 
             return settings;
@@ -154,7 +154,7 @@ namespace UnityMCP.Editor
             bool enabled = settings.Valid &&
                            (uss
                                ? settings.AutomaticUssSingleUseStyles
-                               : settings.AutomaticUxmlManualCentering);
+                               : settings.AutomaticUxmlLayoutContracts);
             AutomaticAuditState state = uss ? UssState : UxmlState;
             return new Dictionary<string, object>
             {
@@ -204,7 +204,7 @@ namespace UnityMCP.Editor
             else
                 PendingUss.Clear();
 
-            if (settings.AutomaticUxmlManualCentering)
+            if (settings.AutomaticUxmlLayoutContracts)
                 AuditPendingUxml(options);
             else
                 PendingUxml.Clear();
@@ -224,7 +224,7 @@ namespace UnityMCP.Editor
                 PendingUss.Add(normalized);
                 queued = true;
             }
-            else if (settings.AutomaticUxmlManualCentering &&
+            else if (settings.AutomaticUxmlLayoutContracts &&
                      normalized.EndsWith(".uxml", StringComparison.OrdinalIgnoreCase))
             {
                 PendingUxml.Add(normalized);
@@ -303,7 +303,7 @@ namespace UnityMCP.Editor
             var settings = MCPUIToolkitAuditProjectSettings.Load();
             bool enabled = settings.Valid &&
                            (settings.AutomaticUssSingleUseStyles ||
-                            settings.AutomaticUxmlManualCentering);
+                            settings.AutomaticUxmlLayoutContracts);
             if (enabled == automaticEnabled && (!enabled || watcher != null))
                 return;
 
