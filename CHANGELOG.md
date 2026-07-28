@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.26] - 2026-07-28
+
+- Preserve compiler diagnostics across Domain Reload, identify obsolete/deprecated warnings, and include their summary in compilation, Editor-idle, asset-refresh, package-test, and build responses even when the primary compilation filter requests errors only.
+
 ## [3.3.25] - 2026-07-28
 
 - Omit the implicit `Transform` from prefab hierarchy, scene hierarchy, filtered scene matches, and GameObject component inventories while retaining `RectTransform`.

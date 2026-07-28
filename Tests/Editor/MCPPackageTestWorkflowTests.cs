@@ -1,12 +1,108 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
+using UnityEditor.Compilation;
 
 namespace UnityMCP.Editor.Tests
 {
     public sealed class MCPPackageTestWorkflowTests
     {
+        [Test]
+        public void CompilationDiagnostics_PersistAcrossReloadAndErrorFilterStillReturnsDeprecatedWarnings()
+        {
+            FieldInfo bufferField = typeof(MCPConsoleCommands).GetField("_compilationErrors",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo captureMethod = typeof(MCPConsoleCommands).GetMethod("OnAssemblyCompilationFinished",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo persistMethod = typeof(MCPConsoleCommands).GetMethod("PersistCompilationDiagnostics",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo restoreMethod = typeof(MCPConsoleCommands).GetMethod("RestoreCompilationDiagnostics",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(bufferField, Is.Not.Null);
+            Assert.That(captureMethod, Is.Not.Null);
+            Assert.That(persistMethod, Is.Not.Null);
+            Assert.That(restoreMethod, Is.Not.Null);
+
+            var buffer = (IList)bufferField.GetValue(null);
+            object[] previousEntries;
+            lock (buffer)
+            {
+                previousEntries = buffer.Cast<object>().ToArray();
+                buffer.Clear();
+            }
+
+            try
+            {
+                captureMethod.Invoke(null, new object[]
+                {
+                    "Library/ScriptAssemblies/Assembly-CSharp.dll",
+                    new[]
+                    {
+                        new CompilerMessage
+                        {
+                            file = "Assets/Deprecated.cs",
+                            line = 12,
+                            column = 8,
+                            message = "warning CS0618: 'LegacyApi' is obsolete: 'Use CurrentApi.'",
+                            type = CompilerMessageType.Warning,
+                        },
+                        new CompilerMessage
+                        {
+                            file = "Assets/Unused.cs",
+                            line = 5,
+                            column = 17,
+                            message = "warning CS0168: The variable 'unused' is declared but never used",
+                            type = CompilerMessageType.Warning,
+                        },
+                        new CompilerMessage
+                        {
+                            file = "Assets/Broken.cs",
+                            line = 3,
+                            column = 1,
+                            message = "error CS1002: ; expected",
+                            type = CompilerMessageType.Error,
+                        },
+                    },
+                });
+                lock (buffer)
+                    buffer.Clear();
+                restoreMethod.Invoke(null, null);
+
+                var result = (Dictionary<string, object>)MCPConsoleCommands.GetCompilationErrors(
+                    new Dictionary<string, object>
+                    {
+                        { "severity", "error" },
+                        { "count", 50 },
+                    });
+                var entries = (List<Dictionary<string, object>>)result["entries"];
+                var deprecatedWarnings =
+                    (List<Dictionary<string, object>>)result["deprecatedWarnings"];
+
+                Assert.That(entries, Has.Count.EqualTo(1));
+                Assert.That(entries[0]["code"], Is.EqualTo("CS1002"));
+                Assert.That(Convert.ToInt32(result["errorCount"]), Is.EqualTo(1));
+                Assert.That(Convert.ToInt32(result["warningCount"]), Is.EqualTo(2));
+                Assert.That(Convert.ToInt32(result["deprecatedWarningCount"]), Is.EqualTo(1));
+                Assert.That(result["hasDeprecatedWarnings"], Is.EqualTo(true));
+                Assert.That(deprecatedWarnings, Has.Count.EqualTo(1));
+                Assert.That(deprecatedWarnings[0]["code"], Is.EqualTo("CS0618"));
+                Assert.That(deprecatedWarnings[0]["isDeprecated"], Is.EqualTo(true));
+            }
+            finally
+            {
+                lock (buffer)
+                {
+                    buffer.Clear();
+                    foreach (object previousEntry in previousEntries)
+                        buffer.Add(previousEntry);
+                }
+                persistMethod.Invoke(null, null);
+            }
+        }
+
         [Test]
         public void CompilationErrors_AreReportedWhileWaitingForAssemblies()
         {

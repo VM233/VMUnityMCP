@@ -1329,6 +1329,7 @@ namespace UnityMCP.Editor
                 { "elapsedMs", (long)((EditorApplication.timeSinceStartup - startTime) * 1000d) },
                 { "resumedAfterReload", resumeCount > 0 },
                 { "resumeCount", resumeCount },
+                { "compilationDiagnostics", MCPConsoleCommands.GetCompilationDiagnosticsSummary() },
             };
             if (timedOut)
             {

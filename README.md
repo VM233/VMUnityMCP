@@ -72,7 +72,7 @@ http://127.0.0.1:7890/api/ping
 | Serialization | `unity_serialized_object_get` | `serialized-object/get` | Read serialized properties from a scene object, component, or asset. |
 | Serialization | `unity_serialized_object_set` | `serialized-object/set` | Set one serialized property on a scene object, component, or asset. |
 | Console inspection | `unity_console_query` | `console/query` | Filter recent console entries by time, log type, message, source stack frame, full stack text, or only entries after the last Play transition. |
-| Compilation inspection | `unity_compilation_errors` | `compilation/errors` | Return tracked Unity compilation errors. |
+| Compilation inspection | `unity_compilation_errors` | `compilation/errors` | Return tracked Unity compilation errors and warnings, always including a separate deprecated-warning summary even when filtering for errors. |
 | Animator editing | `unity_animation_transition_info` | `animation/transition-info` | Read full Animator transition details, including conditions, exit time, duration, offset, and interruption settings. |
 | Animator editing | `unity_animation_update_state` | `animation/update-state` | Modify an existing Animator state, including motion, speed, tag, position, write defaults, and default state. |
 | Animator editing | `unity_animation_update_transition` | `animation/update-transition` | Modify an existing transition and add, update, remove, or replace transition conditions. |

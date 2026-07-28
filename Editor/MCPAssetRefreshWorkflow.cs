@@ -241,6 +241,7 @@ namespace UnityMCP.Editor
             settledResult["isUpdating"] = false;
             settledResult["isCompiling"] = false;
             settledResult["settledAfterRefresh"] = true;
+            settledResult["compilationDiagnostics"] = MCPConsoleCommands.GetCompilationDiagnosticsSummary();
             _job.Result = settledResult;
             _job.Status = "succeeded";
             TouchAndSave();

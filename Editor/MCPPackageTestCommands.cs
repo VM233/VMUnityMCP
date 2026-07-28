@@ -394,6 +394,7 @@ namespace UnityMCP.Editor
                 { "manifestRestored", !workflow.ManifestChanged || ManifestIsRestored(workflow) },
                 { "startedAt", workflow.StartedAt.ToString("O") },
                 { "updatedAt", workflow.UpdatedAt.ToString("O") },
+                { "compilationDiagnostics", MCPConsoleCommands.GetCompilationDiagnosticsSummary() },
             };
             if (!string.IsNullOrEmpty(workflow.TestJobId))
                 response["testJobId"] = workflow.TestJobId;

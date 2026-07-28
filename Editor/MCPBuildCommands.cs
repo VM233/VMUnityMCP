@@ -392,6 +392,7 @@ namespace UnityMCP.Editor
                 { "outputPath", report.summary.outputPath },
                 { "totalSize", report.summary.totalSize },
                 { "platform", report.summary.platform.ToString() },
+                { "compilationDiagnostics", MCPConsoleCommands.GetCompilationDiagnosticsSummary() },
             };
         }
 

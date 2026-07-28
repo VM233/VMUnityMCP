@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEngine;
@@ -31,6 +32,19 @@ namespace UnityMCP.Editor
         // Cleared automatically at the start of each new compilation cycle.
         // Not affected by console Clear().
         private static readonly List<CompilationError> _compilationErrors = new List<CompilationError>();
+        private static readonly HashSet<string> DeprecatedDiagnosticCodes =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "CS0612",
+                "CS0618",
+                "CS0619",
+                "CS0672",
+                "CS0809",
+            };
+        private static readonly Regex DiagnosticCodePattern =
+            new Regex(@"\b(?:CS|SYSLIB)\d{4}\b", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        private const string CompilationSessionStateKey = "UnityMCP.CompilationDiagnostics.v1";
+        private const int MaxCompilationEntries = 1000;
         private static bool _compilationHooked = false;
 
         private struct CompilationError
@@ -40,6 +54,8 @@ namespace UnityMCP.Editor
             public int column;
             public string message;
             public string severity; // "error" or "warning"
+            public string code;
+            public bool isDeprecated;
             public string assembly;
             public DateTime timestamp;
         }
@@ -48,6 +64,7 @@ namespace UnityMCP.Editor
         static MCPConsoleCommands()
         {
             EnsureListening();
+            RestoreCompilationDiagnostics();
             EnsureCompilationHook();
             EnsurePlayModeHook();
         }
@@ -91,6 +108,7 @@ namespace UnityMCP.Editor
         {
             // Fresh compilation cycle — clear previous results
             lock (_compilationErrors) { _compilationErrors.Clear(); }
+            PersistCompilationDiagnostics();
         }
 
         private static void OnPlayModeStateChanged(PlayModeStateChange state)
@@ -112,18 +130,30 @@ namespace UnityMCP.Editor
                     if (msg.type != CompilerMessageType.Error && msg.type != CompilerMessageType.Warning)
                         continue;
 
+                    string message = msg.message ?? "";
+                    string severity = msg.type == CompilerMessageType.Error ? "error" : "warning";
+                    string code = ExtractDiagnosticCode(message);
                     _compilationErrors.Add(new CompilationError
                     {
                         file = msg.file ?? "",
                         line = msg.line,
                         column = msg.column,
-                        message = msg.message ?? "",
-                        severity = msg.type == CompilerMessageType.Error ? "error" : "warning",
+                        message = message,
+                        severity = severity,
+                        code = code,
+                        isDeprecated = IsDeprecatedDiagnostic(severity, code, message),
                         assembly = asmName,
                         timestamp = DateTime.Now,
                     });
                 }
+
+                if (_compilationErrors.Count > MaxCompilationEntries)
+                {
+                    _compilationErrors.RemoveRange(0, _compilationErrors.Count - MaxCompilationEntries);
+                }
             }
+
+            PersistCompilationDiagnostics();
         }
 
         private static void OnLogMessage(string message, string stackTrace, LogType type)
@@ -232,41 +262,29 @@ namespace UnityMCP.Editor
         {
             EnsureCompilationHook();
 
-            int count = args.ContainsKey("count") ? Convert.ToInt32(args["count"]) : 50;
-            string severityFilter = args.ContainsKey("severity") ? args["severity"].ToString().ToLower() : "all";
+            int count = Math.Max(1, Math.Min(GetInt(args, "count", 50), 200));
+            string severityFilter = NormalizeCompilationSeverity(GetString(args, "severity", "all"));
+            List<CompilationError> snapshot = GetCompilationSnapshot();
+            var entries = snapshot
+                .Where(entry => severityFilter == "all" || entry.severity == severityFilter)
+                .Reverse()
+                .Take(count)
+                .Reverse()
+                .Select(BuildCompilationEntry)
+                .ToList();
 
-            var entries = new List<Dictionary<string, object>>();
-            lock (_compilationErrors)
-            {
-                // Walk backwards to get most recent first, then reverse for chronological order
-                for (int i = _compilationErrors.Count - 1; i >= 0 && entries.Count < count; i--)
-                {
-                    var err = _compilationErrors[i];
+            var response = BuildCompilationDiagnosticsSummary(snapshot, count);
+            response["count"] = entries.Count;
+            response["severityFilter"] = severityFilter;
+            response["entries"] = entries;
+            return response;
+        }
 
-                    if (severityFilter != "all" && err.severity != severityFilter)
-                        continue;
-
-                    entries.Add(new Dictionary<string, object>
-                    {
-                        { "file", err.file },
-                        { "line", err.line },
-                        { "column", err.column },
-                        { "message", err.message },
-                        { "severity", err.severity },
-                        { "assembly", err.assembly },
-                        { "timestamp", err.timestamp.ToString("HH:mm:ss.fff") },
-                    });
-                }
-            }
-
-            entries.Reverse();
-
-            return new Dictionary<string, object>
-            {
-                { "count", entries.Count },
-                { "isCompiling", EditorApplication.isCompiling },
-                { "entries", entries },
-            };
+        public static Dictionary<string, object> GetCompilationDiagnosticsSummary(int deprecatedWarningLimit = 50)
+        {
+            EnsureCompilationHook();
+            int limit = Math.Max(1, Math.Min(deprecatedWarningLimit, 200));
+            return BuildCompilationDiagnosticsSummary(GetCompilationSnapshot(), limit);
         }
 
         public static object Clear()
@@ -274,6 +292,168 @@ namespace UnityMCP.Editor
             EnsureListening();
             lock (_logEntries) { _logEntries.Clear(); }
             return new { success = true, message = "Console log buffer cleared" };
+        }
+
+        private static Dictionary<string, object> BuildCompilationDiagnosticsSummary(
+            List<CompilationError> snapshot, int deprecatedWarningLimit)
+        {
+            int errorCount = snapshot.Count(entry => entry.severity == "error");
+            int warningCount = snapshot.Count(entry => entry.severity == "warning");
+            int deprecatedWarningCount = snapshot.Count(entry =>
+                entry.severity == "warning" && entry.isDeprecated);
+            var deprecatedWarnings = snapshot
+                .Where(entry => entry.severity == "warning" && entry.isDeprecated)
+                .Reverse()
+                .Take(deprecatedWarningLimit)
+                .Reverse()
+                .Select(BuildCompilationEntry)
+                .ToList();
+
+            return new Dictionary<string, object>
+            {
+                { "isCompiling", EditorApplication.isCompiling },
+                { "totalCount", snapshot.Count },
+                { "errorCount", errorCount },
+                { "warningCount", warningCount },
+                { "deprecatedWarningCount", deprecatedWarningCount },
+                { "hasErrors", errorCount > 0 },
+                { "hasWarnings", warningCount > 0 },
+                { "hasDeprecatedWarnings", deprecatedWarningCount > 0 },
+                { "deprecatedWarnings", deprecatedWarnings },
+                { "deprecatedWarningsTruncated", deprecatedWarnings.Count < deprecatedWarningCount },
+            };
+        }
+
+        private static Dictionary<string, object> BuildCompilationEntry(CompilationError entry)
+        {
+            return new Dictionary<string, object>
+            {
+                { "file", entry.file },
+                { "line", entry.line },
+                { "column", entry.column },
+                { "message", entry.message },
+                { "severity", entry.severity },
+                { "code", entry.code },
+                { "isDeprecated", entry.isDeprecated },
+                { "assembly", entry.assembly },
+                { "timestamp", entry.timestamp.ToString("HH:mm:ss.fff") },
+            };
+        }
+
+        private static List<CompilationError> GetCompilationSnapshot()
+        {
+            lock (_compilationErrors)
+            {
+                return new List<CompilationError>(_compilationErrors);
+            }
+        }
+
+        private static string NormalizeCompilationSeverity(string value)
+        {
+            string normalized = string.IsNullOrWhiteSpace(value) ? "all" : value.Trim().ToLowerInvariant();
+            return normalized == "error" || normalized == "warning" ? normalized : "all";
+        }
+
+        private static string ExtractDiagnosticCode(string message)
+        {
+            if (string.IsNullOrEmpty(message))
+                return "";
+
+            Match match = DiagnosticCodePattern.Match(message);
+            return match.Success ? match.Value.ToUpperInvariant() : "";
+        }
+
+        private static bool IsDeprecatedDiagnostic(string severity, string code, string message)
+        {
+            if (!string.Equals(severity, "warning", StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (!string.IsNullOrEmpty(code) && DeprecatedDiagnosticCodes.Contains(code))
+                return true;
+
+            return ContainsIgnoreCase(message, "obsolete") || ContainsIgnoreCase(message, "deprecated");
+        }
+
+        private static void PersistCompilationDiagnostics()
+        {
+            try
+            {
+                List<object> serializedEntries;
+                lock (_compilationErrors)
+                {
+                    serializedEntries = _compilationErrors.Select(entry => (object)new Dictionary<string, object>
+                    {
+                        { "file", entry.file },
+                        { "line", entry.line },
+                        { "column", entry.column },
+                        { "message", entry.message },
+                        { "severity", entry.severity },
+                        { "code", entry.code },
+                        { "isDeprecated", entry.isDeprecated },
+                        { "assembly", entry.assembly },
+                        { "timestamp", entry.timestamp.ToString("O") },
+                    }).ToList();
+                }
+
+                SessionState.SetString(CompilationSessionStateKey, MiniJson.Serialize(serializedEntries));
+            }
+            catch
+            {
+                // Compilation diagnostics must never interfere with Unity's compilation callback.
+            }
+        }
+
+        private static void RestoreCompilationDiagnostics()
+        {
+            try
+            {
+                string serialized = SessionState.GetString(CompilationSessionStateKey, "");
+                if (string.IsNullOrEmpty(serialized) ||
+                    MiniJson.Deserialize(serialized) is not List<object> serializedEntries)
+                {
+                    return;
+                }
+
+                var restored = new List<CompilationError>();
+                foreach (object serializedEntry in serializedEntries)
+                {
+                    if (serializedEntry is not Dictionary<string, object> entry)
+                        continue;
+
+                    string message = GetString(entry, "message", "");
+                    string severity = NormalizeCompilationSeverity(GetString(entry, "severity", "warning"));
+                    if (severity == "all")
+                        severity = "warning";
+                    string code = GetString(entry, "code", "");
+                    if (string.IsNullOrEmpty(code))
+                        code = ExtractDiagnosticCode(message);
+                    if (!DateTime.TryParse(GetString(entry, "timestamp", ""), out DateTime timestamp))
+                        timestamp = DateTime.Now;
+
+                    restored.Add(new CompilationError
+                    {
+                        file = GetString(entry, "file", ""),
+                        line = GetInt(entry, "line", 0),
+                        column = GetInt(entry, "column", 0),
+                        message = message,
+                        severity = severity,
+                        code = code,
+                        isDeprecated = GetBool(entry, "isDeprecated",
+                            IsDeprecatedDiagnostic(severity, code, message)),
+                        assembly = GetString(entry, "assembly", ""),
+                        timestamp = timestamp,
+                    });
+                }
+
+                lock (_compilationErrors)
+                {
+                    _compilationErrors.Clear();
+                    _compilationErrors.AddRange(restored.Skip(Math.Max(0, restored.Count - MaxCompilationEntries)));
+                }
+            }
+            catch
+            {
+                // Ignore stale or malformed SessionState from an older package version.
+            }
         }
 
         private static bool MatchesLogType(LogType type, string typeFilter)
