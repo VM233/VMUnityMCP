@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.27] - 2026-07-28
+
+- Preserve unnamed enum values such as combined flags as their underlying integer during SerializedProperty reads and writes, preventing prefab and ScriptableObject property inspection from indexing `enumNames` with Unity's `-1` sentinel.
+
 ## [3.3.26] - 2026-07-28
 
 - Preserve compiler diagnostics across Domain Reload, identify obsolete/deprecated warnings, and include their summary in compilation, Editor-idle, asset-refresh, package-test, and build responses even when the primary compilation filter requests errors only.

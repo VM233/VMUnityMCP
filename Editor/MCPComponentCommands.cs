@@ -679,7 +679,7 @@ namespace UnityMCP.Editor
                     var v4 = prop.vector4Value;
                     return new Dictionary<string, object> { { "x", v4.x }, { "y", v4.y }, { "z", v4.z }, { "w", v4.w } };
                 case SerializedPropertyType.Enum:
-                    return prop.enumNames.Length > prop.enumValueIndex ? prop.enumNames[prop.enumValueIndex] : prop.enumValueIndex.ToString();
+                    return MCPSerializedEnumValue.Read(prop);
                 case SerializedPropertyType.ObjectReference:
                     if (prop.objectReferenceValue != null)
                     {
@@ -786,23 +786,7 @@ namespace UnityMCP.Editor
                             Convert.ToSingle(v4d.GetValueOrDefault("w", 0f)));
                     break;
                 case SerializedPropertyType.Enum:
-                    if (value is string enumName)
-                    {
-                        int index = Array.FindIndex(prop.enumNames,
-                            name => string.Equals(name, enumName, StringComparison.OrdinalIgnoreCase));
-                        if (index < 0)
-                        {
-                            throw new ArgumentException(
-                                $"Enum property '{prop.propertyPath}' does not define '{enumName}'. " +
-                                $"Available values: {string.Join(", ", prop.enumNames)}.");
-                        }
-
-                        prop.enumValueIndex = index;
-                    }
-                    else
-                    {
-                        prop.enumValueIndex = Convert.ToInt32(value);
-                    }
+                    MCPSerializedEnumValue.Write(prop, value);
                     break;
                 case SerializedPropertyType.LayerMask:
                     prop.intValue = Convert.ToInt32(value);

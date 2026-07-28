@@ -212,7 +212,7 @@ namespace UnityMCP.Editor
                 case SerializedPropertyType.Boolean: return prop.boolValue;
                 case SerializedPropertyType.Float: return prop.floatValue;
                 case SerializedPropertyType.String: return prop.stringValue;
-                case SerializedPropertyType.Enum: return prop.enumNames[prop.enumValueIndex];
+                case SerializedPropertyType.Enum: return MCPSerializedEnumValue.Read(prop);
                 case SerializedPropertyType.ObjectReference:
                     return prop.objectReferenceValue != null ? prop.objectReferenceValue.name : null;
                 case SerializedPropertyType.Vector2:
@@ -244,16 +244,8 @@ namespace UnityMCP.Editor
                         prop.stringValue = value.ToString();
                         return true;
                     case SerializedPropertyType.Enum:
-                        string enumStr = value.ToString();
-                        for (int i = 0; i < prop.enumNames.Length; i++)
-                        {
-                            if (prop.enumNames[i].Equals(enumStr, StringComparison.OrdinalIgnoreCase))
-                            {
-                                prop.enumValueIndex = i;
-                                return true;
-                            }
-                        }
-                        return false;
+                        MCPSerializedEnumValue.Write(prop, value);
+                        return true;
                     default:
                         return false;
                 }

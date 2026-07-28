@@ -31,6 +31,35 @@ namespace UnityMCP.Editor.Tests
         public ScalarEnvelopeTestConfig config = new ScalarEnvelopeTestConfig();
     }
 
+    [Flags]
+    public enum SerializedEnumFlagsTestValue
+    {
+        None = 0,
+        Enemy = 1,
+        Neutral = 2,
+        Friendly = 4,
+        Allied = 8
+    }
+
+    [Serializable]
+    public sealed class SerializedEnumFlagsTestConfig
+    {
+        public SerializedEnumFlagsTestValue factionType;
+    }
+
+    public sealed class SerializedEnumFlagsTestComponent : MonoBehaviour
+    {
+        public List<SerializedEnumFlagsTestConfig> configs = new List<SerializedEnumFlagsTestConfig>
+        {
+            new SerializedEnumFlagsTestConfig()
+        };
+    }
+
+    public sealed class SerializedEnumFlagsTestObject : ScriptableObject
+    {
+        public SerializedEnumFlagsTestValue factionType;
+    }
+
     public sealed class MCPCommandRegressionTests
     {
         private const string TEST_FOLDER = "Assets/__UnityMCPTests";
@@ -4087,6 +4116,84 @@ namespace UnityMCP.Editor.Tests
             {
                 Object.DestroyImmediate(target);
             }
+        }
+
+        [Test]
+        public void PrefabComponentProperties_RoundTripsUnnamedFlagsEnumValue()
+        {
+            CreateTestPrefab();
+            AddComponentToTestPrefab<SerializedEnumFlagsTestComponent>();
+
+            int combinedValue = (int)(SerializedEnumFlagsTestValue.Friendly |
+                                      SerializedEnumFlagsTestValue.Allied);
+            var setResult = RequireDictionary(MCPPrefabAssetCommands.SetComponentProperty(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Source" },
+                    { "componentType", typeof(SerializedEnumFlagsTestComponent).FullName },
+                    { "propertyName", "configs.Array.data[0].factionType" },
+                    { "value", combinedValue },
+                }));
+            Assert.That(setResult["success"], Is.EqualTo(true));
+
+            var getResult = RequireDictionary(MCPPrefabAssetCommands.GetComponentProperties(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Source" },
+                    { "componentType", typeof(SerializedEnumFlagsTestComponent).FullName },
+                }));
+            var properties = (List<Dictionary<string, object>>)getResult["properties"];
+            var configs = RequireDictionary(properties.Single(
+                property => property["name"].ToString() == "configs")["value"]);
+            var items = (List<object>)configs["items"];
+            var firstConfig = RequireDictionary(items.Single());
+            Assert.That(Convert.ToInt32(firstConfig["factionType"]), Is.EqualTo(combinedValue));
+
+            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+            try
+            {
+                var component = root.transform.Find("Source")
+                    .GetComponent<SerializedEnumFlagsTestComponent>();
+                Assert.That(component.configs.Single().factionType,
+                    Is.EqualTo(SerializedEnumFlagsTestValue.Friendly |
+                               SerializedEnumFlagsTestValue.Allied));
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        [Test]
+        public void ScriptableObjectProperties_RoundTripsUnnamedFlagsEnumValue()
+        {
+            const string assetPath = TEST_FOLDER + "/Flags Test.asset";
+            var target = ScriptableObject.CreateInstance<SerializedEnumFlagsTestObject>();
+            AssetDatabase.CreateAsset(target, assetPath);
+
+            int combinedValue = (int)(SerializedEnumFlagsTestValue.Friendly |
+                                      SerializedEnumFlagsTestValue.Allied);
+            var setResult = RequireDictionary(MCPScriptableObjectCommands.SetScriptableObjectField(
+                new Dictionary<string, object>
+                {
+                    { "path", assetPath },
+                    { "field", "factionType" },
+                    { "value", combinedValue },
+                }));
+            Assert.That(setResult["success"], Is.EqualTo(true));
+            Assert.That(Convert.ToInt32(setResult["value"]), Is.EqualTo(combinedValue));
+
+            var info = RequireDictionary(MCPScriptableObjectCommands.GetScriptableObjectInfo(
+                new Dictionary<string, object> { { "path", assetPath } }));
+            var properties = (List<Dictionary<string, object>>)info["properties"];
+            var factionType = properties.Single(
+                property => property["name"].ToString() == "factionType");
+            Assert.That(Convert.ToInt32(factionType["value"]), Is.EqualTo(combinedValue));
+            Assert.That(AssetDatabase.LoadAssetAtPath<SerializedEnumFlagsTestObject>(assetPath).factionType,
+                Is.EqualTo(SerializedEnumFlagsTestValue.Friendly |
+                           SerializedEnumFlagsTestValue.Allied));
         }
 
         [Test]
