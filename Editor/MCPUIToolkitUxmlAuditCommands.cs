@@ -561,6 +561,7 @@ namespace UnityMCP.Editor
         private readonly int maxIssues;
         private int activeIssueCount;
         private int suppressedIssueCount;
+        private bool truncated;
 
         public readonly List<MCPUxmlLayoutAuditIssue> Issues =
             new List<MCPUxmlLayoutAuditIssue>();
@@ -597,6 +598,10 @@ namespace UnityMCP.Editor
             {
                 Issues.Add(issue);
             }
+            else
+            {
+                truncated = true;
+            }
         }
 
         public void SortIssues()
@@ -616,8 +621,6 @@ namespace UnityMCP.Editor
 
         public Dictionary<string, object> ToDictionary()
         {
-            var returnedActive = Issues.Count(issue => issue.Suppressed == false);
-            var returnedSuppressed = Issues.Count(issue => issue.Suppressed);
             return new Dictionary<string, object>
             {
                 { "success", Errors.Count == 0 },
@@ -627,8 +630,7 @@ namespace UnityMCP.Editor
                 { "indexedStyleSheets", IndexedStyleSheetCount },
                 { "warningCount", WarningCount },
                 { "suppressedCount", SuppressedCount },
-                { "truncated", WarningCount > returnedActive ||
-                               returnedSuppressed > 0 && SuppressedCount > returnedSuppressed },
+                { "truncated", truncated },
                 { "issues", Issues.Select(issue => issue.ToDictionary()).ToList() },
                 { "errors", Errors.ToList() },
                 { "suppressionSyntax",

@@ -1792,6 +1792,26 @@ namespace UnityMCP.Editor.Tests
             }
         }
 
+        [Test]
+        public void UIToolkitStaticAudits_ReportIssueLimitTruncationWithoutDerivedCountAliases()
+        {
+            var ussReport = new MCPUssStyleAuditReport(1);
+            ussReport.Record(new MCPUssStyleAuditIssue(), false);
+            ussReport.Record(new MCPUssStyleAuditIssue(), false);
+            var ussResult = ussReport.ToDictionary();
+            Assert.That(ussResult["truncated"], Is.EqualTo(true));
+            Assert.That(((List<Dictionary<string, object>>)ussResult["issues"]), Has.Count.EqualTo(1));
+            Assert.That(ussResult.ContainsKey("returnedIssueCount"), Is.False);
+
+            var uxmlReport = new MCPUxmlLayoutAuditReport(1);
+            uxmlReport.Record(new MCPUxmlLayoutAuditIssue(), false);
+            uxmlReport.Record(new MCPUxmlLayoutAuditIssue(), false);
+            var uxmlResult = uxmlReport.ToDictionary();
+            Assert.That(uxmlResult["truncated"], Is.EqualTo(true));
+            Assert.That(((List<Dictionary<string, object>>)uxmlResult["issues"]), Has.Count.EqualTo(1));
+            Assert.That(uxmlResult.ContainsKey("returnedIssueCount"), Is.False);
+        }
+
         [UnityTest]
         public IEnumerator UIBuilderPreview_WaitsForRequestedDocumentAndCanvas()
         {
