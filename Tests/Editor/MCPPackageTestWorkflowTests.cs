@@ -80,16 +80,25 @@ namespace UnityMCP.Editor.Tests
                 var entries = (List<Dictionary<string, object>>)result["entries"];
                 var deprecatedWarnings =
                     (List<Dictionary<string, object>>)result["deprecatedWarnings"];
+                var counts = (Dictionary<string, object>)result["counts"];
 
                 Assert.That(entries, Has.Count.EqualTo(1));
                 Assert.That(entries[0]["code"], Is.EqualTo("CS1002"));
-                Assert.That(Convert.ToInt32(result["errorCount"]), Is.EqualTo(1));
-                Assert.That(Convert.ToInt32(result["warningCount"]), Is.EqualTo(2));
-                Assert.That(Convert.ToInt32(result["deprecatedWarningCount"]), Is.EqualTo(1));
-                Assert.That(result["hasDeprecatedWarnings"], Is.EqualTo(true));
+                Assert.That(Convert.ToInt32(counts["errors"]), Is.EqualTo(1));
+                Assert.That(Convert.ToInt32(counts["warnings"]), Is.EqualTo(2));
                 Assert.That(deprecatedWarnings, Has.Count.EqualTo(1));
                 Assert.That(deprecatedWarnings[0]["code"], Is.EqualTo("CS0618"));
                 Assert.That(deprecatedWarnings[0]["isDeprecated"], Is.EqualTo(true));
+                Assert.That(result.ContainsKey("totalCount"), Is.False);
+                Assert.That(result.ContainsKey("errorCount"), Is.False);
+                Assert.That(result.ContainsKey("warningCount"), Is.False);
+                Assert.That(result.ContainsKey("deprecatedWarningCount"), Is.False);
+                Assert.That(result.ContainsKey("hasErrors"), Is.False);
+                Assert.That(result.ContainsKey("hasWarnings"), Is.False);
+                Assert.That(result.ContainsKey("hasDeprecatedWarnings"), Is.False);
+                Assert.That(result.ContainsKey("count"), Is.False);
+                Assert.That(result.ContainsKey("severityFilter"), Is.False);
+                Assert.That(result.ContainsKey("deprecatedWarningsTruncated"), Is.False);
             }
             finally
             {

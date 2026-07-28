@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.28] - 2026-07-28
+
+- Compact all HTTP tool responses at the transport boundary by removing redundant success envelopes, duplicate error messages, derivable collection counts and presence flags, completed-pagination metadata, false truncation flags, and overlapping array, persistence, operation, and summary aliases.
+- Replace the compilation diagnostic count/boolean aliases with grouped error and warning counts while continuing to return deprecated warnings independently of the requested severity filter.
+
 ## [3.3.27] - 2026-07-28
 
 - Preserve unnamed enum values such as combined flags as their underlying integer during SerializedProperty reads and writes, preventing prefab and ScriptableObject property inspection from indexing `enumNames` with Unity's `-1` sentinel.

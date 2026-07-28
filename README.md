@@ -187,7 +187,9 @@ Concrete `project-tools/call/...` routes are reserved for tools that explicitly 
 
 - Use the upstream README for the general feature list and MCP setup flow.
 - `_meta/tools` defaults to compact first-class metadata, 50 tools per page, and no schemas. Use `includeSchema=true`, `offset`, `limit`, and optional `category` as needed. Legacy duplicate collections are returned only with `compact=false&includeCollections=true`.
-- Error payloads are normalized with `success=false`, `errorCode`, `message`, and `retryable`.
+- Successful wire responses omit the redundant inner `success=true`. Project-tool success envelopes are unwrapped, exact collection counts and completed-pagination aliases are omitted, and false truncation flags are absent. A partial page keeps only its collection, total, and `nextOffset`.
+- Error payloads keep `success=false`, `error`, `errorCode`, and `retryable`; an identical `message` alias is omitted.
+- Compilation diagnostics return `isCompiling`, `counts.errors`, `counts.warnings`, `entries`, and the independently surfaced `deprecatedWarnings`. Totals appear only when an entry list was actually truncated.
 - Queue tickets keep atomic status snapshots through Unity domain reloads. Queued work and interrupted reads resume with the same ticket; `prefab-asset/add-component` also persists its pre-refresh/mutation phase and reconciles the prefab before resuming. Other interrupted mutations return `UncertainAfterReload` and require target reconciliation before a new request. Stable idempotency keys prevent retry submissions from duplicating work.
 - For multiple Unity projects open at once, select or resolve the target instance before mutation. The MCP server forwards its path/name automatically, and the Editor rejects unbound mutations with `target_project_required` or mismatches with `wrong_unity_project`.
 - Project binding fields such as `expectedProjectPath` and `expectedProjectName` are transport metadata. The bridge validates them before dispatch and does not forward them into a project tool's strict business-argument schema.

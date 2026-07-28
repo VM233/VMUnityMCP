@@ -272,11 +272,13 @@ namespace UnityMCP.Editor
                 .Reverse()
                 .Select(BuildCompilationEntry)
                 .ToList();
+            int entryTotal = snapshot.Count(entry =>
+                severityFilter == "all" || entry.severity == severityFilter);
 
             var response = BuildCompilationDiagnosticsSummary(snapshot, count);
-            response["count"] = entries.Count;
-            response["severityFilter"] = severityFilter;
             response["entries"] = entries;
+            if (entries.Count < entryTotal)
+                response["entryTotal"] = entryTotal;
             return response;
         }
 
@@ -309,19 +311,22 @@ namespace UnityMCP.Editor
                 .Select(BuildCompilationEntry)
                 .ToList();
 
-            return new Dictionary<string, object>
+            var result = new Dictionary<string, object>
             {
                 { "isCompiling", EditorApplication.isCompiling },
-                { "totalCount", snapshot.Count },
-                { "errorCount", errorCount },
-                { "warningCount", warningCount },
-                { "deprecatedWarningCount", deprecatedWarningCount },
-                { "hasErrors", errorCount > 0 },
-                { "hasWarnings", warningCount > 0 },
-                { "hasDeprecatedWarnings", deprecatedWarningCount > 0 },
+                { "counts", new Dictionary<string, object>
+                    {
+                        { "errors", errorCount },
+                        { "warnings", warningCount },
+                    }
+                },
                 { "deprecatedWarnings", deprecatedWarnings },
-                { "deprecatedWarningsTruncated", deprecatedWarnings.Count < deprecatedWarningCount },
             };
+
+            if (deprecatedWarnings.Count < deprecatedWarningCount)
+                result["deprecatedWarningTotal"] = deprecatedWarningCount;
+
+            return result;
         }
 
         private static Dictionary<string, object> BuildCompilationEntry(CompilationError entry)

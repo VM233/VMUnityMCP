@@ -1800,8 +1800,10 @@ namespace UnityMCP.Editor
         {
             response.StatusCode = statusCode;
             response.ContentType = "application/json";
+            data = MCPResponse.CompactForTransport(data);
             if (statusCode >= 400 || MCPResponse.TryGetError(data, out _, out _, out _))
                 data = MCPResponse.NormalizeError(data, statusCode == 408 ? "timeout" : "error", statusCode == 408);
+            data = MCPResponse.CompactForTransport(data);
             data = AttachInstanceContext(data);
             string json = MiniJson.Serialize(data);
             byte[] buffer = Encoding.UTF8.GetBytes(json);
@@ -1817,7 +1819,8 @@ namespace UnityMCP.Editor
                         { "size", buffer.Length },
                         { "limit", ResponseHardLimitBytes },
                     });
-                json = MiniJson.Serialize(errorData);
+                data = AttachInstanceContext(MCPResponse.CompactForTransport(errorData));
+                json = MiniJson.Serialize(data);
                 buffer = Encoding.UTF8.GetBytes(json);
                 response.StatusCode = 413; // Payload Too Large
             }

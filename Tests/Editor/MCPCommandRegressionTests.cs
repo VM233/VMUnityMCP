@@ -4511,6 +4511,168 @@ namespace UnityMCP.Editor.Tests
             Assert.That(method.Invoke(null, new object[] { "scene/hierarchy" }), Is.EqualTo(true));
         }
 
+        [Test]
+        public void TransportCompaction_UnwrapsProjectToolSuccessEnvelope()
+        {
+            var result = MCPResponse.Success(
+                new Dictionary<string, object>
+                {
+                    { "valid", true },
+                    { "warnings", new List<object>() },
+                    { "warningCount", 0 },
+                    { "hasWarnings", false },
+                },
+                new Dictionary<string, object> { { "toolName", "fixture/audit" } });
+
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(result));
+
+            Assert.That(compacted["valid"], Is.EqualTo(true));
+            Assert.That(compacted.ContainsKey("success"), Is.False);
+            Assert.That(compacted.ContainsKey("result"), Is.False);
+            Assert.That(compacted.ContainsKey("toolName"), Is.False);
+            Assert.That(compacted.ContainsKey("warningCount"), Is.False);
+            Assert.That(compacted.ContainsKey("hasWarnings"), Is.False);
+            Assert.That((IList)compacted["warnings"], Is.Empty);
+        }
+
+        [Test]
+        public void TransportCompaction_UsesOnlyNecessaryPaginationMetadata()
+        {
+            var complete = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "count", 2 },
+                    { "entries", new List<object> { "a", "b" } },
+                    { "offset", 0 },
+                    { "limit", 50 },
+                    { "totalMatches", 2 },
+                    { "hasMore", false },
+                    { "nextOffset", null },
+                    { "truncated", false },
+                }));
+
+            Assert.That(complete.Keys, Is.EquivalentTo(new[] { "entries" }));
+
+            var partial = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "count", 2 },
+                    { "entries", new List<object> { "a", "b" } },
+                    { "offset", 0 },
+                    { "limit", 2 },
+                    { "totalMatches", 5 },
+                    { "hasMore", true },
+                    { "nextOffset", 2 },
+                    { "truncated", true },
+                }));
+
+            Assert.That(partial.Keys, Is.EquivalentTo(new[]
+            {
+                "entries", "totalMatches", "nextOffset",
+            }));
+            Assert.That(Convert.ToInt32(partial["nextOffset"]), Is.EqualTo(2));
+            Assert.That(Convert.ToInt32(partial["totalMatches"]), Is.EqualTo(5));
+        }
+
+        [Test]
+        public void TransportCompaction_RemovesArrayPersistenceAndSummaryAliases()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "items", new List<object> { "a", "b" } },
+                    { "arraySize", 2 },
+                    { "maxItems", 50 },
+                    { "truncated", false },
+                    { "persistedState", "complete" },
+                    { "saved", true },
+                    { "saveAttempted", true },
+                    { "partialPersisted", true },
+                    { "partialPersistedKnown", true },
+                    { "operationCount", 2 },
+                    { "appliedOperationCount", 2 },
+                    { "operationSummaries", new List<object> { "first", "second" } },
+                    { "beforeLineCount", 12 },
+                    { "afterLineCount", 14 },
+                    { "summary", new Dictionary<string, object>
+                        {
+                            { "beforeLineCount", 12 },
+                            { "afterLineCount", 14 },
+                            { "changedLineCount", 2 },
+                        }
+                    },
+                }));
+
+            Assert.That(compacted.ContainsKey("arraySize"), Is.False);
+            Assert.That(compacted.ContainsKey("maxItems"), Is.False);
+            Assert.That(compacted.ContainsKey("truncated"), Is.False);
+            Assert.That(compacted.ContainsKey("saved"), Is.False);
+            Assert.That(compacted.ContainsKey("saveAttempted"), Is.False);
+            Assert.That(compacted.ContainsKey("partialPersisted"), Is.False);
+            Assert.That(compacted.ContainsKey("partialPersistedKnown"), Is.False);
+            Assert.That(compacted.ContainsKey("operationCount"), Is.False);
+            Assert.That(compacted.ContainsKey("appliedOperationCount"), Is.False);
+            var summary = RequireDictionary(compacted["summary"]);
+            Assert.That(summary.Keys, Is.EquivalentTo(new[] { "changedLineCount" }));
+        }
+
+        [Test]
+        public void TransportCompaction_PreservesNestedSuccessAndTrueTruncation()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "results", new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "success", true },
+                                { "value", "first" },
+                            },
+                            new Dictionary<string, object>
+                            {
+                                { "success", false },
+                                { "error", "failed" },
+                                { "message", "failed" },
+                            },
+                        }
+                    },
+                    { "items", new List<object> { "a", "b" } },
+                    { "arraySize", 5 },
+                    { "maxItems", 2 },
+                    { "truncated", true },
+                }));
+
+            Assert.That(compacted.ContainsKey("success"), Is.False);
+            Assert.That(compacted["truncated"], Is.EqualTo(true));
+            Assert.That(Convert.ToInt32(compacted["arraySize"]), Is.EqualTo(5));
+            Assert.That(compacted.ContainsKey("maxItems"), Is.False);
+            var results = (IList)compacted["results"];
+            var first = RequireDictionary(results[0]);
+            var second = RequireDictionary(results[1]);
+            Assert.That(first["success"], Is.EqualTo(true));
+            Assert.That(second["success"], Is.EqualTo(false));
+            Assert.That(second["error"], Is.EqualTo("failed"));
+            Assert.That(second.ContainsKey("message"), Is.False);
+        }
+
+        [Test]
+        public void TransportCompaction_RemovesDuplicateErrorMessageButKeepsFailureContract()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                MCPResponse.Error("broken", "fixture_error", true)));
+
+            Assert.That(compacted["success"], Is.EqualTo(false));
+            Assert.That(compacted["error"], Is.EqualTo("broken"));
+            Assert.That(compacted["errorCode"], Is.EqualTo("fixture_error"));
+            Assert.That(compacted["retryable"], Is.EqualTo(true));
+            Assert.That(compacted.ContainsKey("message"), Is.False);
+        }
+
         private static void CreateTestPrefab(bool addCollider = false, bool addRenderer = false,
             bool addParticleReference = false)
         {

@@ -107,6 +107,16 @@ namespace UnityMCP.Editor
             return response;
         }
 
+        /// <summary>
+        /// Remove response aliases that can be derived from the remaining payload before it crosses the HTTP
+        /// transport. Command results stay unchanged in the queue so reload recovery and internal consumers keep
+        /// their authoritative data; only the wire representation is compacted.
+        /// </summary>
+        public static object CompactForTransport(object data)
+        {
+            return CompactValue(data, true);
+        }
+
         public static Dictionary<string, object> ToDictionary(object data)
         {
             if (data == null)
@@ -148,6 +158,358 @@ namespace UnityMCP.Editor
             }
 
             return reflected;
+        }
+
+        private static object CompactValue(object value, bool isRoot)
+        {
+            if (value == null || value is string || value is decimal)
+                return value;
+
+            Type valueType = value.GetType();
+            if (valueType.IsPrimitive || valueType.IsEnum)
+                return value;
+
+            if (value is IList list)
+            {
+                var compactedList = new List<object>(list.Count);
+                foreach (object item in list)
+                    compactedList.Add(CompactValue(item, false));
+                return compactedList;
+            }
+
+            Dictionary<string, object> source = ToDictionary(value);
+            if (source == null)
+                return value;
+
+            if (isRoot && IsProjectToolSuccessEnvelope(source))
+                return CompactValue(source["result"], true);
+
+            var compacted = new Dictionary<string, object>();
+            foreach (KeyValuePair<string, object> pair in source)
+                compacted[pair.Key] = CompactValue(pair.Value, false);
+
+            RemoveDuplicateSummaryValues(compacted);
+            RemoveDuplicateErrorMessage(compacted);
+            RemoveDerivedPresenceFlags(compacted);
+            CompactSerializedArrayMetadata(compacted);
+            CompactPersistenceMetadata(compacted);
+            CompactOperationMetadata(compacted);
+            CompactCollectionAndPaginationMetadata(compacted);
+            RemoveFalseTruncationFlags(compacted);
+
+            if (isRoot)
+            {
+                if (compacted.TryGetValue("success", out object success) && ToBool(success))
+                    compacted.Remove("success");
+                if (compacted.TryGetValue("stateConfirmed", out object stateConfirmed) &&
+                    ToBool(stateConfirmed))
+                    compacted.Remove("stateConfirmed");
+            }
+
+            return compacted;
+        }
+
+        private static bool IsProjectToolSuccessEnvelope(Dictionary<string, object> dictionary)
+        {
+            if (!dictionary.TryGetValue("success", out object success) || !ToBool(success) ||
+                !dictionary.ContainsKey("result") || !dictionary.ContainsKey("toolName"))
+                return false;
+
+            foreach (string key in dictionary.Keys)
+            {
+                if (key != "success" && key != "result" && key != "toolName")
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static void RemoveDuplicateSummaryValues(Dictionary<string, object> dictionary)
+        {
+            if (!dictionary.TryGetValue("summary", out object summaryValue) ||
+                !(summaryValue is Dictionary<string, object> summary))
+                return;
+
+            var duplicateKeys = new List<string>();
+            foreach (KeyValuePair<string, object> pair in summary)
+            {
+                if (dictionary.TryGetValue(pair.Key, out object parentValue) &&
+                    ValuesEqual(parentValue, pair.Value))
+                    duplicateKeys.Add(pair.Key);
+            }
+
+            foreach (string key in duplicateKeys)
+                summary.Remove(key);
+            if (summary.Count == 0)
+                dictionary.Remove("summary");
+        }
+
+        private static void RemoveDuplicateErrorMessage(Dictionary<string, object> dictionary)
+        {
+            if (dictionary.TryGetValue("error", out object error) &&
+                dictionary.TryGetValue("message", out object message) &&
+                ValuesEqual(error, message))
+                dictionary.Remove("message");
+        }
+
+        private static void RemoveDerivedPresenceFlags(Dictionary<string, object> dictionary)
+        {
+            var removableKeys = new List<string>();
+            foreach (KeyValuePair<string, object> pair in dictionary)
+            {
+                if (!pair.Key.StartsWith("has", StringComparison.Ordinal) || pair.Key.Length <= 3 ||
+                    pair.Key == "hasMore" || !(pair.Value is bool))
+                    continue;
+
+                string suffix = pair.Key.Substring(3);
+                string collectionKey = LowerFirst(suffix);
+                if (dictionary.TryGetValue(collectionKey, out object collection) && collection is IList list)
+                {
+                    if ((bool)pair.Value == (list.Count > 0))
+                        removableKeys.Add(pair.Key);
+                    continue;
+                }
+
+                string singular = suffix.EndsWith("s", StringComparison.Ordinal) && suffix.Length > 1
+                    ? suffix.Substring(0, suffix.Length - 1)
+                    : suffix;
+                string countKey = LowerFirst(singular) + "Count";
+                if (dictionary.TryGetValue(countKey, out object countValue) &&
+                    TryGetInteger(countValue, out long count) &&
+                    (bool)pair.Value == (count > 0))
+                    removableKeys.Add(pair.Key);
+            }
+
+            foreach (string key in removableKeys)
+                dictionary.Remove(key);
+        }
+
+        private static void CompactSerializedArrayMetadata(Dictionary<string, object> dictionary)
+        {
+            if (!dictionary.TryGetValue("items", out object itemsValue) || !(itemsValue is IList items) ||
+                !dictionary.TryGetValue("arraySize", out object arraySizeValue) ||
+                !TryGetInteger(arraySizeValue, out long arraySize))
+                return;
+
+            bool truncated = arraySize > items.Count;
+            if (dictionary.TryGetValue("truncated", out object truncatedValue) &&
+                truncatedValue is bool explicitTruncated)
+                truncated |= explicitTruncated;
+
+            dictionary.Remove("maxItems");
+            if (!truncated && arraySize == items.Count)
+                dictionary.Remove("arraySize");
+        }
+
+        private static void CompactPersistenceMetadata(Dictionary<string, object> dictionary)
+        {
+            if (!dictionary.ContainsKey("persistedState"))
+                return;
+
+            dictionary.Remove("saved");
+            dictionary.Remove("saveAttempted");
+            dictionary.Remove("partialPersisted");
+            dictionary.Remove("partialPersistedKnown");
+        }
+
+        private static void CompactOperationMetadata(Dictionary<string, object> dictionary)
+        {
+            if (!dictionary.TryGetValue("operationSummaries", out object summariesValue) ||
+                !(summariesValue is IList summaries))
+                return;
+
+            RemoveMatchingCount(dictionary, "operationCount", summaries.Count);
+            RemoveMatchingCount(dictionary, "appliedOperationCount", summaries.Count);
+        }
+
+        private static void CompactCollectionAndPaginationMetadata(Dictionary<string, object> dictionary)
+        {
+            IList pageCollection = FindUniqueCollectionMatchingCount(dictionary, "count");
+            if (pageCollection != null)
+                dictionary.Remove("count");
+
+            RemoveNamedCollectionCounts(dictionary);
+
+            long offset = 0;
+            bool hadOffset = dictionary.TryGetValue("offset", out object offsetValue) &&
+                             TryGetInteger(offsetValue, out offset);
+
+            bool hasNextOffsetKey = dictionary.TryGetValue("nextOffset", out object nextOffsetValue);
+            bool hasMore = dictionary.TryGetValue("hasMore", out object hasMoreValue) &&
+                           hasMoreValue is bool hasMoreBoolean && hasMoreBoolean;
+            long total = 0;
+            bool hasTotal = TryGetPaginationTotal(dictionary, out total);
+
+            if (pageCollection != null && !hasMore && hasTotal)
+                hasMore = offset + pageCollection.Count < total;
+
+            if (hasNextOffsetKey && nextOffsetValue == null)
+                dictionary.Remove("nextOffset");
+            else if (hasNextOffsetKey)
+                hasMore = true;
+
+            if (pageCollection != null && hasMore && !dictionary.ContainsKey("nextOffset") &&
+                pageCollection.Count > 0)
+                dictionary["nextOffset"] = offset + pageCollection.Count;
+
+            bool isPagination = pageCollection != null &&
+                                (hadOffset || dictionary.ContainsKey("limit") ||
+                                 dictionary.ContainsKey("hasMore") || hasNextOffsetKey || hasTotal);
+            if (isPagination)
+            {
+                dictionary.Remove("hasMore");
+                dictionary.Remove("limit");
+                if (dictionary.ContainsKey("nextOffset"))
+                    dictionary.Remove("truncated");
+                if (offset == 0)
+                    dictionary.Remove("offset");
+
+                if (!dictionary.ContainsKey("nextOffset") && offset == 0 && hasTotal &&
+                    total == pageCollection.Count)
+                    RemovePaginationTotals(dictionary, total);
+            }
+            else if (dictionary.TryGetValue("hasMore", out hasMoreValue) &&
+                     hasMoreValue is bool falseHasMore && !falseHasMore)
+            {
+                dictionary.Remove("hasMore");
+            }
+        }
+
+        private static IList FindUniqueCollectionMatchingCount(
+            Dictionary<string, object> dictionary, string countKey)
+        {
+            if (!dictionary.TryGetValue(countKey, out object countValue) ||
+                !TryGetInteger(countValue, out long count))
+                return null;
+
+            IList match = null;
+            foreach (object value in dictionary.Values)
+            {
+                if (!(value is IList list) || list.Count != count)
+                    continue;
+                if (match != null)
+                    return null;
+                match = list;
+            }
+
+            return match;
+        }
+
+        private static void RemoveNamedCollectionCounts(Dictionary<string, object> dictionary)
+        {
+            var removableKeys = new List<string>();
+            foreach (KeyValuePair<string, object> pair in dictionary)
+            {
+                if (!pair.Key.EndsWith("Count", StringComparison.Ordinal) ||
+                    !TryGetInteger(pair.Value, out long count))
+                    continue;
+
+                string stem = pair.Key.Substring(0, pair.Key.Length - "Count".Length);
+                if (string.IsNullOrEmpty(stem) || stem == "total")
+                    continue;
+
+                string collectionKey = stem + "s";
+                if (dictionary.TryGetValue(collectionKey, out object collection) &&
+                    collection is IList list && list.Count == count)
+                    removableKeys.Add(pair.Key);
+            }
+
+            foreach (string key in removableKeys)
+                dictionary.Remove(key);
+        }
+
+        private static bool TryGetPaginationTotal(Dictionary<string, object> dictionary, out long total)
+        {
+            foreach (string key in new[]
+                     {
+                         "total", "totalMatches", "totalTools", "totalAssets", "totalResults",
+                         "totalPackages", "totalTests",
+                     })
+            {
+                if (dictionary.TryGetValue(key, out object value) && TryGetInteger(value, out total))
+                    return true;
+            }
+
+            total = 0;
+            return false;
+        }
+
+        private static void RemovePaginationTotals(Dictionary<string, object> dictionary, long total)
+        {
+            foreach (string key in new[]
+                     {
+                         "total", "totalMatches", "totalTools", "totalAssets", "totalResults",
+                         "totalPackages", "totalTests",
+                     })
+            {
+                if (dictionary.TryGetValue(key, out object value) &&
+                    TryGetInteger(value, out long candidate) && candidate == total)
+                    dictionary.Remove(key);
+            }
+        }
+
+        private static void RemoveFalseTruncationFlags(Dictionary<string, object> dictionary)
+        {
+            var removableKeys = new List<string>();
+            foreach (KeyValuePair<string, object> pair in dictionary)
+            {
+                if (!(pair.Value is bool flag) || flag)
+                    continue;
+                if (pair.Key == "truncated" ||
+                    pair.Key.EndsWith("Truncated", StringComparison.Ordinal))
+                    removableKeys.Add(pair.Key);
+            }
+
+            foreach (string key in removableKeys)
+                dictionary.Remove(key);
+        }
+
+        private static void RemoveMatchingCount(
+            Dictionary<string, object> dictionary, string key, int expectedCount)
+        {
+            if (dictionary.TryGetValue(key, out object value) &&
+                TryGetInteger(value, out long count) && count == expectedCount)
+                dictionary.Remove(key);
+        }
+
+        private static bool TryGetInteger(object value, out long number)
+        {
+            try
+            {
+                if (value == null || value is bool || value is float || value is double || value is decimal)
+                {
+                    number = 0;
+                    return false;
+                }
+
+                number = Convert.ToInt64(value);
+                return true;
+            }
+            catch
+            {
+                number = 0;
+                return false;
+            }
+        }
+
+        private static bool ValuesEqual(object left, object right)
+        {
+            if (ReferenceEquals(left, right))
+                return true;
+            if (left == null || right == null)
+                return false;
+            if (TryGetInteger(left, out long leftNumber) && TryGetInteger(right, out long rightNumber))
+                return leftNumber == rightNumber;
+            if (left is string leftText && right is string rightText)
+                return string.Equals(leftText, rightText, StringComparison.Ordinal);
+            return Equals(left, right);
+        }
+
+        private static string LowerFirst(string value)
+        {
+            if (string.IsNullOrEmpty(value) || char.IsLower(value[0]))
+                return value;
+            return char.ToLowerInvariant(value[0]) + value.Substring(1);
         }
 
         private static bool ToBool(object value)
