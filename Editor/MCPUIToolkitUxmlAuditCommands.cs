@@ -96,6 +96,8 @@ namespace UnityMCP.Editor
             "uxml-layout-audit: allow-inert-text-stretch";
         internal const string INERT_TEXT_GROW_SUPPRESSION_MARKER =
             "uxml-layout-audit: allow-inert-text-grow";
+        internal const string SINGLE_CHILD_CENTERING_WRAPPER_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-single-child-centering-wrapper";
 
         private const float CENTER_EPSILON = 0.01f;
 
@@ -125,6 +127,11 @@ namespace UnityMCP.Editor
 
         private static readonly Regex inertTextGrowSuppressionRegex =
             new Regex(@"^\s*uxml-layout-audit:\s*allow-inert-text-grow\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex singleChildCenteringWrapperSuppressionRegex =
+            new Regex(
+                @"^\s*uxml-layout-audit:\s*allow-single-child-centering-wrapper\s+(?<reason>.+?)\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private static readonly Regex ussCommentRegex =
@@ -500,6 +507,60 @@ namespace UnityMCP.Editor
                 suppressedInertGrow.SuppressedCount == 1 &&
                 suppressedInertGrow.Issues.Single().Suppressed);
 
+            const string redundantCenteringWrapper =
+                "<ui:VisualElement name=\"HeaderAnchor\" picking-mode=\"Ignore\" " +
+                "style=\"position: absolute; left: 0; top: -6px; right: 0; height: 54px; " +
+                "align-items: center;\">" +
+                "<ui:VisualElement name=\"Header\" style=\"width: 228px; height: 54px; " +
+                "background-image: url(&quot;Header.png&quot;);\"/>" +
+                "</ui:VisualElement>";
+            var singleChildCenteringWrapper = AuditFixture(redundantCenteringWrapper);
+            AddSelfTestCase(cases, "single-child centering wrapper warns",
+                singleChildCenteringWrapper.WarningCount == 1 &&
+                singleChildCenteringWrapper.Issues.Single().Kind ==
+                "single-child-centering-wrapper" &&
+                singleChildCenteringWrapper.Issues.Single().Axis == "horizontal" &&
+                singleChildCenteringWrapper.Issues.Single().FixedProperties
+                    .SequenceEqual(new[] { "left", "right", "height", "align-items" }));
+
+            var asymmetricCenteringWrapper = AuditFixture(
+                redundantCenteringWrapper.Replace("right: 0", "right: 12px"));
+            AddSelfTestCase(cases, "asymmetric centering wrapper passes",
+                asymmetricCenteringWrapper.WarningCount == 0);
+
+            var multiChildCenteringWrapper = AuditFixture(
+                redundantCenteringWrapper.Replace("</ui:VisualElement>",
+                    "<ui:VisualElement style=\"width: 12px; height: 12px; " +
+                    "background-color: white;\"/></ui:VisualElement>"));
+            AddSelfTestCase(cases, "multi-child centering wrapper passes",
+                multiChildCenteringWrapper.WarningCount == 0);
+
+            var visualCenteringWrapper = AuditFixture(
+                redundantCenteringWrapper.Replace("align-items: center;",
+                    "align-items: center; background-color: white;"));
+            AddSelfTestCase(cases, "visible centering wrapper passes",
+                visualCenteringWrapper.WarningCount == 0);
+
+            var verticalLayoutWrapper = AuditFixture(
+                redundantCenteringWrapper.Replace("height: 54px; align-items: center;",
+                    "height: 72px; align-items: center; justify-content: center;"));
+            AddSelfTestCase(cases, "wrapper with vertical layout responsibility passes",
+                verticalLayoutWrapper.WarningCount == 0);
+
+            var flexibleChildWrapper = AuditFixture(
+                redundantCenteringWrapper.Replace("width: 228px;", ""));
+            AddSelfTestCase(cases, "wrapper with flexible child passes",
+                flexibleChildWrapper.WarningCount == 0);
+
+            var suppressedCenteringWrapper = AuditFixture(
+                $"<!-- {SINGLE_CHILD_CENTERING_WRAPPER_SUPPRESSION_MARKER} " +
+                "fixture preserves an external lookup path -->" +
+                redundantCenteringWrapper, includeSuppressed: true);
+            AddSelfTestCase(cases, "reasoned centering-wrapper suppression is retained",
+                suppressedCenteringWrapper.WarningCount == 0 &&
+                suppressedCenteringWrapper.SuppressedCount == 1 &&
+                suppressedCenteringWrapper.Issues.Single().Suppressed);
+
             return new Dictionary<string, object>
             {
                 { "passed", cases.All(testCase => (bool)testCase["passed"]) },
@@ -547,6 +608,8 @@ namespace UnityMCP.Editor
             AuditVisuallyInertTextStretch(assetPath, document, inlineStyleContracts,
                 layoutContracts, report, includeSuppressed);
             AuditVisuallyInertTextGrow(assetPath, document, inlineStyleContracts,
+                layoutContracts, report, includeSuppressed);
+            AuditSingleChildCenteringWrapper(assetPath, document, inlineStyleContracts,
                 layoutContracts, report, includeSuppressed);
             AuditRepeatedInlineLayoutVariants(assetPath, document, layoutContracts, report,
                 includeSuppressed);
@@ -1203,12 +1266,230 @@ namespace UnityMCP.Editor
             }
         }
 
+        private static void AuditSingleChildCenteringWrapper(string assetPath,
+            XDocument document, UxmlInlineStyleContractIndex inlineStyleContracts,
+            UxmlLayoutContractIndex layoutContracts, MCPUxmlLayoutAuditReport report,
+            bool includeSuppressed)
+        {
+            foreach (var wrapper in document.Descendants())
+            {
+                var parent = wrapper.Parent as XElement;
+                if (parent == null ||
+                    ResolveVisualElementType(wrapper) != typeof(VisualElement) ||
+                    ResolveVisualElementType(parent) != typeof(VisualElement) ||
+                    string.Equals(AttributeValue(wrapper, "picking-mode"), "Ignore",
+                        StringComparison.OrdinalIgnoreCase) == false)
+                {
+                    continue;
+                }
+
+                var inlineStyle = ParseStyle(AttributeValue(wrapper, "style"));
+                if (StyleValue(inlineStyle, "position") != "absolute" ||
+                    StyleValue(inlineStyle, "align-items") != "center" ||
+                    TryGetPixelLength(inlineStyle, "left", out var left) == false ||
+                    TryGetPixelLength(inlineStyle, "right", out var right) == false ||
+                    Math.Abs(left - right) > CENTER_EPSILON ||
+                    inlineStyle.ContainsKey("width") ||
+                    inlineStyle.ContainsKey("min-width") ||
+                    inlineStyle.ContainsKey("max-width"))
+                {
+                    continue;
+                }
+
+                var hasTop = inlineStyle.ContainsKey("top");
+                var hasBottom = inlineStyle.ContainsKey("bottom");
+                if (hasTop == hasBottom ||
+                    (hasTop && TryGetPixelLength(inlineStyle, "top", out _) == false) ||
+                    (hasBottom && TryGetPixelLength(inlineStyle, "bottom", out _) == false))
+                {
+                    continue;
+                }
+
+                var wrapperStyle = ResolveAuthoredStyle(wrapper, inlineStyleContracts);
+                var wrapperDirection = StyleValue(wrapperStyle, "flex-direction");
+                var wrapperJustification = StyleValue(wrapperStyle, "justify-content");
+                if ((string.IsNullOrWhiteSpace(wrapperDirection) == false &&
+                     wrapperDirection != "column" &&
+                     wrapperDirection != "column-reverse") ||
+                    (string.IsNullOrWhiteSpace(wrapperJustification) == false &&
+                     wrapperJustification != "flex-start") ||
+                    HasUnexpectedCenteringWrapperStyle(wrapperStyle) ||
+                    HasVisualBoxContract(wrapper, wrapperStyle, layoutContracts) ||
+                    HasInteractionContract(wrapper) ||
+                    HasNonZeroMargin(wrapperStyle))
+                {
+                    continue;
+                }
+
+                var parentStyle = ResolveAuthoredStyle(parent, inlineStyleContracts);
+                if (HasAxisSizeContract(parentStyle, true) == false)
+                {
+                    continue;
+                }
+
+                var visualChildren = GetVisualContentChildren(wrapper);
+                if (visualChildren.Count != 1)
+                {
+                    continue;
+                }
+
+                var child = visualChildren[0];
+                if (ResolveVisualElementType(child) != typeof(VisualElement))
+                {
+                    continue;
+                }
+
+                var childInlineStyle = ParseStyle(AttributeValue(child, "style"));
+                var childStyle = ResolveAuthoredStyle(child, inlineStyleContracts);
+                var childPosition = StyleValue(childStyle, "position");
+                var childAlignment = StyleValue(childStyle, "align-self");
+                if (TryGetPixelLength(childInlineStyle, "width", out _) == false ||
+                    TryGetPixelLength(childInlineStyle, "height", out var childHeight) == false ||
+                    childStyle.ContainsKey("left") ||
+                    childStyle.ContainsKey("right") ||
+                    childStyle.ContainsKey("top") ||
+                    childStyle.ContainsKey("bottom") ||
+                    (string.IsNullOrWhiteSpace(childPosition) == false &&
+                     childPosition != "relative") ||
+                    (string.IsNullOrWhiteSpace(childAlignment) == false &&
+                     childAlignment != "auto") ||
+                    HasNonZeroMargin(childStyle) ||
+                    HasPositiveFlexGrow(childStyle) ||
+                    HasVisualBoxContract(child, childStyle, layoutContracts) == false)
+                {
+                    continue;
+                }
+
+                var hasWrapperHeight = inlineStyle.ContainsKey("height");
+                if (hasWrapperHeight &&
+                    (TryGetPixelLength(inlineStyle, "height", out var wrapperHeight) == false ||
+                     Math.Abs(wrapperHeight - childHeight) > CENTER_EPSILON))
+                {
+                    continue;
+                }
+
+                var name = AttributeValue(wrapper, "name");
+                var wrapperLabel = string.IsNullOrWhiteSpace(name)
+                    ? $"<{wrapper.Name.LocalName}>"
+                    : $"#{name}";
+                var childName = AttributeValue(child, "name");
+                var childLabel = string.IsNullOrWhiteSpace(childName)
+                    ? $"<{child.Name.LocalName}>"
+                    : $"#{childName}";
+                var fixedProperties = new List<string> { "left", "right" };
+                if (hasWrapperHeight)
+                {
+                    fixedProperties.Add("height");
+                }
+
+                fixedProperties.Add("align-items");
+                var inlineDeclarations = fixedProperties.ToDictionary(property => property,
+                    property => inlineStyle[property],
+                    StringComparer.OrdinalIgnoreCase);
+                var suppressionReason = GetSuppressionReason(wrapper,
+                    singleChildCenteringWrapperSuppressionRegex);
+                var heightClause = hasWrapperHeight
+                    ? $" Its height repeats {childLabel}'s {FormatPixels(childHeight)} height."
+                    : "";
+                var issue = new MCPUxmlLayoutAuditIssue
+                {
+                    AssetPath = assetPath,
+                    Line = GetLineNumber(wrapper),
+                    Element = wrapperLabel,
+                    ElementName = name,
+                    Kind = "single-child-centering-wrapper",
+                    Axis = "horizontal",
+                    FixedProperties = fixedProperties,
+                    InlineDeclarations = inlineDeclarations,
+                    Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                    SuppressionReason = suppressionReason,
+                    Message =
+                        $"Transparent absolute {wrapperLabel} spans equal parent side insets only " +
+                        $"to center its sole fixed-size visual child {childLabel}.{heightClause} " +
+                        $"Move the wrapper's {(hasTop ? "top" : "bottom")} position to {childLabel}, " +
+                        "set the child to position: absolute and align-self: center, and remove the " +
+                        "layout-only wrapper."
+                };
+                report.Record(issue, includeSuppressed);
+            }
+        }
+
+        private static bool HasUnexpectedCenteringWrapperStyle(
+            IReadOnlyDictionary<string, string> style)
+        {
+            var allowedProperties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "position",
+                "left",
+                "right",
+                "top",
+                "bottom",
+                "height",
+                "align-items",
+                "justify-content",
+                "flex-direction"
+            };
+            return style.Keys.Any(property => allowedProperties.Contains(property) == false);
+        }
+
+        private static bool HasInteractionContract(XElement element)
+        {
+            return element.Elements().Any(child => child.Name.LocalName == "Bindings") ||
+                   string.Equals(AttributeValue(element, "focusable"), "true",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.IsNullOrWhiteSpace(AttributeValue(element, "tabindex")) == false ||
+                   string.IsNullOrWhiteSpace(AttributeValue(element, "tooltip")) == false ||
+                   string.Equals(AttributeValue(element, "picking-mode"), "Position",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HasNonZeroMargin(IReadOnlyDictionary<string, string> style)
+        {
+            return style.Any(property =>
+                (string.Equals(property.Key, "margin", StringComparison.OrdinalIgnoreCase) ||
+                 property.Key.StartsWith("margin-", StringComparison.OrdinalIgnoreCase)) &&
+                IsZeroBoxValue(property.Value) == false);
+        }
+
+        private static bool HasPositiveFlexGrow(IReadOnlyDictionary<string, string> style)
+        {
+            return style.TryGetValue("flex-grow", out var value) &&
+                   float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture,
+                       out var grow) &&
+                   float.IsNaN(grow) == false &&
+                   float.IsInfinity(grow) == false &&
+                   grow > 0;
+        }
+
+        private static bool TryGetPixelLength(IReadOnlyDictionary<string, string> style,
+            string property, out float value)
+        {
+            value = 0;
+            if (style.TryGetValue(property, out var rawValue) == false)
+            {
+                return false;
+            }
+
+            var normalized = rawValue.Trim();
+            if (Regex.IsMatch(normalized, @"^[+-]?0(?:\.0+)?$"))
+            {
+                return true;
+            }
+
+            return TryGetPixels(style, property, out value);
+        }
+
         private static bool IsOnlyVisualContentChild(XElement parent, XElement element)
         {
-            var visualChildren = parent.Elements()
+            var visualChildren = GetVisualContentChildren(parent);
+            return visualChildren.Count == 1 && visualChildren[0] == element;
+        }
+
+        private static List<XElement> GetVisualContentChildren(XElement parent)
+        {
+            return parent.Elements()
                 .Where(child => IsUxmlMetadataElement(child) == false)
                 .ToList();
-            return visualChildren.Count == 1 && visualChildren[0] == element;
         }
 
         private static bool IsUxmlMetadataElement(XElement element)
@@ -2068,7 +2349,8 @@ namespace UnityMCP.Editor
                         $"<!-- {MCPUxmlLayoutAuditor.REPEATED_INLINE_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.REDUNDANT_INLINE_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_STRETCH_SUPPRESSION_MARKER} <reason> -->",
-                        $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_GROW_SUPPRESSION_MARKER} <reason> -->"
+                        $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_GROW_SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.SINGLE_CHILD_CENTERING_WRAPPER_SUPPRESSION_MARKER} <reason> -->"
                     }
                 }
             };
@@ -2144,6 +2426,8 @@ namespace UnityMCP.Editor
             else if (string.Equals(Kind, "visually-inert-text-stretch",
                          StringComparison.Ordinal) ||
                      string.Equals(Kind, "visually-inert-text-grow",
+                         StringComparison.Ordinal) ||
+                     string.Equals(Kind, "single-child-centering-wrapper",
                          StringComparison.Ordinal))
             {
                 result["inlineDeclarations"] =

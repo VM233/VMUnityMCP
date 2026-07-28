@@ -2153,6 +2153,62 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUxmlAudit_ReportsSingleChildCenteringWrapper()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Single Child Centering Wrapper.uxml";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<ui:VisualElement style=\"width: 807px; height: 492px;\">" +
+                "<ui:VisualElement name=\"Redundant\" picking-mode=\"Ignore\" " +
+                "style=\"position: absolute; left: 0; top: -6px; right: 0; " +
+                "height: 54px; align-items: center;\">" +
+                "<ui:VisualElement name=\"Header\" style=\"width: 228px; height: 54px; " +
+                "background-image: url(&quot;Header.png&quot;);\"/>" +
+                "</ui:VisualElement>" +
+                "<ui:VisualElement name=\"Asymmetric\" picking-mode=\"Ignore\" " +
+                "style=\"position: absolute; left: 0; top: 60px; right: 12px; " +
+                "height: 54px; align-items: center;\">" +
+                "<ui:VisualElement style=\"width: 228px; height: 54px; " +
+                "background-image: url(&quot;Header.png&quot;);\"/>" +
+                "</ui:VisualElement>" +
+                "<ui:VisualElement name=\"Visible\" picking-mode=\"Ignore\" " +
+                "style=\"position: absolute; left: 0; top: 120px; right: 0; " +
+                "height: 54px; align-items: center; background-color: white;\">" +
+                "<ui:VisualElement style=\"width: 228px; height: 54px; " +
+                "background-image: url(&quot;Header.png&quot;);\"/>" +
+                "</ui:VisualElement>" +
+                "</ui:VisualElement>" +
+                "</ui:UXML>");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { uxmlPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            var issue = issues.Single();
+            Assert.That(issue["kind"], Is.EqualTo("single-child-centering-wrapper"));
+            Assert.That(issue["element"], Is.EqualTo("#Redundant"));
+            Assert.That(issue["axis"], Is.EqualTo("horizontal"));
+            Assert.That((List<string>)issue["fixedProperties"],
+                Is.EqualTo(new[] { "left", "right", "height", "align-items" }));
+            Assert.That((Dictionary<string, string>)issue["inlineDeclarations"],
+                Is.EquivalentTo(new Dictionary<string, string>
+                {
+                    { "left", "0" },
+                    { "right", "0" },
+                    { "height", "54px" },
+                    { "align-items", "center" }
+                }));
+        }
+
+        [Test]
         public void UIToolkitStaticAudits_AreFirstClassReadOnlyLongRunningTools()
         {
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(

@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.41] - 2026-07-29
+
+- Extend the UXML layout audit to report transparent full-width wrappers that only center one fixed-size visual child and optionally repeat that child's height.
+
 ## [3.3.40] - 2026-07-29
 
 - Extend the UXML layout audit to report a sole transparent Label whose inline main-axis growth leaves its centered glyph at the same position already established by the parent.
