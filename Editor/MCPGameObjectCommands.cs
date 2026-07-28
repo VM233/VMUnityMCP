@@ -72,7 +72,7 @@ namespace UnityMCP.Editor
             var components = new List<Dictionary<string, object>>();
             foreach (var comp in go.GetComponents<Component>())
             {
-                if (comp == null) continue;
+                if (!MCPComponentCommands.ShouldIncludeInComponentSummary(comp)) continue;
                 components.Add(new Dictionary<string, object>
                 {
                     { "type", comp.GetType().Name },

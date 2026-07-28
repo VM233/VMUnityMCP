@@ -11,6 +11,11 @@ namespace UnityMCP.Editor
     {
         private const string ManagedReferenceTypeKey = "$managedReferenceType";
 
+        internal static bool ShouldIncludeInComponentSummary(Component component)
+        {
+            return component != null && component.GetType() != typeof(Transform);
+        }
+
         public static object Add(Dictionary<string, object> args)
         {
             var go = MCPGameObjectCommands.FindGameObject(args);

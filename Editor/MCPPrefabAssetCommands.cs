@@ -3259,7 +3259,7 @@ namespace UnityMCP.Editor
             var components = new List<string>();
             foreach (var comp in go.GetComponents<Component>())
             {
-                if (comp != null)
+                if (MCPComponentCommands.ShouldIncludeInComponentSummary(comp))
                     components.Add(comp.GetType().Name);
             }
 

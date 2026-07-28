@@ -222,7 +222,7 @@ namespace UnityMCP.Editor
                     var components = new List<string>();
                     foreach (var component in go.GetComponents<Component>())
                     {
-                        if (component != null)
+                        if (MCPComponentCommands.ShouldIncludeInComponentSummary(component))
                             components.Add(component.GetType().Name);
                     }
 
@@ -282,7 +282,7 @@ namespace UnityMCP.Editor
             var components = new List<string>();
             foreach (var comp in go.GetComponents<Component>())
             {
-                if (comp != null)
+                if (MCPComponentCommands.ShouldIncludeInComponentSummary(comp))
                     components.Add(comp.GetType().Name);
             }
 

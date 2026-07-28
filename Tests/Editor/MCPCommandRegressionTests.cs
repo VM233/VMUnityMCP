@@ -1197,6 +1197,9 @@ namespace UnityMCP.Editor.Tests
                 var matches = (List<object>)result["matches"];
                 var match = RequireDictionary(matches[0]);
                 Assert.That(match["path"].ToString(), Does.EndWith(objectName));
+                var components = (List<string>)match["components"];
+                CollectionAssert.Contains(components, nameof(BoxCollider));
+                CollectionAssert.DoesNotContain(components, nameof(Transform));
                 Assert.That(result.ContainsKey("hierarchy"), Is.False);
             }
             finally
@@ -2989,6 +2992,9 @@ namespace UnityMCP.Editor.Tests
                 {
                     Assert.That(identity.ContainsKey(key), Is.False, $"Identity response contained {key}");
                 }
+                var components = (List<Dictionary<string, object>>)identity["components"];
+                Assert.That(components.Select(component => component["type"]),
+                    Does.Not.Contain(nameof(Transform)));
 
                 go.transform.localPosition = new Vector3(1f, 2f, 3f);
                 go.transform.localRotation = Quaternion.Euler(0f, 45f, 0f);
@@ -3013,9 +3019,72 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void PrefabHierarchy_OmitsIdentityLocalTransformValues()
+        public void GameObjectInfo_KeepsRectTransformInComponentInventory()
         {
-            CreateTestPrefab();
+            var go = new GameObject("MCP Rect Transform", typeof(RectTransform));
+            try
+            {
+                var result = RequireDictionary(MCPGameObjectCommands.GetInfo(new Dictionary<string, object>
+                {
+                    { "path", go.name },
+                }));
+                var components = (List<Dictionary<string, object>>)result["components"];
+                Assert.That(components.Select(component => component["type"]),
+                    Does.Contain(nameof(RectTransform)));
+            }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
+        }
+
+        [Test]
+        public void SceneHierarchy_OmitsTransformAndKeepsRectTransform()
+        {
+            var root = new GameObject("__UnityMCP_Component_Summary_Root");
+            root.AddComponent<BoxCollider>();
+            var ui = new GameObject("UI", typeof(RectTransform));
+            ui.transform.SetParent(root.transform, false);
+            try
+            {
+                var result = RequireDictionary(MCPSceneCommands.GetHierarchy(new Dictionary<string, object>
+                {
+                    { "parentPath", root.name },
+                    { "maxNodes", 10 },
+                }));
+                var hierarchy = (List<object>)result["hierarchy"];
+                var rootNode = RequireDictionary(hierarchy[0]);
+                var rootComponents = (List<string>)rootNode["components"];
+                CollectionAssert.Contains(rootComponents, nameof(BoxCollider));
+                CollectionAssert.DoesNotContain(rootComponents, nameof(Transform));
+
+                var children = (List<object>)rootNode["children"];
+                var uiNode = RequireDictionary(children[0]);
+                var uiComponents = (List<string>)uiNode["components"];
+                CollectionAssert.Contains(uiComponents, nameof(RectTransform));
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void PrefabHierarchy_OmitsTransformAndKeepsRectTransform()
+        {
+            var prefabRoot = new GameObject("MCP Component Summary Prefab");
+            prefabRoot.AddComponent<BoxCollider>();
+            var ui = new GameObject("UI", typeof(RectTransform));
+            ui.transform.SetParent(prefabRoot.transform, false);
+            try
+            {
+                Assert.That(PrefabUtility.SaveAsPrefabAsset(prefabRoot, PREFAB_PATH), Is.Not.Null);
+            }
+            finally
+            {
+                Object.DestroyImmediate(prefabRoot);
+            }
+
             var result = RequireDictionary(MCPPrefabAssetCommands.GetHierarchy(new Dictionary<string, object>
             {
                 { "assetPath", PREFAB_PATH },
@@ -3025,6 +3094,14 @@ namespace UnityMCP.Editor.Tests
             Assert.That(root.ContainsKey("localPosition"), Is.False);
             Assert.That(root.ContainsKey("localRotation"), Is.False);
             Assert.That(root.ContainsKey("localScale"), Is.False);
+            var rootComponents = (List<string>)root["components"];
+            CollectionAssert.Contains(rootComponents, nameof(BoxCollider));
+            CollectionAssert.DoesNotContain(rootComponents, nameof(Transform));
+
+            var children = (List<object>)root["children"];
+            var uiNode = RequireDictionary(children[0]);
+            var uiComponents = (List<string>)uiNode["components"];
+            CollectionAssert.Contains(uiComponents, nameof(RectTransform));
         }
 
         [Test]

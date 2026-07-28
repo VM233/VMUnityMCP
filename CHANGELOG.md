@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.25] - 2026-07-28
+
+- Omit the implicit `Transform` from prefab hierarchy, scene hierarchy, filtered scene matches, and GameObject component inventories while retaining `RectTransform`.
+
 ## [3.3.24] - 2026-07-28
 
 - Serialize destroyed or otherwise Unity-null `UnityEngine.Object` values from `editor/execute-code` as JSON `null` instead of dereferencing stale native wrappers.
