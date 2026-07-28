@@ -4645,8 +4645,67 @@ namespace UnityMCP.Editor.Tests
             Assert.That(compacted.ContainsKey("warningCount"), Is.False);
             Assert.That(compacted.ContainsKey("hasWarnings"), Is.False);
             Assert.That(compacted.ContainsKey("returnedIssueCount"), Is.False);
-            Assert.That((IList)compacted["warnings"], Is.Empty);
-            Assert.That((IList)compacted["issues"], Is.Empty);
+            Assert.That(compacted.ContainsKey("warnings"), Is.False);
+            Assert.That(compacted.ContainsKey("issues"), Is.False);
+        }
+
+        [Test]
+        public void TransportCompaction_RemovesEmptyContainersAcrossToolFamilies()
+        {
+            var compilation = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "isCompiling", false },
+                    { "counts", new Dictionary<string, object>
+                        {
+                            { "errors", 0 },
+                            { "warnings", 0 },
+                        }
+                    },
+                    { "deprecatedWarnings", new List<object>() },
+                    { "entries", new List<object>() },
+                }));
+
+            Assert.That(compilation.Keys, Is.EquivalentTo(new[] { "isCompiling", "counts" }));
+
+            var assetSearch = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "count", 0 },
+                    { "assets", new List<object>() },
+                    { "offset", 0 },
+                    { "limit", 100 },
+                    { "totalAssets", 0 },
+                    { "hasMore", false },
+                    { "nextOffset", null },
+                    { "filters", new Dictionary<string, object>() },
+                }));
+
+            Assert.That(assetSearch, Is.Empty);
+
+            var diagnostics = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "deprecatedWarnings", new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "code", "CS0618" },
+                                { "message", "API is obsolete." },
+                                { "related", new List<object>() },
+                            },
+                        }
+                    },
+                }));
+
+            Assert.That(diagnostics.ContainsKey("deprecatedWarnings"), Is.True);
+            var deprecatedWarnings = (IList)diagnostics["deprecatedWarnings"];
+            Assert.That(deprecatedWarnings, Has.Count.EqualTo(1));
+            var warning = RequireDictionary(deprecatedWarnings[0]);
+            Assert.That(warning["code"], Is.EqualTo("CS0618"));
+            Assert.That(warning.ContainsKey("related"), Is.False);
         }
 
         [Test]

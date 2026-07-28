@@ -108,9 +108,9 @@ namespace UnityMCP.Editor
         }
 
         /// <summary>
-        /// Remove response aliases that can be derived from the remaining payload before it crosses the HTTP
-        /// transport. Command results stay unchanged in the queue so reload recovery and internal consumers keep
-        /// their authoritative data; only the wire representation is compacted.
+        /// Remove response aliases that can be derived from the remaining payload and empty optional containers
+        /// before it crosses the HTTP transport. Command results stay unchanged in the queue so reload recovery
+        /// and internal consumers keep their authoritative data; only the wire representation is compacted.
         /// </summary>
         public static object CompactForTransport(object data)
         {
@@ -209,6 +209,7 @@ namespace UnityMCP.Editor
                     compacted.Remove("stateConfirmed");
             }
 
+            RemoveEmptyContainers(compacted);
             return compacted;
         }
 
@@ -547,6 +548,25 @@ namespace UnityMCP.Editor
                     continue;
                 if (pair.Key == "truncated" ||
                     pair.Key.EndsWith("Truncated", StringComparison.Ordinal))
+                    removableKeys.Add(pair.Key);
+            }
+
+            foreach (string key in removableKeys)
+                dictionary.Remove(key);
+        }
+
+        private static void RemoveEmptyContainers(Dictionary<string, object> dictionary)
+        {
+            var removableKeys = new List<string>();
+            foreach (KeyValuePair<string, object> pair in dictionary)
+            {
+                if (pair.Value is IList list && list.Count == 0)
+                {
+                    removableKeys.Add(pair.Key);
+                    continue;
+                }
+
+                if (pair.Value is IDictionary nestedDictionary && nestedDictionary.Count == 0)
                     removableKeys.Add(pair.Key);
             }
 

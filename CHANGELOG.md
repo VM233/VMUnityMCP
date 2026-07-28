@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.33] - 2026-07-28
+
+- Omit empty arrays and objects from every transported tool response while preserving non-empty diagnostics, including deprecated compiler warnings.
+
 ## [3.3.32] - 2026-07-28
 
 - Add first-class, read-only UI Toolkit static audits for single-consumer USS selectors and layout-only manually centered UXML containers.
