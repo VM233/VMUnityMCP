@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
@@ -89,6 +90,8 @@ namespace UnityMCP.Editor
         internal const string SUPPRESSION_MARKER = "uxml-layout-audit: allow-manual-center";
         internal const string REPEATED_INLINE_SUPPRESSION_MARKER =
             "uxml-layout-audit: allow-repeated-inline";
+        internal const string REDUNDANT_INLINE_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-redundant-inline";
 
         private const float CENTER_EPSILON = 0.01f;
 
@@ -108,6 +111,10 @@ namespace UnityMCP.Editor
             new Regex(@"^\s*uxml-layout-audit:\s*allow-repeated-inline\s+(?<reason>.+?)\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
+        private static readonly Regex redundantInlineSuppressionRegex =
+            new Regex(@"^\s*uxml-layout-audit:\s*allow-redundant-inline\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
         private static readonly Regex ussCommentRegex =
             new Regex(@"/\*.*?\*/", RegexOptions.Compiled | RegexOptions.Singleline);
 
@@ -122,6 +129,10 @@ namespace UnityMCP.Editor
         private static readonly Regex idTokenRegex =
             new Regex(@"(?<![A-Za-z0-9_-])#(?<token>[A-Za-z_][A-Za-z0-9_-]*)",
                 RegexOptions.Compiled);
+
+        private static readonly Dictionary<string, IReadOnlyList<string>>
+            implicitElementClassesByType =
+                new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
         private static readonly HashSet<string> variantLayoutProperties =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -304,6 +315,35 @@ namespace UnityMCP.Editor
                 suppressedInlineVariant.SuppressedCount == 1 &&
                 suppressedInlineVariant.Issues.Single().Suppressed);
 
+            var inlineStyleIndex = new UxmlInlineStyleContractIndex();
+            IndexInlineStyleSheetText("Assets/Basics.uss",
+                ".unity-base-field { overflow: visible; margin-left: 0; }",
+                inlineStyleIndex);
+            var redundantImplicitInline = AuditFixture(
+                "<ui:TextField name=\"Field\" style=\"overflow: visible;\"/>",
+                inlineStyleContracts: inlineStyleIndex);
+            AddSelfTestCase(cases, "inline declaration duplicating implicit USS class warns",
+                redundantImplicitInline.WarningCount == 1 &&
+                redundantImplicitInline.Issues.Single().Kind ==
+                "redundant-inline-declaration" &&
+                redundantImplicitInline.Issues.Single().FixedProperties
+                    .SequenceEqual(new[] { "overflow" }));
+
+            var intentionalInlineOverride = AuditFixture(
+                "<ui:TextField name=\"Field\" style=\"overflow: hidden;\"/>",
+                inlineStyleContracts: inlineStyleIndex);
+            AddSelfTestCase(cases, "inline declaration overriding USS default passes",
+                intentionalInlineOverride.WarningCount == 0);
+
+            var suppressedRedundantInline = AuditFixture(
+                $"<!-- {REDUNDANT_INLINE_SUPPRESSION_MARKER} fixture documents generated output -->" +
+                "<ui:TextField name=\"Field\" style=\"overflow: visible;\"/>",
+                includeSuppressed: true, inlineStyleContracts: inlineStyleIndex);
+            AddSelfTestCase(cases, "reasoned redundant-inline suppression is retained",
+                suppressedRedundantInline.WarningCount == 0 &&
+                suppressedRedundantInline.SuppressedCount == 1 &&
+                suppressedRedundantInline.Issues.Single().Suppressed);
+
             return new Dictionary<string, object>
             {
                 { "passed", cases.All(testCase => (bool)testCase["passed"]) },
@@ -313,7 +353,8 @@ namespace UnityMCP.Editor
 
         private static MCPUxmlLayoutAuditReport AuditFixture(string element,
             string parentStyle = "width: 807px; height: 492px;", bool includeSuppressed = false,
-            UxmlLayoutContractIndex layoutContracts = null)
+            UxmlLayoutContractIndex layoutContracts = null,
+            UxmlInlineStyleContractIndex inlineStyleContracts = null)
         {
             var text =
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
@@ -325,22 +366,28 @@ namespace UnityMCP.Editor
                 IndexedUxmlCount = 1
             };
             AuditText("Assets/__UxmlLayoutAuditSelfTest.uxml", text,
-                layoutContracts ?? new UxmlLayoutContractIndex(), report, includeSuppressed);
+                layoutContracts ?? new UxmlLayoutContractIndex(), report, includeSuppressed,
+                inlineStyleContracts);
             report.SortIssues();
             return report;
         }
 
         private static void AuditText(string assetPath, string text,
             UxmlLayoutContractIndex layoutContracts,
-            MCPUxmlLayoutAuditReport report, bool includeSuppressed)
+            MCPUxmlLayoutAuditReport report, bool includeSuppressed,
+            UxmlInlineStyleContractIndex inlineStyleContracts = null)
         {
             var document = XDocument.Parse(text, LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
             IndexUxmlDocument(document, layoutContracts);
+            inlineStyleContracts = inlineStyleContracts ??
+                                   BuildInlineStyleContractIndex(assetPath, document, report);
             foreach (var element in document.Descendants())
             {
                 AuditElement(assetPath, element, layoutContracts, report, includeSuppressed);
             }
 
+            AuditRedundantInlineDeclarations(assetPath, document, inlineStyleContracts, report,
+                includeSuppressed);
             AuditRepeatedInlineLayoutVariants(assetPath, document, layoutContracts, report,
                 includeSuppressed);
         }
@@ -555,6 +602,328 @@ namespace UnityMCP.Editor
                     }
                 }
             }
+        }
+
+        private static UxmlInlineStyleContractIndex BuildInlineStyleContractIndex(
+            string uxmlAssetPath, XDocument document, MCPUxmlLayoutAuditReport report)
+        {
+            var index = new UxmlInlineStyleContractIndex();
+            var indexedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var styleElement in document.Descendants()
+                         .Where(element => element.Name.LocalName == "Style"))
+            {
+                var stylePath = ResolveStyleReference(
+                    AttributeValue(styleElement, "src"), uxmlAssetPath);
+                if (string.IsNullOrWhiteSpace(stylePath) ||
+                    indexedPaths.Add(stylePath) == false)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var fullPath = MCPUIToolkitAuditUtility.ToFullPath(stylePath);
+                    if (File.Exists(fullPath) == false)
+                    {
+                        report.Errors.Add(
+                            $"Referenced USS asset does not exist: {stylePath} " +
+                            $"(from {uxmlAssetPath}).");
+                        continue;
+                    }
+
+                    IndexInlineStyleSheetText(stylePath, File.ReadAllText(fullPath), index);
+                }
+                catch (Exception exception)
+                {
+                    report.Errors.Add(
+                        $"Failed to index referenced USS defaults in '{stylePath}': " +
+                        exception.Message);
+                }
+            }
+
+            return index;
+        }
+
+        private static string ResolveStyleReference(string rawPath, string uxmlAssetPath)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath))
+            {
+                return "";
+            }
+
+            var path = rawPath.Trim().Replace('\\', '/');
+            var queryIndex = path.IndexOf('?');
+            if (queryIndex >= 0)
+            {
+                path = path.Substring(0, queryIndex);
+            }
+
+            var fragmentIndex = path.IndexOf('#');
+            if (fragmentIndex >= 0)
+            {
+                path = path.Substring(0, fragmentIndex);
+            }
+
+            const string projectPrefix = "project://database/";
+            if (path.StartsWith(projectPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                path = path.Substring(projectPrefix.Length);
+            }
+
+            path = Uri.UnescapeDataString(path);
+            if (Path.IsPathRooted(path))
+            {
+                return MCPUIToolkitAuditUtility.ToAssetPath(path);
+            }
+
+            if (path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
+            {
+                return MCPUIToolkitAuditUtility.NormalizeAssetPath(path);
+            }
+
+            var ownerDirectory = Path.GetDirectoryName(uxmlAssetPath) ?? "";
+            var combined = Path.Combine(ownerDirectory,
+                path.Replace('/', Path.DirectorySeparatorChar));
+            return MCPUIToolkitAuditUtility.ToAssetPath(
+                MCPUIToolkitAuditUtility.ToFullPath(combined));
+        }
+
+        private static void IndexInlineStyleSheetText(string sourcePath, string text,
+            UxmlInlineStyleContractIndex index)
+        {
+            var sanitized = ussCommentRegex.Replace(text ?? "", "");
+            foreach (Match rule in ussRuleRegex.Matches(sanitized))
+            {
+                var declarations = ParseStyle(rule.Groups["body"].Value);
+                if (declarations.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var rawSelector in rule.Groups["selector"].Value.Split(','))
+                {
+                    if (TryParseSimpleSelector(rawSelector, out var selector) == false)
+                    {
+                        continue;
+                    }
+
+                    index.AddRule(sourcePath, selector, declarations);
+                }
+            }
+        }
+
+        private static bool TryParseSimpleSelector(string rawSelector,
+            out UxmlSimpleSelector selector)
+        {
+            selector = null;
+            var value = (rawSelector ?? "").Trim();
+            var match = Regex.Match(value,
+                @"^(?<type>[A-Za-z_][A-Za-z0-9_-]*)?" +
+                @"(?<tokens>(?:[.#][A-Za-z_][A-Za-z0-9_-]*)*)$");
+            if (match.Success == false || value.Length == 0)
+            {
+                return false;
+            }
+
+            var classNames = classTokenRegex.Matches(value)
+                .Cast<Match>()
+                .Select(item => item.Groups["token"].Value)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var ids = idTokenRegex.Matches(value)
+                .Cast<Match>()
+                .Select(item => item.Groups["token"].Value)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (ids.Count > 1)
+            {
+                return false;
+            }
+
+            var typeName = match.Groups["type"].Value;
+            if (string.IsNullOrWhiteSpace(typeName) &&
+                classNames.Count == 0 &&
+                ids.Count == 0)
+            {
+                return false;
+            }
+
+            selector = new UxmlSimpleSelector
+            {
+                Text = value,
+                TypeName = typeName,
+                Id = ids.SingleOrDefault() ?? "",
+                Specificity = ids.Count * 100 + classNames.Count * 10 +
+                              (string.IsNullOrWhiteSpace(typeName) ? 0 : 1)
+            };
+            selector.ClassNames.AddRange(classNames);
+            return true;
+        }
+
+        private static void AuditRedundantInlineDeclarations(string assetPath,
+            XDocument document, UxmlInlineStyleContractIndex inlineStyleContracts,
+            MCPUxmlLayoutAuditReport report, bool includeSuppressed)
+        {
+            foreach (var element in document.Descendants())
+            {
+                var inlineDeclarations = ParseStyle(AttributeValue(element, "style"));
+                if (inlineDeclarations.Count == 0)
+                {
+                    continue;
+                }
+
+                var stylesheetDeclarations = inlineStyleContracts.Resolve(element);
+                var redundant = inlineDeclarations
+                    .Where(declaration =>
+                        stylesheetDeclarations.TryGetValue(declaration.Key,
+                            out var stylesheetDeclaration) &&
+                        StyleValuesEqual(declaration.Value, stylesheetDeclaration.Value))
+                    .OrderBy(declaration => declaration.Key,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(declaration => declaration.Key,
+                        declaration => declaration.Value,
+                        StringComparer.OrdinalIgnoreCase);
+                if (redundant.Count == 0)
+                {
+                    continue;
+                }
+
+                var name = AttributeValue(element, "name");
+                var elementLabel = string.IsNullOrWhiteSpace(name)
+                    ? $"<{element.Name.LocalName}>"
+                    : $"#{name}";
+                var stylesheetRules = redundant.Keys.Select(property =>
+                {
+                    var source = stylesheetDeclarations[property];
+                    return new Dictionary<string, object>
+                    {
+                        { "property", property },
+                        { "selector", source.Selector },
+                        { "sourcePath", source.SourcePath }
+                    };
+                }).ToList();
+                var sourceLabels = stylesheetRules
+                    .Select(source =>
+                        $"{source["selector"]} in {source["sourcePath"]}")
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                var suppressionReason = GetSuppressionReason(element,
+                    redundantInlineSuppressionRegex);
+                var issue = new MCPUxmlLayoutAuditIssue
+                {
+                    AssetPath = assetPath,
+                    Line = GetLineNumber(element),
+                    Element = elementLabel,
+                    ElementName = name,
+                    Kind = "redundant-inline-declaration",
+                    Axis = GetLayoutAxis(redundant.Keys),
+                    FixedProperties = redundant.Keys.ToList(),
+                    InlineDeclarations = redundant,
+                    StylesheetRules = stylesheetRules,
+                    Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                    SuppressionReason = suppressionReason,
+                    Message =
+                        $"Inline style {FormatDeclarations(redundant)} on {elementLabel} repeats " +
+                        $"the same default value supplied by {string.Join(", ", sourceLabels)}. " +
+                        "Remove the redundant inline declaration so the loaded USS remains the " +
+                        "single style owner."
+                };
+                report.Record(issue, includeSuppressed);
+            }
+        }
+
+        private static bool StyleValuesEqual(string left, string right)
+        {
+            return string.Equals(
+                Regex.Replace((left ?? "").Trim(), @"\s+", " "),
+                Regex.Replace((right ?? "").Trim(), @"\s+", " "),
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static IReadOnlyCollection<string> GetElementClasses(XElement element)
+        {
+            var classNames = new HashSet<string>(
+                SplitWhitespace(AttributeValue(element, "class")),
+                StringComparer.Ordinal);
+            foreach (var implicitClass in GetImplicitElementClasses(element))
+            {
+                classNames.Add(implicitClass);
+            }
+
+            return classNames;
+        }
+
+        private static IReadOnlyList<string> GetImplicitElementClasses(XElement element)
+        {
+            var namespaceName = element.Name.NamespaceName;
+            if (string.IsNullOrWhiteSpace(namespaceName))
+            {
+                return Array.Empty<string>();
+            }
+
+            var fullTypeName = namespaceName + "." + element.Name.LocalName;
+            if (implicitElementClassesByType.TryGetValue(fullTypeName, out var cached))
+            {
+                return cached;
+            }
+
+            var classes = new HashSet<string>(StringComparer.Ordinal);
+            var elementType = ResolveVisualElementType(fullTypeName);
+            for (var current = elementType;
+                 current != null && typeof(VisualElement).IsAssignableFrom(current);
+                 current = current.BaseType)
+            {
+                try
+                {
+                    var field = current.GetField("ussClassName",
+                        BindingFlags.Public | BindingFlags.NonPublic |
+                        BindingFlags.Static | BindingFlags.DeclaredOnly);
+                    if (field != null && field.FieldType == typeof(string) &&
+                        field.GetValue(null) is string className &&
+                        string.IsNullOrWhiteSpace(className) == false)
+                    {
+                        classes.Add(className);
+                    }
+                }
+                catch
+                {
+                    // A third-party VisualElement can expose an unsafe static accessor.
+                    // Static auditing only consumes safe, readable class-name constants.
+                }
+            }
+
+            var result = classes.OrderBy(value => value, StringComparer.Ordinal).ToList();
+            implicitElementClassesByType[fullTypeName] = result;
+            return result;
+        }
+
+        private static Type ResolveVisualElementType(string fullTypeName)
+        {
+            var engineType = typeof(VisualElement).Assembly.GetType(fullTypeName, false);
+            if (engineType != null)
+            {
+                return engineType;
+            }
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    var candidate = assembly.GetType(fullTypeName, false);
+                    if (candidate != null &&
+                        typeof(VisualElement).IsAssignableFrom(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+                catch
+                {
+                    // Ignore assemblies that cannot serve reflected UI Toolkit types.
+                }
+            }
+
+            return null;
         }
 
         private static void AuditRepeatedInlineLayoutVariants(string assetPath,
@@ -883,6 +1252,112 @@ namespace UnityMCP.Editor
             public List<string> RelatedVariantClasses;
         }
 
+        private sealed class UxmlSimpleSelector
+        {
+            public string Text;
+            public string TypeName;
+            public string Id;
+            public int Specificity;
+            public readonly List<string> ClassNames = new List<string>();
+
+            public bool Matches(XElement element, IReadOnlyCollection<string> elementClasses)
+            {
+                if (string.IsNullOrWhiteSpace(TypeName) == false &&
+                    string.Equals(TypeName, element.Name.LocalName,
+                        StringComparison.Ordinal) == false)
+                {
+                    return false;
+                }
+
+                if (string.IsNullOrWhiteSpace(Id) == false &&
+                    string.Equals(Id, AttributeValue(element, "name"),
+                        StringComparison.Ordinal) == false)
+                {
+                    return false;
+                }
+
+                return ClassNames.All(elementClasses.Contains);
+            }
+        }
+
+        private sealed class UxmlInlineStyleRule
+        {
+            public string SourcePath;
+            public UxmlSimpleSelector Selector;
+            public int SourceOrder;
+            public readonly Dictionary<string, string> Declarations =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private sealed class UxmlStylesheetDeclaration
+        {
+            public string Value;
+            public string Selector;
+            public string SourcePath;
+            public int Specificity;
+            public int SourceOrder;
+        }
+
+        private sealed class UxmlInlineStyleContractIndex
+        {
+            private readonly List<UxmlInlineStyleRule> rules =
+                new List<UxmlInlineStyleRule>();
+            private int sourceOrder;
+
+            public void AddRule(string sourcePath, UxmlSimpleSelector selector,
+                IReadOnlyDictionary<string, string> declarations)
+            {
+                var rule = new UxmlInlineStyleRule
+                {
+                    SourcePath = sourcePath,
+                    Selector = selector,
+                    SourceOrder = sourceOrder++
+                };
+                foreach (var declaration in declarations)
+                {
+                    rule.Declarations[declaration.Key] = declaration.Value;
+                }
+
+                rules.Add(rule);
+            }
+
+            public Dictionary<string, UxmlStylesheetDeclaration> Resolve(XElement element)
+            {
+                var result = new Dictionary<string, UxmlStylesheetDeclaration>(
+                    StringComparer.OrdinalIgnoreCase);
+                var elementClasses = GetElementClasses(element);
+                foreach (var rule in rules)
+                {
+                    if (rule.Selector.Matches(element, elementClasses) == false)
+                    {
+                        continue;
+                    }
+
+                    foreach (var declaration in rule.Declarations)
+                    {
+                        if (result.TryGetValue(declaration.Key, out var current) &&
+                            (current.Specificity > rule.Selector.Specificity ||
+                             current.Specificity == rule.Selector.Specificity &&
+                             current.SourceOrder > rule.SourceOrder))
+                        {
+                            continue;
+                        }
+
+                        result[declaration.Key] = new UxmlStylesheetDeclaration
+                        {
+                            Value = declaration.Value,
+                            Selector = rule.Selector.Text,
+                            SourcePath = rule.SourcePath,
+                            Specificity = rule.Selector.Specificity,
+                            SourceOrder = rule.SourceOrder
+                        };
+                    }
+                }
+
+                return result;
+            }
+        }
+
         private sealed class UxmlLayoutContractIndex
         {
             public readonly HashSet<string> BoxClasses =
@@ -1025,7 +1500,8 @@ namespace UnityMCP.Editor
                     new[]
                     {
                         $"<!-- {MCPUxmlLayoutAuditor.SUPPRESSION_MARKER} <reason> -->",
-                        $"<!-- {MCPUxmlLayoutAuditor.REPEATED_INLINE_SUPPRESSION_MARKER} <reason> -->"
+                        $"<!-- {MCPUxmlLayoutAuditor.REPEATED_INLINE_SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.REDUNDANT_INLINE_SUPPRESSION_MARKER} <reason> -->"
                     }
                 }
             };
@@ -1050,6 +1526,8 @@ namespace UnityMCP.Editor
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public List<string> RelatedVariantClasses = new List<string>();
         public List<Dictionary<string, object>> UsageLocations =
+            new List<Dictionary<string, object>>();
+        public List<Dictionary<string, object>> StylesheetRules =
             new List<Dictionary<string, object>>();
         public bool Suppressed;
         public string SuppressionReason;
@@ -1087,6 +1565,14 @@ namespace UnityMCP.Editor
                         StringComparer.OrdinalIgnoreCase);
                 result["relatedVariantClasses"] = RelatedVariantClasses.ToList();
                 result["usageLocations"] = UsageLocations.ToList();
+            }
+            else if (string.Equals(Kind, "redundant-inline-declaration",
+                         StringComparison.Ordinal))
+            {
+                result["inlineDeclarations"] =
+                    new Dictionary<string, string>(InlineDeclarations,
+                        StringComparer.OrdinalIgnoreCase);
+                result["stylesheetRules"] = StylesheetRules.ToList();
             }
 
             return result;

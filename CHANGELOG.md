@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.38] - 2026-07-29
+
+- Extend the UXML layout audit to report inline declarations that repeat the winning default from a loaded USS file, including defaults supplied through implicit UI Toolkit classes such as `.unity-base-field`.
+
 ## [3.3.37] - 2026-07-28
 
 - Extend the UXML layout audit to report repeated inline layout declarations when authored elements already use a shared semantic layout variant for the same properties.

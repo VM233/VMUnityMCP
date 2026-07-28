@@ -1998,6 +1998,48 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUxmlAudit_ReportsInlineDeclarationOwnedByLoadedImplicitClass()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Redundant Inline Default.uxml";
+            const string ussPath = TEST_FOLDER + "/Redundant Inline Default.uss";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<Style src=\"Redundant Inline Default.uss\"/>" +
+                "<ui:TextField name=\"Redundant\" style=\"overflow: visible;\"/>" +
+                "<ui:TextField name=\"Override\" style=\"overflow: hidden;\"/>" +
+                "</ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                ".unity-base-field { overflow: visible; }\n");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { uxmlPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            var issue = issues.Single();
+            Assert.That(issue["kind"], Is.EqualTo("redundant-inline-declaration"));
+            Assert.That(issue["element"], Is.EqualTo("#Redundant"));
+            Assert.That((Dictionary<string, string>)issue["inlineDeclarations"],
+                Is.EquivalentTo(new Dictionary<string, string>
+                {
+                    { "overflow", "visible" }
+                }));
+            var stylesheetRules =
+                (List<Dictionary<string, object>>)issue["stylesheetRules"];
+            Assert.That(stylesheetRules, Has.Count.EqualTo(1));
+            Assert.That(stylesheetRules[0]["property"], Is.EqualTo("overflow"));
+            Assert.That(stylesheetRules[0]["selector"], Is.EqualTo(".unity-base-field"));
+            Assert.That(stylesheetRules[0]["sourcePath"], Is.EqualTo(ussPath));
+        }
+
+        [Test]
         public void UIToolkitStaticAudits_AreFirstClassReadOnlyLongRunningTools()
         {
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(

@@ -79,7 +79,7 @@ http://127.0.0.1:7890/api/ping
 | Animator editing | `unity_animation_connect_states` | `animation/connect-states` | Create directed pairwise transitions between a list of Animator states. |
 | UI Toolkit assets | `unity_uitoolkit_asset_inspect` | `uitoolkit/asset-inspect` | Inspect UXML/USS assets for VisualElement names, type matches, unconditional class defaults, contextual selectors, and pseudo-state rules. |
 | UI Toolkit static audit | `unity_uitoolkit_audit_uss_styles` | `uitoolkit/audit-uss-styles` | Find selectors that serve one authored element without a reusable, pseudo-state, generated-child, or runtime-class contract. |
-| UI Toolkit static audit | `unity_uitoolkit_audit_uxml_layout` | `uitoolkit/audit-uxml-layout` | Find layout-only manually centered containers and repeated inline layout declarations that duplicate an established semantic variant. |
+| UI Toolkit static audit | `unity_uitoolkit_audit_uxml_layout` | `uitoolkit/audit-uxml-layout` | Find layout-only manually centered containers, repeated inline layout variants, and inline declarations already supplied by a loaded USS default, including implicit UI Toolkit classes. |
 | UI Toolkit runtime | `unity_uitoolkit_runtime_documents` | `uitoolkit/runtime-documents` | List runtime UIDocuments and their root visual element metadata. |
 | UI Toolkit runtime | `unity_uitoolkit_runtime_tree` | `uitoolkit/runtime-tree` | Read a UIDocument visual tree, including optional style and bounds data. |
 | UI Toolkit runtime | `unity_uitoolkit_runtime_query` | `uitoolkit/runtime-query` | Query runtime VisualElements by tree path, VisualElementPath name list, name, class, type, or text. |
