@@ -5370,6 +5370,234 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void TransportCompaction_FormatsUnityValueObjectsAsCompactScalars()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "position2D", new Vector2(1.25f, -2f) },
+                    { "position3D", new Vector3Int(1, 2, 3) },
+                    { "rotation", new Quaternion(0f, 0.5f, 0f, 1f) },
+                    { "rect", new Rect(1f, 2f, 3f, 3f) },
+                    { "bounds", new Bounds(new Vector3(2f, 3f, 4f), new Vector3(6f, 4f, 2f)) },
+                    { "color", new Color(1f, 0.5f, 0f, 1f) },
+                    { "border", new RectOffset(1, 2, 3, 4) },
+                    { "ray", new Ray(new Vector3(1f, 2f, 3f), Vector3.up) },
+                    { "matrix", Matrix4x4.identity },
+                }));
+
+            Assert.That(compacted["position2D"], Is.EqualTo("(1.25,-2)"));
+            Assert.That(compacted["position3D"], Is.EqualTo("(1,2,3)"));
+            Assert.That(compacted["rotation"], Is.EqualTo("(0,0.5,0,1)"));
+            Assert.That(compacted["rect"], Is.EqualTo("(1,2)-(4,5),size:(3,3)"));
+            Assert.That(compacted["bounds"], Is.EqualTo("(-1,1,3)-(5,5,5),size:(6,4,2)"));
+            Assert.That(compacted["color"], Is.EqualTo("rgba(1,0.5,0,1)"));
+            Assert.That(compacted["border"], Is.EqualTo("LTRB(1,3,2,4)"));
+            Assert.That(compacted["ray"], Is.EqualTo("origin:(1,2,3),direction:(0,1,0)"));
+            Assert.That(compacted["matrix"],
+                Is.EqualTo("[(1,0,0,0);(0,1,0,0);(0,0,1,0);(0,0,0,1)]"));
+            Assert.That(MCPCompactValueFormatter.FormatInstance("BattleIdle", 7892),
+                Is.EqualTo("BattleIdle@7892"));
+        }
+
+        [Test]
+        public void TransportCompaction_FormatsEquivalentDictionaryShapes()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "position", new Dictionary<string, object>
+                        {
+                            { "x", 1 },
+                            { "y", 2 },
+                        }
+                    },
+                    { "terrainCenter", new Dictionary<string, object>
+                        {
+                            { "x", 0.25 },
+                            { "z", 0.75 },
+                        }
+                    },
+                    { "rect", new Dictionary<string, object>
+                        {
+                            { "x", 1 },
+                            { "y", 2 },
+                            { "width", 3 },
+                            { "height", 3 },
+                            { "xMin", 1 },
+                            { "yMin", 2 },
+                            { "xMax", 4 },
+                            { "yMax", 5 },
+                        }
+                    },
+                    { "bounds", new Dictionary<string, object>
+                        {
+                            { "center", new Dictionary<string, object>
+                                {
+                                    { "x", 2 },
+                                    { "y", 3 },
+                                    { "z", 4 },
+                                }
+                            },
+                            { "size", new Dictionary<string, object>
+                                {
+                                    { "x", 6 },
+                                    { "y", 4 },
+                                    { "z", 2 },
+                                }
+                            },
+                            { "extents", new Dictionary<string, object>
+                                {
+                                    { "x", 3 },
+                                    { "y", 2 },
+                                    { "z", 1 },
+                                }
+                            },
+                            { "min", new Dictionary<string, object>
+                                {
+                                    { "x", -1 },
+                                    { "y", 1 },
+                                    { "z", 3 },
+                                }
+                            },
+                            { "max", new Dictionary<string, object>
+                                {
+                                    { "x", 5 },
+                                    { "y", 5 },
+                                    { "z", 5 },
+                                }
+                            },
+                        }
+                    },
+                    { "color", new Dictionary<string, object>
+                        {
+                            { "r", 255 },
+                            { "g", 128 },
+                            { "b", 0 },
+                            { "a", 255 },
+                        }
+                    },
+                    { "size", new Dictionary<string, object>
+                        {
+                            { "width", 1920 },
+                            { "height", 1080 },
+                        }
+                    },
+                    { "margins", new Dictionary<string, object>
+                        {
+                            { "left", 1 },
+                            { "top", 2 },
+                            { "right", 3 },
+                            { "bottom", 4 },
+                        }
+                    },
+                    { "range", new Dictionary<string, object>
+                        {
+                            { "min", -1 },
+                            { "max", 1 },
+                        }
+                    },
+                }));
+
+            Assert.That(compacted["position"], Is.EqualTo("(1,2)"));
+            Assert.That(compacted["terrainCenter"], Is.EqualTo("(x:0.25,z:0.75)"));
+            Assert.That(compacted["rect"], Is.EqualTo("(1,2)-(4,5),size:(3,3)"));
+            Assert.That(compacted["bounds"], Is.EqualTo("(-1,1,3)-(5,5,5),size:(6,4,2)"));
+            Assert.That(compacted["color"], Is.EqualTo("rgba(255,128,0,255)"));
+            Assert.That(compacted["size"], Is.EqualTo("(1920,1080)"));
+            Assert.That(compacted["margins"], Is.EqualTo("LTRB(1,2,3,4)"));
+            Assert.That(compacted["range"], Is.EqualTo("-1..1"));
+        }
+
+        [Test]
+        public void TransportCompaction_GroupsGeometryMembersInsideLargerResults()
+        {
+            var source = new Dictionary<string, object>
+            {
+                { "name", "Texture" },
+                { "width", 1920 },
+                { "height", 1080 },
+                { "sourceWidth", 3840 },
+                { "sourceHeight", 2160 },
+                { "sample", new Dictionary<string, object>
+                    {
+                        { "x", 12 },
+                        { "y", 34 },
+                        { "delta", 0.25 },
+                    }
+                },
+                { "marginLeft", 1 },
+                { "marginTop", 2 },
+                { "marginRight", 3 },
+                { "marginBottom", 4 },
+            };
+
+            string originalJson = MiniJson.Serialize(source);
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(source));
+            string compactedJson = MiniJson.Serialize(compacted);
+
+            var sample = RequireDictionary(compacted["sample"]);
+            Assert.That(sample["position"], Is.EqualTo("(12,34)"));
+            Assert.That(compacted["size"], Is.EqualTo("(1920,1080)"));
+            Assert.That(compacted["sourceSize"], Is.EqualTo("(3840,2160)"));
+            Assert.That(compacted["margin"], Is.EqualTo("LTRB(1,2,3,4)"));
+            Assert.That(sample.ContainsKey("x"), Is.False);
+            Assert.That(compacted.ContainsKey("height"), Is.False);
+            Assert.That(compacted.ContainsKey("sourceWidth"), Is.False);
+            Assert.That(compacted.ContainsKey("marginBottom"), Is.False);
+            Assert.That(compactedJson.Length, Is.LessThan(originalJson.Length * 0.8));
+            Assert.That(source.ContainsKey("width"), Is.True);
+            Assert.That(RequireDictionary(source["sample"]).ContainsKey("x"), Is.True);
+        }
+
+        [Test]
+        public void TransportCompaction_PreservesInconsistentRectAndRemovesOnlyDerivedAliases()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "brokenRect", new Dictionary<string, object>
+                        {
+                            { "x", 1 },
+                            { "y", 2 },
+                            { "width", 3 },
+                            { "height", 3 },
+                            { "xMax", 99 },
+                            { "yMax", 5 },
+                        }
+                    },
+                    { "runtimeMemoryBytes", 1048576L },
+                    { "runtimeMemoryMB", 1d },
+                    { "readable", true },
+                    { "isReadable", true },
+                    { "reportedBytes", 1048576L },
+                    { "reportedMB", 2d },
+                    { "actualProjectPath", "D:/UnityProjects/BattleIdle" },
+                    { "actualProjectName", "BattleIdle" },
+                    { "actualPort", 7892 },
+                    { "currentInstance", new Dictionary<string, object>
+                        {
+                            { "projectPath", "D:/UnityProjects/BattleIdle" },
+                            { "projectName", "BattleIdle" },
+                            { "port", 7892 },
+                            { "unityVersion", "6000.4.10f1" },
+                        }
+                    },
+                }));
+
+            var brokenRect = RequireDictionary(compacted["brokenRect"]);
+            Assert.That(brokenRect["x"], Is.EqualTo(1));
+            Assert.That(brokenRect["width"], Is.EqualTo(3));
+            Assert.That(brokenRect["xMax"], Is.EqualTo(99));
+            Assert.That(compacted.ContainsKey("runtimeMemoryMB"), Is.False);
+            Assert.That(compacted["runtimeMemoryBytes"], Is.EqualTo(1048576L));
+            Assert.That(compacted.ContainsKey("isReadable"), Is.False);
+            Assert.That(compacted["readable"], Is.EqualTo(true));
+            Assert.That(compacted["reportedMB"], Is.EqualTo(2d));
+            Assert.That(compacted.ContainsKey("currentInstance"), Is.False);
+        }
+
+        [Test]
         public void TransportCompaction_RemovesDuplicateErrorMessageButKeepsFailureContract()
         {
             var compacted = RequireDictionary(MCPResponse.CompactForTransport(

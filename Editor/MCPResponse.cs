@@ -1,7 +1,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
+using UnityEngine;
 
 namespace UnityMCP.Editor
 {
@@ -177,9 +179,15 @@ namespace UnityMCP.Editor
                 return compactedList;
             }
 
+            if (MCPCompactValueFormatter.TryFormatUnityValue(value, out string formattedValue))
+                return formattedValue;
+
             Dictionary<string, object> source = ToDictionary(value);
             if (source == null)
                 return value;
+
+            if (MCPCompactValueFormatter.TryFormatDictionary(source, out formattedValue))
+                return formattedValue;
 
             if (isRoot && IsProjectToolSuccessEnvelope(source))
                 return CompactValue(source["result"], true);
@@ -190,8 +198,10 @@ namespace UnityMCP.Editor
                 compacted[pair.Key] = CompactValue(
                     pair.Value, isQueueTicketEnvelope && pair.Key == "result");
 
+            MCPCompactValueFormatter.CompactMembers(compacted);
             RemoveDuplicateSummaryValues(compacted);
             RemoveDuplicateErrorMessage(compacted);
+            RemoveDuplicateInstanceDetails(compacted);
             RemoveDerivedPresenceFlags(compacted);
             CompactSerializedArrayMetadata(compacted);
             CompactPersistenceMetadata(compacted);
@@ -271,6 +281,24 @@ namespace UnityMCP.Editor
                 dictionary.TryGetValue("message", out object message) &&
                 ValuesEqual(error, message))
                 dictionary.Remove("message");
+        }
+
+        private static void RemoveDuplicateInstanceDetails(Dictionary<string, object> dictionary)
+        {
+            if (!dictionary.TryGetValue("currentInstance", out object currentValue) ||
+                !(currentValue is Dictionary<string, object> current) ||
+                !dictionary.TryGetValue("actualProjectPath", out object actualPath) ||
+                !dictionary.TryGetValue("actualProjectName", out object actualName) ||
+                !dictionary.TryGetValue("actualPort", out object actualPort))
+                return;
+
+            if (current.TryGetValue("projectPath", out object currentPath) &&
+                current.TryGetValue("projectName", out object currentName) &&
+                current.TryGetValue("port", out object currentPort) &&
+                ValuesEqual(actualPath, currentPath) &&
+                ValuesEqual(actualName, currentName) &&
+                ValuesEqual(actualPort, currentPort))
+                dictionary.Remove("currentInstance");
         }
 
         private static void RemoveDerivedPresenceFlags(Dictionary<string, object> dictionary)
@@ -647,6 +675,789 @@ namespace UnityMCP.Editor
                 return boolValue;
 
             return value != null && bool.TryParse(value.ToString(), out var parsed) && parsed;
+        }
+    }
+
+    /// <summary>
+    /// Formats small Unity value objects and their dictionary equivalents for the transport wire only.
+    /// Command results remain structured internally; compact strings are deliberately optimized for concise,
+    /// readable MCP output.
+    /// </summary>
+    internal static class MCPCompactValueFormatter
+    {
+        private static readonly HashSet<string> Vector2Keys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "x", "y",
+        };
+
+        private static readonly HashSet<string> VectorXZKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "x", "z",
+        };
+
+        private static readonly HashSet<string> Vector3Keys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "x", "y", "z",
+        };
+
+        private static readonly HashSet<string> Vector4Keys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "x", "y", "z", "w",
+        };
+
+        private static readonly HashSet<string> ColorRgbKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "r", "g", "b",
+        };
+
+        private static readonly HashSet<string> ColorRgbaKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "r", "g", "b", "a",
+        };
+
+        private static readonly HashSet<string> SizeKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "width", "height",
+        };
+
+        private static readonly HashSet<string> EdgeKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "left", "top", "right", "bottom",
+        };
+
+        private static readonly HashSet<string> RangeKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "min", "max",
+        };
+
+        private static readonly HashSet<string> StartEndKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "start", "end",
+        };
+
+        private static readonly HashSet<string> RectKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "x", "y", "width", "height", "xMin", "yMin", "xMax", "yMax",
+        };
+
+        private static readonly HashSet<string> BoundsKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "center", "size", "extents", "min", "max",
+        };
+
+        public static bool TryFormatUnityValue(object value, out string formatted)
+        {
+            switch (value)
+            {
+                case Vector2 vector2:
+                    formatted = FormatTuple(vector2.x, vector2.y);
+                    return true;
+                case Vector2Int vector2Int:
+                    formatted = FormatTuple(vector2Int.x, vector2Int.y);
+                    return true;
+                case Vector3 vector3:
+                    formatted = FormatTuple(vector3.x, vector3.y, vector3.z);
+                    return true;
+                case Vector3Int vector3Int:
+                    formatted = FormatTuple(vector3Int.x, vector3Int.y, vector3Int.z);
+                    return true;
+                case Vector4 vector4:
+                    formatted = FormatTuple(vector4.x, vector4.y, vector4.z, vector4.w);
+                    return true;
+                case Quaternion quaternion:
+                    formatted = FormatTuple(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+                    return true;
+                case Rect rect:
+                    formatted = FormatRect(rect.xMin, rect.yMin, rect.xMax, rect.yMax,
+                        rect.width, rect.height);
+                    return true;
+                case RectInt rectInt:
+                    formatted = FormatRect(rectInt.xMin, rectInt.yMin, rectInt.xMax, rectInt.yMax,
+                        rectInt.width, rectInt.height);
+                    return true;
+                case Bounds bounds:
+                    formatted = FormatBounds(bounds.min, bounds.max, bounds.size);
+                    return true;
+                case BoundsInt boundsInt:
+                    formatted = FormatBounds(boundsInt.min, boundsInt.max, boundsInt.size);
+                    return true;
+                case Color color:
+                    formatted = FormatColor(color.r, color.g, color.b, color.a);
+                    return true;
+                case Color32 color32:
+                    formatted = FormatColor(color32.r, color32.g, color32.b, color32.a);
+                    return true;
+                case RectOffset offset:
+                    formatted = FormatEdges(offset.left, offset.top, offset.right, offset.bottom);
+                    return true;
+                case Matrix4x4 matrix:
+                    formatted = FormatMatrix(matrix);
+                    return true;
+                case Ray ray:
+                    formatted = $"origin:{FormatTuple(ray.origin.x, ray.origin.y, ray.origin.z)}," +
+                                $"direction:{FormatTuple(ray.direction.x, ray.direction.y, ray.direction.z)}";
+                    return true;
+                case Ray2D ray2D:
+                    formatted = $"origin:{FormatTuple(ray2D.origin.x, ray2D.origin.y)}," +
+                                $"direction:{FormatTuple(ray2D.direction.x, ray2D.direction.y)}";
+                    return true;
+                case Plane plane:
+                    formatted = $"normal:{FormatTuple(plane.normal.x, plane.normal.y, plane.normal.z)}," +
+                                $"distance:{FormatNumber(plane.distance)}";
+                    return true;
+                case Pose pose:
+                    formatted = $"position:{FormatTuple(pose.position.x, pose.position.y, pose.position.z)}," +
+                                $"rotation:{FormatTuple(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w)}";
+                    return true;
+            }
+
+            formatted = null;
+            return false;
+        }
+
+        public static void CompactMembers(Dictionary<string, object> dictionary)
+        {
+            if (dictionary == null || dictionary.Count == 0)
+                return;
+
+            bool hasRectMembers = dictionary.ContainsKey("x") && dictionary.ContainsKey("y") &&
+                                  dictionary.ContainsKey("width") && dictionary.ContainsKey("height");
+            if (hasRectMembers && !CompactRectMembers(dictionary))
+            {
+                RemoveDerivedByteUnits(dictionary);
+                RemoveDuplicateBooleanAliases(dictionary);
+                return;
+            }
+
+            CompactAxisMembers(dictionary);
+            CompactDimensionPairs(dictionary);
+            CompactEdgeMembers(dictionary);
+            RemoveDerivedByteUnits(dictionary);
+            RemoveDuplicateBooleanAliases(dictionary);
+        }
+
+        public static string FormatInstance(string projectName, int port)
+        {
+            string name = string.IsNullOrWhiteSpace(projectName) ? "Unity" : projectName.Trim();
+            return $"{name}@{port}";
+        }
+
+        public static bool TryFormatDictionary(Dictionary<string, object> dictionary, out string formatted)
+        {
+            formatted = null;
+            if (dictionary == null || dictionary.Count == 0)
+                return false;
+
+            if (TryFormatBoundsDictionary(dictionary, out formatted) ||
+                TryFormatRectDictionary(dictionary, out formatted))
+                return true;
+
+            if (KeysEqual(dictionary, ColorRgbaKeys) &&
+                TryFormatComponents(dictionary, out string[] rgba, "r", "g", "b", "a"))
+            {
+                formatted = $"rgba({string.Join(",", rgba)})";
+                return true;
+            }
+
+            if (KeysEqual(dictionary, ColorRgbKeys) &&
+                TryFormatComponents(dictionary, out string[] rgb, "r", "g", "b"))
+            {
+                formatted = $"rgb({string.Join(",", rgb)})";
+                return true;
+            }
+
+            if (KeysEqual(dictionary, Vector4Keys) &&
+                TryFormatComponents(dictionary, out string[] vector4, "x", "y", "z", "w"))
+            {
+                formatted = $"({string.Join(",", vector4)})";
+                return true;
+            }
+
+            if (KeysEqual(dictionary, Vector3Keys) &&
+                TryFormatComponents(dictionary, out string[] vector3, "x", "y", "z"))
+            {
+                formatted = $"({string.Join(",", vector3)})";
+                return true;
+            }
+
+            if (KeysEqual(dictionary, Vector2Keys) &&
+                TryFormatComponents(dictionary, out string[] vector2, "x", "y"))
+            {
+                formatted = $"({string.Join(",", vector2)})";
+                return true;
+            }
+
+            if (KeysEqual(dictionary, VectorXZKeys) &&
+                TryFormatComponents(dictionary, out string[] vectorXZ, "x", "z"))
+            {
+                formatted = $"(x:{vectorXZ[0]},z:{vectorXZ[1]})";
+                return true;
+            }
+
+            if (KeysEqual(dictionary, SizeKeys) &&
+                TryFormatComponents(dictionary, out string[] size, "width", "height", true))
+            {
+                formatted = $"({string.Join(",", size)})";
+                return true;
+            }
+
+            if (KeysEqual(dictionary, EdgeKeys) &&
+                TryFormatComponents(dictionary, out string[] edges, "left", "top", "right", "bottom"))
+            {
+                formatted = $"LTRB({string.Join(",", edges)})";
+                return true;
+            }
+
+            if (KeysEqual(dictionary, RangeKeys) &&
+                TryFormatComponents(dictionary, out string[] range, "min", "max"))
+            {
+                formatted = $"{range[0]}..{range[1]}";
+                return true;
+            }
+
+            if (KeysEqual(dictionary, StartEndKeys) &&
+                TryFormatComponents(dictionary, out string[] startEnd, "start", "end"))
+            {
+                formatted = $"{startEnd[0]}..{startEnd[1]}";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryFormatRectDictionary(Dictionary<string, object> dictionary, out string formatted)
+        {
+            formatted = null;
+            if (!KeysAreSubset(dictionary, RectKeys) ||
+                !TryGetNumber(dictionary, "width", out double width) ||
+                !TryGetNumber(dictionary, "height", out double height))
+                return false;
+
+            bool hasX = TryGetNumber(dictionary, "x", out double x);
+            bool hasY = TryGetNumber(dictionary, "y", out double y);
+            bool hasXMin = TryGetNumber(dictionary, "xMin", out double xMin);
+            bool hasYMin = TryGetNumber(dictionary, "yMin", out double yMin);
+            bool hasXY = hasX && hasY;
+            bool hasMin = hasXMin && hasYMin;
+            if (!hasXY && !hasMin)
+                return false;
+
+            double startX = hasMin ? xMin : x;
+            double startY = hasMin ? yMin : y;
+            if (hasXY && hasMin &&
+                (!Approximately(x, xMin) || !Approximately(y, yMin)))
+                return false;
+
+            bool hasXMax = TryGetNumber(dictionary, "xMax", out double xMax);
+            bool hasYMax = TryGetNumber(dictionary, "yMax", out double yMax);
+            bool hasMax = hasXMax && hasYMax;
+            double endX = hasMax ? xMax : startX + width;
+            double endY = hasMax ? yMax : startY + height;
+            if (hasMax &&
+                (!Approximately(endX, startX + width) || !Approximately(endY, startY + height)))
+                return false;
+
+            formatted = FormatRect(startX, startY, endX, endY, width, height);
+            return true;
+        }
+
+        private static bool TryFormatBoundsDictionary(Dictionary<string, object> dictionary, out string formatted)
+        {
+            formatted = null;
+            if (!KeysAreSubset(dictionary, BoundsKeys) ||
+                !dictionary.TryGetValue("center", out object centerValue) ||
+                !dictionary.TryGetValue("size", out object sizeValue) ||
+                !TryReadTuple(centerValue, out double[] center) ||
+                !TryReadTuple(sizeValue, out double[] size) ||
+                center.Length != size.Length)
+                return false;
+
+            double[] min = new double[center.Length];
+            double[] max = new double[center.Length];
+            for (int index = 0; index < center.Length; index++)
+            {
+                min[index] = center[index] - size[index] * 0.5d;
+                max[index] = center[index] + size[index] * 0.5d;
+            }
+
+            bool hasMin = dictionary.TryGetValue("min", out object minValue);
+            bool hasMax = dictionary.TryGetValue("max", out object maxValue);
+            if (hasMin || hasMax)
+            {
+                if (minValue == null || maxValue == null ||
+                    !TryReadTuple(minValue, out double[] explicitMin) ||
+                    !TryReadTuple(maxValue, out double[] explicitMax) ||
+                    !TuplesApproximatelyEqual(min, explicitMin) ||
+                    !TuplesApproximatelyEqual(max, explicitMax))
+                    return false;
+
+                min = explicitMin;
+                max = explicitMax;
+            }
+
+            if (dictionary.TryGetValue("extents", out object extentsValue))
+            {
+                if (!TryReadTuple(extentsValue, out double[] extents) || extents.Length != size.Length)
+                    return false;
+                for (int index = 0; index < extents.Length; index++)
+                {
+                    if (!Approximately(extents[index] * 2d, size[index]))
+                        return false;
+                }
+            }
+
+            formatted = $"{FormatTuple(min)}-{FormatTuple(max)},size:{FormatTuple(size)}";
+            return true;
+        }
+
+        private static bool CompactRectMembers(Dictionary<string, object> dictionary)
+        {
+            if (dictionary.ContainsKey("rect") ||
+                !dictionary.ContainsKey("x") || !dictionary.ContainsKey("y") ||
+                !dictionary.ContainsKey("width") || !dictionary.ContainsKey("height"))
+                return false;
+
+            var rect = new Dictionary<string, object>
+            {
+                { "x", dictionary["x"] },
+                { "y", dictionary["y"] },
+                { "width", dictionary["width"] },
+                { "height", dictionary["height"] },
+            };
+
+            foreach (string key in new[] { "xMin", "yMin", "xMax", "yMax" })
+            {
+                if (dictionary.TryGetValue(key, out object value))
+                    rect[key] = value;
+            }
+
+            if (!TryFormatRectDictionary(rect, out string formatted))
+                return false;
+
+            foreach (string key in rect.Keys)
+                dictionary.Remove(key);
+            dictionary["rect"] = formatted;
+            return true;
+        }
+
+        private static void CompactAxisMembers(Dictionary<string, object> dictionary)
+        {
+            if (dictionary.ContainsKey("position") || !dictionary.ContainsKey("x"))
+                return;
+
+            string[] axes;
+            if (dictionary.ContainsKey("y") && dictionary.ContainsKey("z") && dictionary.ContainsKey("w"))
+                axes = new[] { "x", "y", "z", "w" };
+            else if (dictionary.ContainsKey("y") && dictionary.ContainsKey("z"))
+                axes = new[] { "x", "y", "z" };
+            else if (dictionary.ContainsKey("y"))
+                axes = new[] { "x", "y" };
+            else if (dictionary.ContainsKey("z"))
+                axes = new[] { "x", "z" };
+            else
+                return;
+
+            if (!TryFormatComponents(dictionary, out string[] components, axes))
+                return;
+
+            foreach (string axis in axes)
+                dictionary.Remove(axis);
+            dictionary["position"] = axes.Length == 2 && axes[1] == "z"
+                ? $"(x:{components[0]},z:{components[1]})"
+                : $"({string.Join(",", components)})";
+        }
+
+        private static void CompactDimensionPairs(Dictionary<string, object> dictionary)
+        {
+            var widthKeys = new List<string>();
+            foreach (string key in dictionary.Keys)
+            {
+                if (key == "width" || key.EndsWith("Width", StringComparison.Ordinal))
+                    widthKeys.Add(key);
+            }
+
+            foreach (string widthKey in widthKeys)
+            {
+                string prefix = widthKey == "width"
+                    ? ""
+                    : widthKey.Substring(0, widthKey.Length - "Width".Length);
+                string heightKey = string.IsNullOrEmpty(prefix) ? "height" : prefix + "Height";
+                string sizeKey = string.IsNullOrEmpty(prefix) ? "size" : prefix + "Size";
+                if (!dictionary.TryGetValue(widthKey, out object width) ||
+                    !dictionary.TryGetValue(heightKey, out object height) ||
+                    dictionary.ContainsKey(sizeKey) ||
+                    !TryFormatScalar(width, true, out string formattedWidth) ||
+                    !TryFormatScalar(height, true, out string formattedHeight))
+                    continue;
+
+                dictionary.Remove(widthKey);
+                dictionary.Remove(heightKey);
+                dictionary[sizeKey] = $"({formattedWidth},{formattedHeight})";
+            }
+        }
+
+        private static void CompactEdgeMembers(Dictionary<string, object> dictionary)
+        {
+            if (!dictionary.ContainsKey("inset") &&
+                TryFormatNumericMembers(dictionary, out string rawEdges,
+                    "left", "top", "right", "bottom"))
+            {
+                dictionary.Remove("left");
+                dictionary.Remove("top");
+                dictionary.Remove("right");
+                dictionary.Remove("bottom");
+                dictionary["inset"] = $"LTRB({rawEdges})";
+            }
+
+            var leftKeys = new List<string>();
+            foreach (string key in dictionary.Keys)
+            {
+                if (key.EndsWith("Left", StringComparison.Ordinal) && key.Length > "Left".Length)
+                    leftKeys.Add(key);
+            }
+
+            foreach (string leftKey in leftKeys)
+            {
+                string prefix = leftKey.Substring(0, leftKey.Length - "Left".Length);
+                string topKey = prefix + "Top";
+                string rightKey = prefix + "Right";
+                string bottomKey = prefix + "Bottom";
+                if (dictionary.ContainsKey(prefix) ||
+                    !TryFormatNumericMembers(dictionary, out string edges,
+                        leftKey, topKey, rightKey, bottomKey))
+                    continue;
+
+                dictionary.Remove(leftKey);
+                dictionary.Remove(topKey);
+                dictionary.Remove(rightKey);
+                dictionary.Remove(bottomKey);
+                dictionary[prefix] = $"LTRB({edges})";
+            }
+        }
+
+        private static void RemoveDerivedByteUnits(Dictionary<string, object> dictionary)
+        {
+            var bytesKeys = new List<string>();
+            foreach (string key in dictionary.Keys)
+            {
+                if (key.EndsWith("Bytes", StringComparison.Ordinal))
+                    bytesKeys.Add(key);
+            }
+
+            foreach (string bytesKey in bytesKeys)
+            {
+                if (!TryGetNumber(dictionary, bytesKey, out double bytes))
+                    continue;
+
+                string stem = bytesKey.Substring(0, bytesKey.Length - "Bytes".Length);
+                RemoveMatchingDerivedUnit(dictionary, stem + "KB", bytes / 1024d);
+                RemoveMatchingDerivedUnit(dictionary, stem + "MB", bytes / (1024d * 1024d));
+                RemoveMatchingDerivedUnit(dictionary, stem + "GB", bytes / (1024d * 1024d * 1024d));
+            }
+        }
+
+        private static void RemoveMatchingDerivedUnit(
+            Dictionary<string, object> dictionary, string key, double expected)
+        {
+            if (!TryGetNumber(dictionary, key, out double actual))
+                return;
+
+            // Existing commands generally round display units to one to three decimal places.
+            double tolerance = Math.Max(0.051d, Math.Abs(expected) * 0.00001d);
+            if (Math.Abs(actual - expected) <= tolerance)
+                dictionary.Remove(key);
+        }
+
+        private static void RemoveDuplicateBooleanAliases(Dictionary<string, object> dictionary)
+        {
+            var aliases = new List<string>();
+            foreach (KeyValuePair<string, object> pair in dictionary)
+            {
+                if (!pair.Key.StartsWith("is", StringComparison.Ordinal) || pair.Key.Length <= 2 ||
+                    !(pair.Value is bool aliasValue))
+                    continue;
+
+                string canonical = char.ToLowerInvariant(pair.Key[2]) + pair.Key.Substring(3);
+                if (dictionary.TryGetValue(canonical, out object canonicalValue) &&
+                    canonicalValue is bool canonicalBoolean && canonicalBoolean == aliasValue)
+                    aliases.Add(pair.Key);
+            }
+
+            foreach (string alias in aliases)
+                dictionary.Remove(alias);
+        }
+
+        private static bool TryFormatComponents(Dictionary<string, object> dictionary,
+            out string[] formatted, params string[] keys)
+        {
+            return TryFormatComponents(dictionary, out formatted, keys, false);
+        }
+
+        private static bool TryFormatComponents(Dictionary<string, object> dictionary,
+            out string[] formatted, string[] keys, bool allowText)
+        {
+            formatted = new string[keys.Length];
+            for (int index = 0; index < keys.Length; index++)
+            {
+                if (!dictionary.TryGetValue(keys[index], out object value) ||
+                    !TryFormatScalar(value, allowText, out formatted[index]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryFormatComponents(Dictionary<string, object> dictionary,
+            out string[] formatted, string key1, string key2, bool allowText)
+        {
+            return TryFormatComponents(dictionary, out formatted, new[] { key1, key2 }, allowText);
+        }
+
+        private static bool TryFormatNumericMembers(Dictionary<string, object> dictionary,
+            out string formatted, params string[] keys)
+        {
+            formatted = null;
+            if (!TryFormatComponents(dictionary, out string[] components, keys))
+                return false;
+            formatted = string.Join(",", components);
+            return true;
+        }
+
+        private static bool TryReadTuple(object value, out double[] tuple)
+        {
+            switch (value)
+            {
+                case Vector2 vector2:
+                    tuple = new[] { (double)vector2.x, vector2.y };
+                    return true;
+                case Vector2Int vector2Int:
+                    tuple = new[] { (double)vector2Int.x, vector2Int.y };
+                    return true;
+                case Vector3 vector3:
+                    tuple = new[] { (double)vector3.x, vector3.y, vector3.z };
+                    return true;
+                case Vector3Int vector3Int:
+                    tuple = new[] { (double)vector3Int.x, vector3Int.y, vector3Int.z };
+                    return true;
+                case Vector4 vector4:
+                    tuple = new[] { (double)vector4.x, vector4.y, vector4.z, vector4.w };
+                    return true;
+            }
+
+            Dictionary<string, object> dictionary = MCPResponse.ToDictionary(value);
+            string[] keys;
+            if (dictionary != null && KeysEqual(dictionary, Vector2Keys))
+                keys = new[] { "x", "y" };
+            else if (dictionary != null && KeysEqual(dictionary, VectorXZKeys))
+                keys = new[] { "x", "z" };
+            else if (dictionary != null && KeysEqual(dictionary, Vector3Keys))
+                keys = new[] { "x", "y", "z" };
+            else if (dictionary != null && KeysEqual(dictionary, Vector4Keys))
+                keys = new[] { "x", "y", "z", "w" };
+            else
+            {
+                tuple = null;
+                return false;
+            }
+
+            tuple = new double[keys.Length];
+            for (int index = 0; index < keys.Length; index++)
+            {
+                if (!TryGetNumber(dictionary, keys[index], out tuple[index]))
+                {
+                    tuple = null;
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryFormatScalar(object value, bool allowText, out string formatted)
+        {
+            if (TryGetNumber(value, out _))
+            {
+                formatted = FormatNumber(value);
+                return true;
+            }
+
+            if (allowText && value is string text && !string.IsNullOrEmpty(text))
+            {
+                formatted = text;
+                return true;
+            }
+
+            formatted = null;
+            return false;
+        }
+
+        private static bool TryGetNumber(
+            Dictionary<string, object> dictionary, string key, out double number)
+        {
+            if (dictionary.TryGetValue(key, out object value))
+                return TryGetNumber(value, out number);
+            number = 0d;
+            return false;
+        }
+
+        private static bool TryGetNumber(object value, out double number)
+        {
+            if (value == null || value is bool || value is char || value is string)
+            {
+                number = 0d;
+                return false;
+            }
+
+            try
+            {
+                switch (Type.GetTypeCode(value.GetType()))
+                {
+                    case TypeCode.Byte:
+                    case TypeCode.SByte:
+                    case TypeCode.Int16:
+                    case TypeCode.UInt16:
+                    case TypeCode.Int32:
+                    case TypeCode.UInt32:
+                    case TypeCode.Int64:
+                    case TypeCode.UInt64:
+                    case TypeCode.Single:
+                    case TypeCode.Double:
+                    case TypeCode.Decimal:
+                        number = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+                        return !double.IsNaN(number) && !double.IsInfinity(number);
+                    default:
+                        number = 0d;
+                        return false;
+                }
+            }
+            catch
+            {
+                number = 0d;
+                return false;
+            }
+        }
+
+        private static string FormatNumber(object value)
+        {
+            switch (Type.GetTypeCode(value.GetType()))
+            {
+                case TypeCode.Byte:
+                case TypeCode.SByte:
+                case TypeCode.Int16:
+                case TypeCode.UInt16:
+                case TypeCode.Int32:
+                case TypeCode.UInt32:
+                case TypeCode.Int64:
+                case TypeCode.UInt64:
+                    return Convert.ToString(value, CultureInfo.InvariantCulture);
+                case TypeCode.Decimal:
+                    return ((decimal)value).ToString("G29", CultureInfo.InvariantCulture);
+                default:
+                    return FormatNumber(Convert.ToDouble(value, CultureInfo.InvariantCulture));
+            }
+        }
+
+        private static string FormatNumber(double value)
+        {
+            if (value == 0d)
+                return "0";
+
+            double absolute = Math.Abs(value);
+            string format = absolute >= 0.000001d && absolute < 1000000000d
+                ? "0.######"
+                : "0.######E+0";
+            return value.ToString(format, CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatTuple(params object[] values)
+        {
+            var formatted = new string[values.Length];
+            for (int index = 0; index < values.Length; index++)
+                formatted[index] = FormatNumber(values[index]);
+            return $"({string.Join(",", formatted)})";
+        }
+
+        private static string FormatTuple(double[] values)
+        {
+            var formatted = new string[values.Length];
+            for (int index = 0; index < values.Length; index++)
+                formatted[index] = FormatNumber(values[index]);
+            return $"({string.Join(",", formatted)})";
+        }
+
+        private static string FormatRect(
+            object xMin, object yMin, object xMax, object yMax, object width, object height)
+        {
+            return $"{FormatTuple(xMin, yMin)}-{FormatTuple(xMax, yMax)}," +
+                   $"size:{FormatTuple(width, height)}";
+        }
+
+        private static string FormatBounds(Vector3 min, Vector3 max, Vector3 size)
+        {
+            return $"{FormatTuple(min.x, min.y, min.z)}-{FormatTuple(max.x, max.y, max.z)}," +
+                   $"size:{FormatTuple(size.x, size.y, size.z)}";
+        }
+
+        private static string FormatBounds(Vector3Int min, Vector3Int max, Vector3Int size)
+        {
+            return $"{FormatTuple(min.x, min.y, min.z)}-{FormatTuple(max.x, max.y, max.z)}," +
+                   $"size:{FormatTuple(size.x, size.y, size.z)}";
+        }
+
+        private static string FormatColor(object red, object green, object blue, object alpha)
+        {
+            return $"rgba({FormatNumber(red)},{FormatNumber(green)}," +
+                   $"{FormatNumber(blue)},{FormatNumber(alpha)})";
+        }
+
+        private static string FormatEdges(object left, object top, object right, object bottom)
+        {
+            return $"LTRB({FormatNumber(left)},{FormatNumber(top)}," +
+                   $"{FormatNumber(right)},{FormatNumber(bottom)})";
+        }
+
+        private static string FormatMatrix(Matrix4x4 matrix)
+        {
+            return $"[{FormatTuple(matrix.m00, matrix.m01, matrix.m02, matrix.m03)};" +
+                   $"{FormatTuple(matrix.m10, matrix.m11, matrix.m12, matrix.m13)};" +
+                   $"{FormatTuple(matrix.m20, matrix.m21, matrix.m22, matrix.m23)};" +
+                   $"{FormatTuple(matrix.m30, matrix.m31, matrix.m32, matrix.m33)}]";
+        }
+
+        private static bool KeysEqual(
+            Dictionary<string, object> dictionary, HashSet<string> expected)
+        {
+            return dictionary.Count == expected.Count && KeysAreSubset(dictionary, expected);
+        }
+
+        private static bool KeysAreSubset(
+            Dictionary<string, object> dictionary, HashSet<string> allowed)
+        {
+            foreach (string key in dictionary.Keys)
+            {
+                if (!allowed.Contains(key))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TuplesApproximatelyEqual(double[] left, double[] right)
+        {
+            if (left == null || right == null || left.Length != right.Length)
+                return false;
+            for (int index = 0; index < left.Length; index++)
+            {
+                if (!Approximately(left[index], right[index]))
+                    return false;
+            }
+            return true;
+        }
+
+        private static bool Approximately(double left, double right)
+        {
+            double scale = Math.Max(1d, Math.Max(Math.Abs(left), Math.Abs(right)));
+            return Math.Abs(left - right) <= Math.Max(0.0002d, scale * 0.00001d);
         }
     }
 }

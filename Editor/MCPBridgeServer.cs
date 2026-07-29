@@ -1866,14 +1866,8 @@ namespace UnityMCP.Editor
                 return data;
 
             if (dictionary.ContainsKey("mcpInstance") == false)
-            {
-                dictionary["mcpInstance"] = new Dictionary<string, object>
-                {
-                    { "projectPath", MCPInstanceRegistry.CurrentProjectPath },
-                    { "projectName", MCPInstanceRegistry.CurrentProjectName },
-                    { "port", ActivePort },
-                };
-            }
+                dictionary["mcpInstance"] = MCPCompactValueFormatter.FormatInstance(
+                    MCPInstanceRegistry.CurrentProjectName, ActivePort);
 
             return dictionary;
         }

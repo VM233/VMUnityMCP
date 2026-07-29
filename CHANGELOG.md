@@ -2,6 +2,12 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.42] - 2026-07-29
+
+- Compact Unity value objects at the shared response transport boundary: vectors, rectangles, bounds, colors, sizes, ranges, edges, matrices, rays, and matching dictionary shapes now use concise scalar strings.
+- Group coordinate, dimension, margin, and padding members inside larger payloads; omit strictly derived byte-unit and boolean aliases; shorten the repeated MCP instance marker to `Project@port`.
+- Preserve expanded rectangle and bounds data when redundant fields disagree so diagnostics do not hide inconsistent source values.
+
 ## [3.3.41] - 2026-07-29
 
 - Extend the UXML layout audit to report transparent full-width wrappers that only center one fixed-size visual child and optionally repeat that child's height.
