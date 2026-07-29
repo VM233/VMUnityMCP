@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [4.2.0] - 2026-07-29
+
+- Extend the USS audit with independent findings for advanced text generation without auto sizing, ineffective text alignment on shrink-wrapped Labels centered by their sole-child parent, and inheritable text styles owned by such child Labels.
+- Index authored UXML parent-child structure and inline styles so text-style findings respect the effective stylesheet cascade, explicit Label sizing, flex expansion, sibling content, and reasoned local suppressions.
+
 ## [4.1.0] - 2026-07-29
 
 - Add project-configurable namespaces for Execute Code and expose the setting in Project Settings and Preferences without redundant scope notices.

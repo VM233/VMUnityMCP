@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -90,6 +91,8 @@ namespace UnityMCP.Editor
             "uss-audit: allow-redundant-declaration";
         internal const string PIXEL_GRID_SUPPRESSION_MARKER =
             "uss-audit: allow-off-grid-pixels";
+        internal const string TEXT_STYLE_CONTRACT_SUPPRESSION_MARKER =
+            "uss-audit: allow-text-style-contract";
 
         private static readonly Regex commentRegex =
             new Regex(@"/\*.*?\*/", RegexOptions.Compiled | RegexOptions.Singleline);
@@ -104,6 +107,10 @@ namespace UnityMCP.Editor
 
         private static readonly Regex pixelGridSuppressionRegex =
             new Regex(@"/\*\s*uss-audit:\s*allow-off-grid-pixels\s+(?<reason>.+?)\*/\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex textStyleContractSuppressionRegex =
+            new Regex(@"/\*\s*uss-audit:\s*allow-text-style-contract\s+(?<reason>.+?)\*/\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private static readonly Regex importRegex =
@@ -157,6 +164,21 @@ namespace UnityMCP.Editor
             "classList",
             "ussClassName",
             "UssClassName"
+        };
+
+        private static readonly string[] inheritedTextStyleProperties =
+        {
+            "color",
+            "font-size",
+            "-unity-font",
+            "-unity-font-definition",
+            "-unity-font-style",
+            "white-space",
+            "letter-spacing",
+            "word-spacing",
+            "-unity-paragraph-spacing",
+            "-unity-text-outline-color",
+            "-unity-text-outline-width"
         };
 
         internal static MCPUssStyleAuditReport Audit(IEnumerable<string> requestedPaths,
@@ -214,6 +236,8 @@ namespace UnityMCP.Editor
                 }
 
                 AuditPixelGridDeclarations(rules, options, report, includeSuppressed);
+                AuditTextStyleContracts(rules, usageIndex, cascadeIndex, report,
+                    includeSuppressed);
                 AuditRules(rules, usageIndex, report, includeSuppressed);
                 AuditRedundantDeclarations(rules, usageIndex, cascadeIndex, report,
                     includeSuppressed);
@@ -321,6 +345,48 @@ namespace UnityMCP.Editor
             AuditPixelGridDeclarations(pixelGridRules, pixelGridOptions, pixelGridReport, true);
             pixelGridReport.SortIssues();
 
+            const string textContractPath = "Assets/__UssAuditSelfTestTextContracts.uss";
+            var textContractRules = ParseStyleSheet(textContractPath,
+                ".centered-text-owner { align-items: center; justify-content: center; }\n" +
+                ".problem-text { color: white; font-size: 18px; -unity-font-style: bold; " +
+                "-unity-text-generator: advanced; -unity-text-align: middle-center; }\n" +
+                ".auto-sized-text { -unity-text-generator: advanced; " +
+                "-unity-text-auto-size: best-fit 8px 18px; }\n" +
+                ".boxed-text { width: 30px; -unity-text-align: middle-center; }\n" +
+                ".sibling-text { color: white; }\n" +
+                "/* uss-audit: allow-text-style-contract fixture documents advanced shaping */\n" +
+                ".suppressed-text { -unity-text-generator: advanced; }\n");
+            var textContractUsageIndex = new UssUsageIndex();
+            CollectSelectorContracts(textContractRules, textContractUsageIndex);
+            var textContractDocument = new UssAuthoredDocument(
+                "Assets/TextContracts.uxml",
+                XDocument.Parse(
+                    "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                    "<ui:VisualElement class=\"centered-text-owner\">" +
+                    "<ui:Label class=\"problem-text\" text=\"1\"/>" +
+                    "</ui:VisualElement>" +
+                    "<ui:VisualElement><ui:Label class=\"auto-sized-text\" text=\"Auto\"/>" +
+                    "</ui:VisualElement>" +
+                    "<ui:VisualElement class=\"centered-text-owner\">" +
+                    "<ui:Label class=\"boxed-text\" text=\"Box\"/>" +
+                    "</ui:VisualElement>" +
+                    "<ui:VisualElement><ui:Label class=\"sibling-text\" text=\"Sibling\"/>" +
+                    "<ui:VisualElement/></ui:VisualElement>" +
+                    "<ui:VisualElement class=\"centered-text-owner\">" +
+                    "<ui:Label class=\"suppressed-text\" text=\"Suppressed\"/>" +
+                    "</ui:VisualElement>" +
+                    "</ui:UXML>", LoadOptions.SetLineInfo));
+            textContractUsageIndex.Documents.Add(textContractDocument);
+            var textContractCascade = new UssCascadeIndex();
+            var textContractCascadeDocument =
+                new UssCascadeDocument(textContractDocument);
+            AppendSelfTestRules(textContractCascadeDocument, textContractRules, 1);
+            textContractCascade.Documents.Add(textContractCascadeDocument);
+            var textContractReport = new MCPUssStyleAuditReport(100);
+            AuditTextStyleContracts(textContractRules, textContractUsageIndex,
+                textContractCascade, textContractReport, true);
+            textContractReport.SortIssues();
+
             var activeTokens = report.Issues.Where(issue => issue.Suppressed == false)
                 .Select(issue => issue.Token).OrderBy(token => token, StringComparer.Ordinal).ToArray();
             var suppressedTokens = report.Issues.Where(issue => issue.Suppressed)
@@ -344,6 +410,16 @@ namespace UnityMCP.Editor
                 .Where(issue => issue.Suppressed)
                 .Select(issue => issue.Selector)
                 .OrderBy(selector => selector, StringComparer.Ordinal)
+                .ToArray();
+            var activeTextContractKinds = textContractReport.Issues
+                .Where(issue => issue.Suppressed == false)
+                .Select(issue => issue.Kind)
+                .OrderBy(kind => kind, StringComparer.Ordinal)
+                .ToArray();
+            var suppressedTextContractKinds = textContractReport.Issues
+                .Where(issue => issue.Suppressed)
+                .Select(issue => issue.Kind)
+                .OrderBy(kind => kind, StringComparer.Ordinal)
                 .ToArray();
             var cases = new List<Dictionary<string, object>>();
 
@@ -381,6 +457,43 @@ namespace UnityMCP.Editor
                     .SequenceEqual(new[] { "padding", "top" }));
             AddSelfTestCase(cases, "reasoned pixel-grid suppression is retained",
                 suppressedPixelGridSelectors.SequenceEqual(new[] { ".grid-suppressed" }));
+            AddSelfTestCase(cases,
+                "advanced generator without auto size warns independently",
+                activeTextContractKinds.Contains(
+                    "advanced-text-generator-without-auto-size"));
+            AddSelfTestCase(cases,
+                "text align on shrink-wrapped centered label warns independently",
+                activeTextContractKinds.Contains(
+                    "ineffective-text-align-on-shrink-wrapped-label"));
+            AddSelfTestCase(cases,
+                "inheritable only-child text styles warn independently",
+                activeTextContractKinds.Contains(
+                    "inheritable-text-style-on-only-child-label"));
+            AddSelfTestCase(cases, "text contract active finding set is exact",
+                activeTextContractKinds.SequenceEqual(new[]
+                {
+                    "advanced-text-generator-without-auto-size",
+                    "ineffective-text-align-on-shrink-wrapped-label",
+                    "inheritable-text-style-on-only-child-label"
+                }));
+            AddSelfTestCase(cases,
+                "advanced generator with auto size passes",
+                textContractReport.Issues.All(issue =>
+                    issue.Selector != ".auto-sized-text"));
+            AddSelfTestCase(cases,
+                "text align with an explicit box passes",
+                textContractReport.Issues.All(issue =>
+                    issue.Selector != ".boxed-text"));
+            AddSelfTestCase(cases,
+                "inheritable text style with a sibling passes",
+                textContractReport.Issues.All(issue =>
+                    issue.Selector != ".sibling-text"));
+            AddSelfTestCase(cases,
+                "reasoned text style contract suppression is retained",
+                suppressedTextContractKinds.SequenceEqual(new[]
+                {
+                    "advanced-text-generator-without-auto-size"
+                }));
 
             return new Dictionary<string, object>
             {
@@ -391,7 +504,9 @@ namespace UnityMCP.Editor
                 { "activeRedundantSelectors", activeRedundantSelectors },
                 { "suppressedRedundantSelectors", suppressedRedundantSelectors },
                 { "activePixelGridSelectors", activePixelGridSelectors },
-                { "suppressedPixelGridSelectors", suppressedPixelGridSelectors }
+                { "suppressedPixelGridSelectors", suppressedPixelGridSelectors },
+                { "activeTextContractKinds", activeTextContractKinds },
+                { "suppressedTextContractKinds", suppressedTextContractKinds }
             };
         }
 
@@ -1109,6 +1224,434 @@ namespace UnityMCP.Editor
             }
         }
 
+        private static void AuditTextStyleContracts(IReadOnlyList<UssRule> rules,
+            UssUsageIndex usageIndex, UssCascadeIndex cascadeIndex,
+            MCPUssStyleAuditReport report, bool includeSuppressed)
+        {
+            foreach (var rule in rules)
+            {
+                if (TryGetSupportedTextContractSelectors(rule, out var selectors) == false)
+                {
+                    continue;
+                }
+
+                AuditAdvancedTextGenerator(rule, selectors, usageIndex, cascadeIndex,
+                    report, includeSuppressed);
+                AuditShrinkWrappedTextAlignment(rule, selectors, usageIndex, cascadeIndex,
+                    report, includeSuppressed);
+                AuditInheritableOnlyChildTextStyles(rule, selectors, usageIndex,
+                    cascadeIndex, report, includeSuppressed);
+            }
+        }
+
+        private static void AuditAdvancedTextGenerator(UssRule rule,
+            IReadOnlyCollection<UssSimpleSelector> selectors, UssUsageIndex usageIndex,
+            UssCascadeIndex cascadeIndex, MCPUssStyleAuditReport report,
+            bool includeSuppressed)
+        {
+            const string property = "-unity-text-generator";
+            if (rule.Declarations.TryGetValue(property, out var value) == false ||
+                StyleValuesEqual(value, "advanced") == false)
+            {
+                return;
+            }
+
+            var usages = FindWinningElementUsages(rule, property, selectors, cascadeIndex)
+                .Where(usage => IsAuthoredTextElement(usage.Element))
+                .Where(usage => IsTextAutoSizeEnabled(
+                    ResolveEffectiveTextStyle(usage.Document, usage.Element,
+                        "-unity-text-auto-size")) == false)
+                .ToList();
+            if (usages.Count == 0)
+            {
+                return;
+            }
+
+            RecordTextStyleContractIssue(rule, usageIndex, report, includeSuppressed,
+                usages, property, value, "advanced-text-generator-without-auto-size",
+                $"Selector '{string.Join(", ", rule.Selectors)}' enables the advanced text " +
+                $"generator for {usages.Count} authored Label element(s) without effective " +
+                "-unity-text-auto-size. Keep the default generator unless auto sizing or another " +
+                "documented advanced-text requirement owns this setting.");
+        }
+
+        private static void AuditShrinkWrappedTextAlignment(UssRule rule,
+            IReadOnlyCollection<UssSimpleSelector> selectors, UssUsageIndex usageIndex,
+            UssCascadeIndex cascadeIndex, MCPUssStyleAuditReport report,
+            bool includeSuppressed)
+        {
+            const string property = "-unity-text-align";
+            if (rule.Declarations.TryGetValue(property, out var value) == false)
+            {
+                return;
+            }
+
+            var usages = FindWinningElementUsages(rule, property, selectors, cascadeIndex)
+                .Where(usage => IsAuthoredTextElement(usage.Element))
+                .Where(IsShrinkWrappedBySoleCenteredParent)
+                .ToList();
+            if (usages.Count == 0)
+            {
+                return;
+            }
+
+            RecordTextStyleContractIssue(rule, usageIndex, report, includeSuppressed,
+                usages, property, value, "ineffective-text-align-on-shrink-wrapped-label",
+                $"Selector '{string.Join(", ", rule.Selectors)}' sets text alignment on " +
+                $"{usages.Count} shrink-wrapped Label element(s). Each Label is the sole child of " +
+                "a parent that already centers it on both flex axes, and the Label has no authored " +
+                "box expansion for text alignment to act within. Remove the ineffective text-align " +
+                "declaration.");
+        }
+
+        private static void AuditInheritableOnlyChildTextStyles(UssRule rule,
+            IReadOnlyCollection<UssSimpleSelector> selectors, UssUsageIndex usageIndex,
+            UssCascadeIndex cascadeIndex, MCPUssStyleAuditReport report,
+            bool includeSuppressed)
+        {
+            var declarations = new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+            var relatedUsages = new List<UssAuthoredElementUsage>();
+            foreach (var property in inheritedTextStyleProperties)
+            {
+                if (rule.Declarations.TryGetValue(property, out var value) == false ||
+                    IsConcreteStyleValue(value) == false)
+                {
+                    continue;
+                }
+
+                var usages = FindWinningElementUsages(rule, property, selectors, cascadeIndex);
+                if (usages.Count == 0 || usages.All(IsOnlyAuthoredChildLabel) == false)
+                {
+                    continue;
+                }
+
+                declarations[property] = value;
+                relatedUsages.AddRange(usages);
+            }
+
+            if (declarations.Count == 0)
+            {
+                return;
+            }
+
+            var usagesForIssue = DistinctElementUsages(relatedUsages);
+            var selectorLabel = string.Join(", ", rule.Selectors);
+            var runtimeReferences = GetRuntimeReferences(rule, usageIndex);
+            var suppressionReason = rule.TextStyleContractSuppressionReason;
+            var issue = new MCPUssStyleAuditIssue
+            {
+                AssetPath = rule.AssetPath,
+                Line = rule.Line,
+                Selector = selectorLabel,
+                Token = string.Join(", ", declarations.Keys
+                    .OrderBy(property => property, StringComparer.Ordinal)),
+                Kind = "inheritable-text-style-on-only-child-label",
+                RelatedDeclarations = declarations,
+                AuthoredUsageCount = usagesForIssue.Count,
+                RuntimeReferenceCount = runtimeReferences.Count,
+                UsageLocations = ToUsageLocations(usagesForIssue)
+                    .Concat(runtimeReferences.Select(location => location.ToDictionary()))
+                    .Take(20).ToList(),
+                Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                SuppressionReason = suppressionReason,
+                Message =
+                    $"Selector '{selectorLabel}' owns inheritable text declarations on " +
+                    $"{usagesForIssue.Count} Label element(s), each the sole authored child of its " +
+                    $"parent: {string.Join(", ", declarations.Keys.OrderBy(property => property, StringComparer.Ordinal))}. " +
+                    "Move those declarations to the parent so the Label inherits them, then remove " +
+                    "the child-only class if it has no remaining contract."
+            };
+            report.Record(issue, includeSuppressed);
+        }
+
+        private static bool TryGetSupportedTextContractSelectors(UssRule rule,
+            out IReadOnlyCollection<UssSimpleSelector> selectors)
+        {
+            var parsed = new List<UssSimpleSelector>();
+            foreach (var selectorText in rule.Selectors)
+            {
+                if (TryParseSimpleSelector(selectorText, out var selector) == false ||
+                    selector.ClassNames.Count == 0 &&
+                    string.IsNullOrWhiteSpace(selector.Id))
+                {
+                    selectors = Array.Empty<UssSimpleSelector>();
+                    return false;
+                }
+
+                parsed.Add(selector);
+            }
+
+            selectors = parsed;
+            return parsed.Count > 0;
+        }
+
+        private static List<UssAuthoredElementUsage> FindWinningElementUsages(
+            UssRule rule, string property,
+            IReadOnlyCollection<UssSimpleSelector> selectors, UssCascadeIndex cascadeIndex)
+        {
+            var usages = new List<UssAuthoredElementUsage>();
+            foreach (var document in cascadeIndex.Documents.Where(document =>
+                         document.LoadedAssetPaths.Contains(rule.AssetPath)))
+            {
+                foreach (var element in document.AuthoredDocument.Elements.Where(element =>
+                             selectors.Any(selector => selector.Matches(element))))
+                {
+                    if (element.InlineDeclarations.ContainsKey(property))
+                    {
+                        continue;
+                    }
+
+                    var winner = document.Resolve(element, property, null);
+                    if (winner != null && ReferenceEquals(winner.Rule, rule))
+                    {
+                        usages.Add(new UssAuthoredElementUsage(document, element));
+                    }
+                }
+            }
+
+            return DistinctElementUsages(usages);
+        }
+
+        private static List<UssAuthoredElementUsage> DistinctElementUsages(
+            IEnumerable<UssAuthoredElementUsage> usages)
+        {
+            return usages.GroupBy(usage =>
+                    $"{usage.Document.AuthoredDocument.AssetPath}:{usage.Element.Line}:{usage.Element.Column}",
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(usage => usage.Document.AuthoredDocument.AssetPath,
+                    StringComparer.Ordinal)
+                .ThenBy(usage => usage.Element.Line)
+                .ThenBy(usage => usage.Element.Column)
+                .ToList();
+        }
+
+        private static bool IsShrinkWrappedBySoleCenteredParent(
+            UssAuthoredElementUsage usage)
+        {
+            var element = usage.Element;
+            var parent = element.Parent;
+            if (IsOnlyAuthoredChildLabel(usage) == false ||
+                StyleValuesEqual(ResolveOwnStyle(usage.Document, parent, "align-items"),
+                    "center") == false ||
+                StyleValuesEqual(ResolveOwnStyle(usage.Document, parent, "justify-content"),
+                    "center") == false)
+            {
+                return false;
+            }
+
+            var whiteSpace = ResolveEffectiveTextStyle(usage.Document, element,
+                "white-space");
+            if (StyleValuesEqual(whiteSpace, "normal") ||
+                string.IsNullOrEmpty(element.Text) == false &&
+                (element.Text.Contains('\n') || element.Text.Contains('\r')))
+            {
+                return false;
+            }
+
+            if (HasConcreteOwnStyle(usage.Document, element, "width") ||
+                HasConcreteOwnStyle(usage.Document, element, "height") ||
+                HasConcreteOwnStyle(usage.Document, element, "min-width") ||
+                HasConcreteOwnStyle(usage.Document, element, "min-height") ||
+                HasConcreteOwnStyle(usage.Document, element, "max-width") ||
+                HasConcreteOwnStyle(usage.Document, element, "max-height") ||
+                HasConcreteOwnStyle(usage.Document, element, "flex-basis"))
+            {
+                return false;
+            }
+
+            var alignSelf = ResolveOwnStyle(usage.Document, element, "align-self");
+            if (StyleValuesEqual(alignSelf, "stretch"))
+            {
+                return false;
+            }
+
+            var flexGrow = ResolveOwnStyle(usage.Document, element, "flex-grow");
+            if (HasPositiveNumber(flexGrow))
+            {
+                return false;
+            }
+
+            return new[]
+                {
+                    "padding", "padding-left", "padding-right", "padding-top",
+                    "padding-bottom"
+                }
+                .All(property => HasNonZeroLength(
+                    ResolveOwnStyle(usage.Document, element, property)) == false);
+        }
+
+        private static bool IsOnlyAuthoredChildLabel(UssAuthoredElementUsage usage)
+        {
+            var element = usage.Element;
+            return IsAuthoredTextElement(element) &&
+                   element.Parent != null &&
+                   IsAuthoredTextElement(element.Parent) == false &&
+                   element.Parent.Children.Count == 1 &&
+                   ReferenceEquals(element.Parent.Children[0], element);
+        }
+
+        private static bool IsAuthoredTextElement(UssAuthoredElement element)
+        {
+            if (element == null)
+            {
+                return false;
+            }
+
+            return string.Equals(element.TypeName, "Label", StringComparison.Ordinal) ||
+                   string.Equals(element.TypeName, "TextElement", StringComparison.Ordinal) ||
+                   element.TypeName.EndsWith(".Label", StringComparison.Ordinal) ||
+                   element.TypeName.EndsWith(".TextElement", StringComparison.Ordinal);
+        }
+
+        private static string ResolveOwnStyle(UssCascadeDocument document,
+            UssAuthoredElement element, string property)
+        {
+            if (element == null)
+            {
+                return "";
+            }
+
+            if (element.InlineDeclarations.TryGetValue(property, out var inlineValue))
+            {
+                return inlineValue;
+            }
+
+            return document.Resolve(element, property, null)?.Value ?? "";
+        }
+
+        private static string ResolveEffectiveTextStyle(UssCascadeDocument document,
+            UssAuthoredElement element, string property)
+        {
+            for (var current = element; current != null; current = current.Parent)
+            {
+                var value = ResolveOwnStyle(document, current, property);
+                if (string.IsNullOrWhiteSpace(value) == false)
+                {
+                    return value;
+                }
+            }
+
+            return "";
+        }
+
+        private static bool IsTextAutoSizeEnabled(string value)
+        {
+            return (value ?? "").Trim().StartsWith("best-fit",
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HasConcreteOwnStyle(UssCascadeDocument document,
+            UssAuthoredElement element, string property)
+        {
+            return IsConcreteStyleValue(ResolveOwnStyle(document, element, property));
+        }
+
+        private static bool IsConcreteStyleValue(string value)
+        {
+            var normalized = (value ?? "").Trim();
+            return normalized.Length > 0 &&
+                   string.Equals(normalized, "auto", StringComparison.OrdinalIgnoreCase) == false &&
+                   string.Equals(normalized, "none", StringComparison.OrdinalIgnoreCase) == false &&
+                   string.Equals(normalized, "initial", StringComparison.OrdinalIgnoreCase) == false &&
+                   string.Equals(normalized, "inherit", StringComparison.OrdinalIgnoreCase) == false &&
+                   string.Equals(normalized, "unset", StringComparison.OrdinalIgnoreCase) == false;
+        }
+
+        private static bool HasPositiveNumber(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            return float.TryParse(value.Trim(), NumberStyles.Float,
+                       CultureInfo.InvariantCulture, out var parsed)
+                ? parsed > 0
+                : IsConcreteStyleValue(value);
+        }
+
+        private static bool HasNonZeroLength(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            var matches = Regex.Matches(value,
+                @"[-+]?(?:\d+(?:\.\d*)?|\.\d+)");
+            if (matches.Count == 0)
+            {
+                return IsConcreteStyleValue(value);
+            }
+
+            foreach (Match match in matches)
+            {
+                if (float.TryParse(match.Value, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out var parsed) == false ||
+                    Math.Abs(parsed) > 0.0001f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static List<UssUsageLocation> GetRuntimeReferences(UssRule rule,
+            UssUsageIndex usageIndex)
+        {
+            return rule.Selectors
+                .SelectMany(selector => classTokenRegex.Matches(selector).Cast<Match>())
+                .Select(match => match.Groups["token"].Value)
+                .Distinct(StringComparer.Ordinal)
+                .SelectMany(usageIndex.GetRuntimeClassReferences)
+                .GroupBy(location =>
+                        $"{location.Path}:{location.Line}:{location.Column}",
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList();
+        }
+
+        private static IEnumerable<Dictionary<string, object>> ToUsageLocations(
+            IEnumerable<UssAuthoredElementUsage> usages)
+        {
+            return usages.Select(usage => new UssUsageLocation(
+                    usage.Document.AuthoredDocument.AssetPath,
+                    usage.Element.Line, usage.Element.Column))
+                .Select(location => location.ToDictionary());
+        }
+
+        private static void RecordTextStyleContractIssue(UssRule rule,
+            UssUsageIndex usageIndex, MCPUssStyleAuditReport report,
+            bool includeSuppressed, IEnumerable<UssAuthoredElementUsage> usages,
+            string property, string value, string kind, string message)
+        {
+            var authoredUsages = DistinctElementUsages(usages);
+            var runtimeReferences = GetRuntimeReferences(rule, usageIndex);
+            var suppressionReason = rule.TextStyleContractSuppressionReason;
+            var issue = new MCPUssStyleAuditIssue
+            {
+                AssetPath = rule.AssetPath,
+                Line = rule.Line,
+                Selector = string.Join(", ", rule.Selectors),
+                Token = property,
+                Kind = kind,
+                Property = property,
+                Value = value,
+                AuthoredUsageCount = authoredUsages.Count,
+                RuntimeReferenceCount = runtimeReferences.Count,
+                UsageLocations = ToUsageLocations(authoredUsages)
+                    .Concat(runtimeReferences.Select(location => location.ToDictionary()))
+                    .Take(20).ToList(),
+                Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                SuppressionReason = suppressionReason,
+                Message = message
+            };
+            report.Record(issue, includeSuppressed);
+        }
+
         private static void AuditRelationalSelectorContracts(IReadOnlyList<UssRule> rules,
             UssUsageIndex usageIndex, MCPUssStyleAuditReport report, bool includeSuppressed)
         {
@@ -1290,6 +1833,8 @@ namespace UnityMCP.Editor
                         redundantDeclarationSuppressionRegex.Match(suppressionContext);
                     var pixelGridSuppression =
                         pixelGridSuppressionRegex.Match(suppressionContext);
+                    var textStyleContractSuppression =
+                        textStyleContractSuppressionRegex.Match(suppressionContext);
                     rules.Add(new UssRule
                     {
                         AssetPath = assetPath,
@@ -1307,6 +1852,10 @@ namespace UnityMCP.Editor
                         PixelGridSuppressionReason =
                             pixelGridSuppression.Success
                                 ? pixelGridSuppression.Groups["reason"].Value.Trim()
+                                : "",
+                        TextStyleContractSuppressionReason =
+                            textStyleContractSuppression.Success
+                                ? textStyleContractSuppression.Groups["reason"].Value.Trim()
                                 : ""
                     });
                 }
@@ -1522,6 +2071,7 @@ namespace UnityMCP.Editor
             public string SuppressionReason;
             public string RedundantDeclarationSuppressionReason;
             public string PixelGridSuppressionReason;
+            public string TextStyleContractSuppressionReason;
         }
 
         private sealed class UssSimpleSelector
@@ -1555,10 +2105,29 @@ namespace UnityMCP.Editor
         {
             public string TypeName;
             public string Name;
+            public string Text;
             public int Line;
             public int Column;
+            public UssAuthoredElement Parent;
             public readonly HashSet<string> Classes =
                 new HashSet<string>(StringComparer.Ordinal);
+            public readonly Dictionary<string, string> InlineDeclarations =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            public readonly List<UssAuthoredElement> Children =
+                new List<UssAuthoredElement>();
+        }
+
+        private sealed class UssAuthoredElementUsage
+        {
+            public readonly UssCascadeDocument Document;
+            public readonly UssAuthoredElement Element;
+
+            public UssAuthoredElementUsage(UssCascadeDocument document,
+                UssAuthoredElement element)
+            {
+                Document = document;
+                Element = element;
+            }
         }
 
         private sealed class UssAuthoredDocument
@@ -1583,6 +2152,7 @@ namespace UnityMCP.Editor
                     }
                 }
 
+                var authoredByElement = new Dictionary<XElement, UssAuthoredElement>();
                 foreach (var element in document.Descendants().Where(element =>
                              IsAuthoredVisualElement(element)))
                 {
@@ -1590,6 +2160,7 @@ namespace UnityMCP.Editor
                     {
                         TypeName = element.Name.LocalName,
                         Name = GetAttributeValue(element, "name"),
+                        Text = GetAttributeValue(element, "text"),
                         Line = GetLineNumber(element),
                         Column = GetColumnNumber(element)
                     };
@@ -1599,7 +2170,31 @@ namespace UnityMCP.Editor
                         authored.Classes.Add(className);
                     }
 
+                    foreach (var declaration in ParseDeclarations(
+                                 GetAttributeValue(element, "style")))
+                    {
+                        authored.InlineDeclarations[declaration.Key] = declaration.Value;
+                    }
+
                     Elements.Add(authored);
+                    authoredByElement[element] = authored;
+                }
+
+                foreach (var pair in authoredByElement)
+                {
+                    var parentElement = pair.Key.Parent;
+                    while (parentElement != null)
+                    {
+                        if (authoredByElement.TryGetValue(parentElement,
+                                out var authoredParent))
+                        {
+                            pair.Value.Parent = authoredParent;
+                            authoredParent.Children.Add(pair.Value);
+                            break;
+                        }
+
+                        parentElement = parentElement.Parent;
+                    }
                 }
             }
 
@@ -1895,9 +2490,16 @@ namespace UnityMCP.Editor
                 }
 
                 var lineComparison = left.Line.CompareTo(right.Line);
-                return lineComparison != 0
-                    ? lineComparison
-                    : string.Compare(left.Selector, right.Selector, StringComparison.Ordinal);
+                if (lineComparison != 0)
+                {
+                    return lineComparison;
+                }
+
+                var selectorComparison = string.Compare(left.Selector, right.Selector,
+                    StringComparison.Ordinal);
+                return selectorComparison != 0
+                    ? selectorComparison
+                    : string.Compare(left.Kind, right.Kind, StringComparison.Ordinal);
             });
         }
 
@@ -1922,7 +2524,10 @@ namespace UnityMCP.Editor
                     $"/* {MCPUssStyleAuditor.REDUNDANT_DECLARATION_SUPPRESSION_MARKER} " +
                     "<reason> */" },
                 { "pixelGridSuppressionSyntax",
-                    $"/* {MCPUssStyleAuditor.PIXEL_GRID_SUPPRESSION_MARKER} <reason> */" }
+                    $"/* {MCPUssStyleAuditor.PIXEL_GRID_SUPPRESSION_MARKER} <reason> */" },
+                { "textStyleContractSuppressionSyntax",
+                    $"/* {MCPUssStyleAuditor.TEXT_STYLE_CONTRACT_SUPPRESSION_MARKER} " +
+                    "<reason> */" }
             };
         }
     }
@@ -1938,6 +2543,8 @@ namespace UnityMCP.Editor
         public string Value;
         public int GridStep;
         public Dictionary<string, string> OffGridDeclarations =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> RelatedDeclarations =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public int AuthoredUsageCount;
         public int RuntimeReferenceCount;
@@ -1970,6 +2577,12 @@ namespace UnityMCP.Editor
                 result["property"] = Property;
                 result["value"] = Value ?? "";
                 result["stylesheetRules"] = StylesheetRules;
+            }
+            else if (RelatedDeclarations.Count > 0)
+            {
+                result["declarations"] =
+                    new Dictionary<string, string>(RelatedDeclarations,
+                        StringComparer.OrdinalIgnoreCase);
             }
             else if (string.Equals(Kind, "off-grid-pixel-declarations",
                          StringComparison.Ordinal))

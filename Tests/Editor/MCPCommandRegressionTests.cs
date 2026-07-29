@@ -2109,6 +2109,78 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUssAudit_ReportsIndependentTextStyleOwnershipProblems()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Text Style Contracts.uxml";
+            const string ussPath = TEST_FOLDER + "/Text Style Contracts.uss";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<Style src=\"Text Style Contracts.uss\"/>" +
+                "<ui:VisualElement class=\"centered-text-owner\">" +
+                "<ui:Label class=\"problem-text\" text=\"1\"/></ui:VisualElement>" +
+                "<ui:VisualElement class=\"centered-text-owner\">" +
+                "<ui:Label class=\"problem-text\" text=\"2\"/></ui:VisualElement>" +
+                "<ui:VisualElement><ui:Label class=\"auto-sized-text\" text=\"A\"/>" +
+                "</ui:VisualElement>" +
+                "<ui:VisualElement><ui:Label class=\"auto-sized-text\" text=\"B\"/>" +
+                "</ui:VisualElement>" +
+                "<ui:VisualElement class=\"centered-text-owner\">" +
+                "<ui:Label class=\"boxed-text\" text=\"A\"/></ui:VisualElement>" +
+                "<ui:VisualElement class=\"centered-text-owner\">" +
+                "<ui:Label class=\"boxed-text\" text=\"B\"/></ui:VisualElement>" +
+                "<ui:VisualElement><ui:Label class=\"sibling-text\" text=\"A\"/>" +
+                "<ui:VisualElement/></ui:VisualElement>" +
+                "<ui:VisualElement><ui:Label class=\"sibling-text\" text=\"B\"/>" +
+                "<ui:VisualElement/></ui:VisualElement>" +
+                "</ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                ".centered-text-owner { align-items: center; justify-content: center; }\n" +
+                ".problem-text { color: rgb(2, 3, 4); font-size: 19px; " +
+                "-unity-font-style: bold; -unity-text-generator: advanced; " +
+                "-unity-text-align: middle-center; }\n" +
+                ".auto-sized-text { -unity-text-generator: advanced; " +
+                "-unity-text-auto-size: best-fit 8px 18px; }\n" +
+                ".boxed-text { width: 30px; -unity-text-align: middle-center; }\n" +
+                ".sibling-text { color: rgb(5, 6, 7); }\n");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUssAuditCommands.AuditUssStyles(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { ussPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "runtimeSourceRoots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                        { "pixelGridEnabled", false },
+                        { "runSelfTests", true }
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(3));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            Assert.That(issues.Select(issue => issue["kind"]), Is.EquivalentTo(new[]
+            {
+                "advanced-text-generator-without-auto-size",
+                "ineffective-text-align-on-shrink-wrapped-label",
+                "inheritable-text-style-on-only-child-label"
+            }));
+            Assert.That(issues.All(issue =>
+                issue["selector"].Equals(".problem-text")), Is.True);
+            var inheritanceIssue = issues.Single(issue =>
+                issue["kind"].Equals("inheritable-text-style-on-only-child-label"));
+            Assert.That(
+                ((Dictionary<string, string>)inheritanceIssue["declarations"]).Keys,
+                Is.EquivalentTo(new[]
+                {
+                    "color", "font-size", "-unity-font-style"
+                }));
+            Assert.That(issues.All(issue =>
+                (int)issue["authoredUsageCount"] == 2), Is.True);
+            Assert.That(RequireDictionary(result["selfTests"])["passed"],
+                Is.EqualTo(true));
+        }
+
+        [Test]
         public void UIToolkitUssAudit_ReportsDeclarationAlreadyOwnedByPanelTheme()
         {
             const string uxmlPath = TEST_FOLDER + "/Theme Duplicate.uxml";
