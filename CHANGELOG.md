@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [4.3.1] - 2026-07-30
+
+- Extend the UXML layout audit with an independent `authored-tooltip-attribute` finding for every authored `tooltip` attribute.
+- Support explicitly required authored tooltips only through the reasoned `uxml-layout-audit: allow-tooltip` suppression, with deterministic self-test and EditMode regression coverage.
+
 ## [4.3.0] - 2026-07-29
 
 - Extend the UXML layout audit with an independent finding for plain direct content wrappers whose fixed cross-axis size repeats or exceeds a single-axis `ScrollView` viewport.

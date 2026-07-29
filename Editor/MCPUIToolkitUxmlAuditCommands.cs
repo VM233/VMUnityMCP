@@ -106,6 +106,8 @@ namespace UnityMCP.Editor
             "uxml-layout-audit: allow-fixed-flex-partition";
         internal const string PIXEL_GRID_SUPPRESSION_MARKER =
             "uxml-layout-audit: allow-off-grid-pixels";
+        internal const string TOOLTIP_ATTRIBUTE_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-tooltip";
 
         private const float CENTER_EPSILON = 0.01f;
 
@@ -160,6 +162,11 @@ namespace UnityMCP.Editor
         private static readonly Regex pixelGridSuppressionRegex =
             new Regex(
                 @"^\s*uxml-layout-audit:\s*allow-off-grid-pixels\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex tooltipAttributeSuppressionRegex =
+            new Regex(
+                @"^\s*uxml-layout-audit:\s*allow-tooltip\s+(?<reason>.+?)\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private static readonly Regex ussCommentRegex =
@@ -319,6 +326,25 @@ namespace UnityMCP.Editor
                 "<ui:Button name=\"Navigation\" style=\"position: absolute; left: 309px; width: 189px; " +
                 "height: 36px; flex-direction: row; justify-content: center;\"><ui:Label/></ui:Button>");
             AddSelfTestCase(cases, "interactive control passes", control.WarningCount == 0);
+
+            var authoredTooltip = AuditFixture(
+                "<ui:Button tooltip=\"View Battle\"/>");
+            AddSelfTestCase(cases, "authored tooltip attribute warns",
+                authoredTooltip.WarningCount == 1 &&
+                authoredTooltip.Issues.Single().Kind ==
+                "authored-tooltip-attribute" &&
+                authoredTooltip.Issues.Single().AttributeName == "tooltip" &&
+                authoredTooltip.Issues.Single().AttributeValue == "View Battle");
+
+            var suppressedTooltip = AuditFixture(
+                $"<!-- {TOOLTIP_ATTRIBUTE_SUPPRESSION_MARKER} " +
+                "product explicitly requires this authored tooltip -->" +
+                "<ui:Button tooltip=\"View Battle\"/>",
+                includeSuppressed: true);
+            AddSelfTestCase(cases, "reasoned tooltip suppression is retained",
+                suppressedTooltip.WarningCount == 0 &&
+                suppressedTooltip.SuppressedCount == 1 &&
+                suppressedTooltip.Issues.Single().Suppressed);
 
             var suppressed = AuditFixture(
                 $"<!-- {SUPPRESSION_MARKER} fixture owns an intentional interaction region -->" +
@@ -837,6 +863,7 @@ namespace UnityMCP.Editor
                 new Dictionary<string, object> { { "useProjectSettings", false } });
             inlineStyleContracts = inlineStyleContracts ??
                                    BuildInlineStyleContractIndex(assetPath, document, report);
+            AuditTooltipAttributes(assetPath, document, report, includeSuppressed);
             AuditPixelGridDeclarations(assetPath, document, options, report,
                 includeSuppressed);
             foreach (var element in document.Descendants())
@@ -860,6 +887,51 @@ namespace UnityMCP.Editor
                 report, includeSuppressed);
             AuditRepeatedInlineLayoutVariants(assetPath, document, layoutContracts, report,
                 includeSuppressed);
+        }
+
+        private static void AuditTooltipAttributes(string assetPath, XDocument document,
+            MCPUxmlLayoutAuditReport report, bool includeSuppressed)
+        {
+            if (document.Root == null)
+            {
+                return;
+            }
+
+            foreach (var element in document.Root.DescendantsAndSelf())
+            {
+                var tooltipAttributes = element.Attributes().Where(attribute =>
+                        string.Equals(attribute.Name.LocalName, "tooltip",
+                            StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                foreach (var tooltipAttribute in tooltipAttributes)
+                {
+                    var name = AttributeValue(element, "name");
+                    var elementLabel = string.IsNullOrWhiteSpace(name)
+                        ? $"<{element.Name.LocalName}>"
+                        : $"#{name}";
+                    var suppressionReason = GetSuppressionReason(element,
+                        tooltipAttributeSuppressionRegex);
+                    var issue = new MCPUxmlLayoutAuditIssue
+                    {
+                        AssetPath = assetPath,
+                        Line = GetLineNumber(tooltipAttribute),
+                        Element = elementLabel,
+                        ElementName = name,
+                        Kind = "authored-tooltip-attribute",
+                        AttributeName = tooltipAttribute.Name.LocalName,
+                        AttributeValue = tooltipAttribute.Value,
+                        FixedProperties = new List<string> { "tooltip" },
+                        Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                        SuppressionReason = suppressionReason,
+                        Message =
+                            $"{elementLabel} declares a tooltip attribute in authored UXML. " +
+                            "Remove it unless the product explicitly requires this exact UXML " +
+                            "tooltip; document that exception with a reasoned allow-tooltip " +
+                            "suppression."
+                    };
+                    report.Record(issue, includeSuppressed);
+                }
+            }
         }
 
         private static void AuditPixelGridDeclarations(string assetPath, XDocument document,
@@ -3219,7 +3291,8 @@ namespace UnityMCP.Editor
                         $"<!-- {MCPUxmlLayoutAuditor.FIXED_SCROLL_CROSS_AXIS_SIZE_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.UNCONSUMED_ELEMENT_NAME_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.FIXED_FLEX_PARTITION_SUPPRESSION_MARKER} <reason> -->",
-                        $"<!-- {MCPUxmlLayoutAuditor.PIXEL_GRID_SUPPRESSION_MARKER} <reason> -->"
+                        $"<!-- {MCPUxmlLayoutAuditor.PIXEL_GRID_SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.TOOLTIP_ATTRIBUTE_SUPPRESSION_MARKER} <reason> -->"
                     }
                 }
             };
@@ -3241,6 +3314,8 @@ namespace UnityMCP.Editor
         public int GridStep;
         public string BaseClass;
         public int AuthoredUsageCount;
+        public string AttributeName;
+        public string AttributeValue;
         public Dictionary<string, string> InlineDeclarations =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public List<string> RelatedVariantClasses = new List<string>();
@@ -3322,12 +3397,18 @@ namespace UnityMCP.Editor
                 }
             }
             else if (string.Equals(Kind, "off-grid-pixel-declarations",
-                         StringComparison.Ordinal))
+                          StringComparison.Ordinal))
             {
                 result["gridStep"] = GridStep;
                 result["inlineDeclarations"] =
                     new Dictionary<string, string>(InlineDeclarations,
                         StringComparer.OrdinalIgnoreCase);
+            }
+            else if (string.Equals(Kind, "authored-tooltip-attribute",
+                         StringComparison.Ordinal))
+            {
+                result["attributeName"] = AttributeName ?? "";
+                result["attributeValue"] = AttributeValue ?? "";
             }
 
             return result;

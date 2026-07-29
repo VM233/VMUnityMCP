@@ -2556,6 +2556,48 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUxmlAudit_ReportsAuthoredTooltipAttributes()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Authored Tooltip Attribute.uxml";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<ui:Button tooltip=\"View Battle\"/>" +
+                "<!-- uxml-layout-audit: allow-tooltip " +
+                "product explicitly requires this authored tooltip -->" +
+                "<ui:Button tooltip=\"Deploy to Stage\"/>" +
+                "</ui:UXML>");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { uxmlPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "runtimeSourceRoots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                        { "includeSuppressed", true },
+                        { "runSelfTests", true },
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            Assert.That(result["suppressedCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            Assert.That(issues, Has.Count.EqualTo(2));
+            var issue = issues.Single(item => (bool)item["suppressed"] == false);
+            Assert.That(issue["kind"], Is.EqualTo("authored-tooltip-attribute"));
+            Assert.That(issue["element"], Is.EqualTo("<Button>"));
+            Assert.That(issue["attributeName"], Is.EqualTo("tooltip"));
+            Assert.That(issue["attributeValue"], Is.EqualTo("View Battle"));
+            Assert.That((List<string>)issue["fixedProperties"],
+                Is.EqualTo(new[] { "tooltip" }));
+            Assert.That(RequireDictionary(result["selfTests"])["passed"],
+                Is.EqualTo(true));
+            Assert.That(((string[])result["suppressionSyntax"]).Any(syntax =>
+                syntax.Contains("allow-tooltip")), Is.True);
+        }
+
+        [Test]
         public void UIToolkitUxmlAudit_ReportsOnlyUnconsumedElementNames()
         {
             const string uxmlPath = TEST_FOLDER + "/Element Name Consumers.uxml";
