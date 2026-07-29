@@ -11,7 +11,7 @@ namespace UnityMCP.Editor
     /// <summary>
     /// Ticket-based request queue for multi-agent parallel access to Unity Editor.
     /// Implements fair round-robin scheduling across agents, read batching,
-    /// and supports both async (ticket polling) and sync (blocking) modes.
+    /// with asynchronous ticket polling.
     ///
     /// Architecture:
     ///   HTTP request → SubmitRequest (returns ticket immediately)
@@ -21,7 +21,6 @@ namespace UnityMCP.Editor
     /// Thread safety:
     ///   - _queueLock protects all queue/ticket/session state
     ///   - Actions execute OUTSIDE the lock on the main thread (prevents deadlocks)
-    ///   - Synchronous callers use ManualResetEventSlim per ticket
     /// </summary>
     public static class MCPRequestQueue
     {
@@ -97,14 +96,8 @@ namespace UnityMCP.Editor
             = new Dictionary<long, RequestTicket>();
 
         // Reload snapshots are small status records persisted through domain reload.
-        private static readonly Dictionary<long, Dictionary<string, object>> _reloadedTicketSnapshots
-            = new Dictionary<long, Dictionary<string, object>>();
         private static bool _persistentSnapshotsLoaded;
         private static string _lastPersistedSnapshotJson;
-
-        // Synchronous waiters (backward compat)
-        private static readonly Dictionary<long, List<ManualResetEventSlim>> _waiters
-            = new Dictionary<long, List<ManualResetEventSlim>>();
 
         // Session tracking
         private static readonly Dictionary<string, MCPAgentSession> _sessions
@@ -120,10 +113,7 @@ namespace UnityMCP.Editor
         private const int CompletedCacheLifetimeSec   = 600;
         private const int TimedOutCacheLifetimeSec    = 300;
         private const int StaleExecutingLifetimeSec   = 120;
-        private const string PersistentTicketSnapshotFileName = "request-queue-tickets-v2.json";
-        public const int SyncTimeoutMs                = 30_000;
-        internal const int ReloadRecoveryTimeoutMs    = 120_000;
-        private const int PersistedSnapshotPollIntervalMs = 250;
+        private const string PersistentTicketSnapshotFileName = "request-queue-tickets-v3.json";
         private const int MaxEditorIdleReloadResumes  = 8;
         private const int MaxReadBatchSize            = 5;
         private const int MaxTotalQueuedRequests      = 256;
@@ -348,224 +338,6 @@ namespace UnityMCP.Editor
             }
         }
 
-        /// <summary>
-        /// Backward-compatible synchronous mode: submit → wait → return result.
-        /// Used by the existing HandleRequest path (direct HTTP calls).
-        /// </summary>
-        public static object ExecuteWithTracking(string agentId, string actionName, Func<object> action)
-        {
-            var ticket = SubmitRequest(agentId, actionName, action);
-            return WaitForTicket(ticket);
-        }
-
-        public static object ExecutePersistentWithTracking(string agentId, string actionName, string method,
-            string body, string requestKey)
-        {
-            var ticket = SubmitPersistentRequest(agentId, actionName, method, body, requestKey, out _);
-            return WaitForTicket(ticket);
-        }
-
-        public static object ExecuteDeferredWithTracking(string agentId, string actionName,
-            Action<Action<object>> deferredAction)
-        {
-            return ExecuteDeferredWithTracking(agentId, actionName, (resolve, _) => deferredAction(resolve));
-        }
-
-        public static object ExecuteDeferredWithTracking(string agentId, string actionName,
-            Action<Action<object>, Action<object>> deferredAction)
-        {
-            var ticket = SubmitDeferredRequest(agentId, actionName, deferredAction);
-            return WaitForTicket(ticket);
-        }
-
-        public static object ExecutePersistentDeferredWithTracking(string agentId, string actionName,
-            Action<Action<object>, Action<object>> deferredAction, string body, string requestKey)
-        {
-            var ticket = SubmitPersistentDeferredRequest(agentId, actionName, deferredAction, body,
-                requestKey, out _);
-            return WaitForTicket(ticket);
-        }
-
-        public static object ExecuteResumableEditorIdleWait(string agentId, Dictionary<string, object> args)
-        {
-            var ticket = SubmitResumableEditorIdleWait(agentId, args, out _);
-            return WaitForTicket(ticket);
-        }
-
-        private static object WaitForTicket(RequestTicket ticket)
-        {
-            return WaitForTicket(ticket, SyncTimeoutMs, ReloadRecoveryTimeoutMs,
-                GetPersistentTicketSnapshotPath());
-        }
-
-        private static object WaitForTicket(RequestTicket ticket, int syncTimeoutMs,
-            int reloadRecoveryTimeoutMs, string snapshotPath)
-        {
-            var waiter = new ManualResetEventSlim(false);
-            lock (_queueLock)
-            {
-                if (_completedTickets.ContainsKey(ticket.TicketId))
-                {
-                    waiter.Set();
-                }
-                else
-                {
-                    if (!_waiters.TryGetValue(ticket.TicketId, out var waiters))
-                    {
-                        waiters = new List<ManualResetEventSlim>();
-                        _waiters[ticket.TicketId] = waiters;
-                    }
-                    waiters.Add(waiter);
-                }
-            }
-
-            try
-            {
-                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                bool reloadObserved = false;
-                string latestStatus = ticket.Status.ToString();
-                while (true)
-                {
-                    if (TryGetCompletedWaitResult(ticket.TicketId, out object localResult))
-                        return localResult;
-
-                    if (TryReadPersistedWaitResult(snapshotPath, ticket, out int persistedResumeCount,
-                            out string persistedStatus, out bool terminal, out object persistedResult))
-                    {
-                        latestStatus = persistedStatus;
-                        reloadObserved |= persistedResumeCount > ticket.ResumeCount;
-                        if (terminal)
-                            return persistedResult;
-                    }
-
-                    int timeoutMs = reloadObserved
-                        ? Math.Max(syncTimeoutMs, reloadRecoveryTimeoutMs)
-                        : syncTimeoutMs;
-                    long remainingMs = timeoutMs - stopwatch.ElapsedMilliseconds;
-                    if (remainingMs <= 0)
-                    {
-                        string errorCode = reloadObserved
-                            ? "sync_reload_recovery_timeout"
-                            : "sync_wait_timeout";
-                        string message = reloadObserved
-                            ? $"Timed out after {timeoutMs / 1000}s waiting for ticket recovery across a Unity domain reload."
-                            : $"Timed out after {timeoutMs / 1000}s waiting for the Unity main thread.";
-                        return MCPResponse.Error(message, errorCode, true,
-                        new Dictionary<string, object>
-                        {
-                            { "ticketId", ticket.TicketId },
-                            { "status", latestStatus },
-                            { "pollRoute", "queue/status" },
-                            { "reloadObserved", reloadObserved },
-                        });
-                    }
-
-                    int waitMs = (int)Math.Max(1,
-                        Math.Min(PersistedSnapshotPollIntervalMs, remainingMs));
-                    waiter.Wait(waitMs);
-                }
-            }
-            finally
-            {
-                waiter.Dispose();
-                lock (_queueLock)
-                {
-                    if (_waiters.TryGetValue(ticket.TicketId, out var waiters))
-                    {
-                        waiters.Remove(waiter);
-                        if (waiters.Count == 0)
-                            _waiters.Remove(ticket.TicketId);
-                    }
-                }
-            }
-        }
-
-        private static bool TryGetCompletedWaitResult(long ticketId, out object result)
-        {
-            lock (_queueLock)
-            {
-                if (!_completedTickets.TryGetValue(ticketId, out var done))
-                {
-                    result = null;
-                    return false;
-                }
-
-                result = BuildTerminalWaitResult(done.Status, done.Result, done.ErrorMessage,
-                    done.ErrorCode, done.Retryable, done.TicketId);
-                return true;
-            }
-        }
-
-        private static bool TryReadPersistedWaitResult(string snapshotPath, RequestTicket ticket,
-            out int resumeCount, out string statusText, out bool terminal, out object result)
-        {
-            resumeCount = ticket.ResumeCount;
-            statusText = ticket.Status.ToString();
-            terminal = false;
-            result = null;
-            if (string.IsNullOrEmpty(snapshotPath))
-                return false;
-
-            string json;
-            if (!TryReadValidSnapshotJson(snapshotPath, out json) &&
-                !TryReadValidSnapshotJson(snapshotPath + ".bak", out json))
-                return false;
-
-            var snapshots = MiniJson.Deserialize(json) as List<object>;
-            if (snapshots == null)
-                return false;
-
-            foreach (var item in snapshots)
-            {
-                var snapshot = MCPResponse.ToDictionary(item);
-                if (snapshot == null ||
-                    !TryGetLong(snapshot, "ticketId", out long ticketId) ||
-                    ticketId != ticket.TicketId ||
-                    !string.Equals(GetString(snapshot, "agentId"), ticket.AgentId,
-                        StringComparison.Ordinal))
-                    continue;
-
-                resumeCount = GetInt(snapshot, "resumeCount", 0);
-                statusText = GetString(snapshot, "status", ticket.Status.ToString());
-                if (!Enum.TryParse(statusText, out RequestStatus status))
-                    return true;
-
-                terminal = status == RequestStatus.Completed || status == RequestStatus.Failed ||
-                           status == RequestStatus.TimedOut || status == RequestStatus.Canceled ||
-                           status == RequestStatus.UncertainAfterReload;
-                if (terminal)
-                {
-                    object snapshotResult = snapshot.TryGetValue("result", out var rawResult)
-                        ? rawResult
-                        : null;
-                    result = BuildTerminalWaitResult(status, snapshotResult,
-                        GetString(snapshot, "errorMessage"), GetString(snapshot, "errorCode"),
-                        GetBool(snapshot, "retryable", false), ticketId);
-                }
-                return true;
-            }
-
-            return false;
-        }
-
-        private static object BuildTerminalWaitResult(RequestStatus status, object ticketResult,
-            string errorMessage, string errorCode, bool retryable, long ticketId)
-        {
-            if (status == RequestStatus.Completed)
-                return ticketResult;
-
-            bool resultCarriesError = MCPResponse.TryGetError(ticketResult, out _, out _, out _);
-            var error = MCPResponse.NormalizeError(ticketResult,
-                string.IsNullOrEmpty(errorCode) ? "request_failed" : errorCode, retryable);
-            if (!string.IsNullOrEmpty(errorMessage) && !resultCarriesError)
-            {
-                error["error"] = errorMessage;
-                error["message"] = errorMessage;
-            }
-            error["ticketId"] = ticketId;
-            return error;
-        }
-
         // ═══════════════════════════════════════════════════════
         //  Main-Thread Processing (called from EditorApplication.update)
         // ═══════════════════════════════════════════════════════
@@ -637,7 +409,6 @@ namespace UnityMCP.Editor
                             {
                                 _executingTickets.Remove(deferredTicket.TicketId);
                                 _completedTickets[deferredTicket.TicketId] = deferredTicket;
-                                SignalWaitersLocked(deferredTicket.TicketId);
                                 if (_sessions.TryGetValue(deferredTicket.AgentId, out var s))
                                     s.IncrementCompletedRequest(deferredTicket.ExecutionTimeMs);
                                 PersistTicketSnapshotsLocked();
@@ -668,7 +439,6 @@ namespace UnityMCP.Editor
                         {
                             _executingTickets.Remove(deferredTicket.TicketId);
                             _completedTickets[deferredTicket.TicketId] = deferredTicket;
-                            SignalWaitersLocked(deferredTicket.TicketId);
                             PersistTicketSnapshotsLocked();
                         }
                     }
@@ -727,8 +497,6 @@ namespace UnityMCP.Editor
                 {
                     _executingTickets.Remove(ticket.TicketId);
                     _completedTickets[ticket.TicketId] = ticket;
-
-                    SignalWaitersLocked(ticket.TicketId);
 
                     if (_sessions.TryGetValue(ticket.AgentId, out var session))
                         session.IncrementCompletedRequest(ticket.ExecutionTimeMs);
@@ -811,13 +579,6 @@ namespace UnityMCP.Editor
                         if (t.TicketId == ticketId)
                             return OwnedTicketToDict(t, agentId, enforceOwnership);
 
-                if (_reloadedTicketSnapshots.TryGetValue(ticketId, out var snapshot))
-                {
-                    if (enforceOwnership && snapshot.TryGetValue("agentId", out object owner) &&
-                        !string.Equals(owner?.ToString(), agentId, StringComparison.Ordinal))
-                        return MCPResponse.Error("Ticket belongs to another agent.", "ticket_owner_mismatch");
-                    return new Dictionary<string, object>(snapshot);
-                }
             }
             return null;
         }
@@ -852,7 +613,6 @@ namespace UnityMCP.Editor
                     canceled.DeferredAction = null;
                     canceled.ProgressiveDeferredAction = null;
                     _completedTickets[ticketId] = canceled;
-                    SignalWaitersLocked(ticketId);
                     PurgeEmptyQueues();
                     PersistTicketSnapshotsLocked();
                     return new Dictionary<string, object>
@@ -1015,7 +775,6 @@ namespace UnityMCP.Editor
                     {
                         CompleteExpiredEditorIdleWait(ticket, nowUtc, deadlineUtc);
                         _completedTickets[ticket.TicketId] = ticket;
-                        SignalWaitersLocked(ticket.TicketId);
                         if (_sessions.TryGetValue(ticket.AgentId, out var session))
                             session.IncrementCompletedRequest(ticket.ExecutionTimeMs);
                         changed = true;
@@ -1138,14 +897,6 @@ namespace UnityMCP.Editor
             if (enforceOwnership && !string.Equals(ticket.AgentId, agentId, StringComparison.Ordinal))
                 return MCPResponse.Error("Ticket belongs to another agent.", "ticket_owner_mismatch");
             return TicketToDict(ticket);
-        }
-
-        private static void SignalWaitersLocked(long ticketId)
-        {
-            if (!_waiters.TryGetValue(ticketId, out var waiters))
-                return;
-            foreach (var waiter in waiters.ToArray())
-                waiter.Set();
         }
 
         /// <summary>
@@ -1303,7 +1054,6 @@ namespace UnityMCP.Editor
                         "stale_execution", true);
                     _executingTickets.Remove(ticket.TicketId);
                     _completedTickets[ticket.TicketId] = ticket;
-                    SignalWaitersLocked(ticket.TicketId);
                 }
 
                 if (kill.Count == 0 && staleExecuting.Count == 0)
@@ -1350,17 +1100,11 @@ namespace UnityMCP.Editor
                         else
                             _completedTickets[restoredTicket.TicketId] = restoredTicket;
                     }
-                    else
-                    {
-                        _reloadedTicketSnapshots[ticketId] = BuildReloadedSnapshot(snapshot);
-                    }
                 }
 
                 if (maxTicketId > _nextTicketId)
                     Interlocked.Exchange(ref _nextTicketId, maxTicketId);
-                // Rewrite legacy snapshots once so ordinary completed reads no longer
-                // remain as a full response cache after the next package update/reload.
-                // Resumed tickets also need their updated status and resume count saved.
+                // Resumed tickets need their updated status and resume count saved.
                 PersistTicketSnapshotsLocked();
             }
         }
@@ -1460,19 +1204,8 @@ namespace UnityMCP.Editor
             int remainingTimeoutMs = GetInt(persistentArguments, "_remainingTimeoutMs", -1);
             if (remainingTimeoutMs <= 0)
             {
-                if (TryGetDateTime(persistentArguments, "_deadlineUtc", out DateTime deadlineUtc) &&
-                    deadlineUtc.ToUniversalTime() > nowUtc)
-                {
-                    remainingTimeoutMs = (int)Math.Max(1,
-                        Math.Min(int.MaxValue,
-                            (deadlineUtc.ToUniversalTime() - nowUtc).TotalMilliseconds));
-                }
-                else
-                {
-                    // Legacy snapshots did not pause their deadline before unloading the old
-                    // AppDomain. Give them one fresh active-time budget on first restore.
-                    remainingTimeoutMs = originalTimeoutMs;
-                }
+                ticket = null;
+                return false;
             }
 
             DateTime resumedDeadlineUtc = nowUtc.AddMilliseconds(remainingTimeoutMs);
@@ -1621,22 +1354,6 @@ namespace UnityMCP.Editor
             ticket.QueuePosition = queue.Count;
             queue.Enqueue(ticket);
             EnsureSession(ticket.AgentId).LogAction(ticket.ActionName + " (resumed)");
-        }
-
-        private static Dictionary<string, object> BuildReloadedSnapshot(Dictionary<string, object> snapshot)
-        {
-            var restored = new Dictionary<string, object>(snapshot);
-            string previousStatus = restored.TryGetValue("status", out var status) ? status?.ToString() : "";
-            restored["previousStatus"] = previousStatus;
-            restored["status"] = RequestStatus.UncertainAfterReload.ToString();
-            restored["success"] = false;
-            restored["error"] = "This legacy ticket had no persisted request body, so its outcome cannot be reconstructed after a Unity domain reload.";
-            restored["message"] = restored["error"];
-            restored["errorCode"] = "legacy_ticket_outcome_uncertain";
-            restored["retryable"] = false;
-            restored["result"] = MCPResponse.Error(restored["error"].ToString(),
-                "legacy_ticket_outcome_uncertain", false);
-            return restored;
         }
 
         private static void PersistTicketSnapshotsLocked()

@@ -7,7 +7,7 @@ using UnityEngine;
 namespace UnityMCP.Editor
 {
     /// <summary>
-    /// Advanced prefab operations: editing, variants, overrides, nested prefabs, and object references.
+    /// Advanced prefab operations: editing, variants, overrides, and nested prefabs.
     /// Basic create/instantiate are in MCPAssetCommands. This handles the advanced workflow.
     /// </summary>
     public static class MCPPrefabCommands
@@ -203,178 +203,6 @@ namespace UnityMCP.Editor
             return new { success = true, gameObject = go.name, mode = completely ? "Completely" : "OutermostRoot" };
         }
 
-        /// <summary>
-        /// Set an object reference on a component (e.g., assign a prefab, material, sprite to a field).
-        /// This is the critical feature for wiring up references between objects.
-        /// </summary>
-        public static object SetObjectReference(Dictionary<string, object> args)
-        {
-            var go = MCPGameObjectCommands.FindGameObject(args);
-            if (go == null) return new { error = "GameObject not found" };
-
-            string componentType = args.ContainsKey("componentType") ? args["componentType"].ToString() : "";
-            string propertyName = args.ContainsKey("propertyName") ? args["propertyName"].ToString() : "";
-            string referencePath = args.ContainsKey("referencePath") ? args["referencePath"].ToString() : "";
-            string referenceGameObject = args.ContainsKey("referenceGameObject") ? args["referenceGameObject"].ToString() : "";
-
-            if (string.IsNullOrEmpty(propertyName))
-                return new { error = "propertyName is required" };
-
-            // Find the component
-            Type type = null;
-            Component component = null;
-
-            if (!string.IsNullOrEmpty(componentType))
-            {
-                type = FindType(componentType);
-                if (type != null) component = go.GetComponent(type);
-            }
-            else
-            {
-                // Search all components for this property
-                foreach (var comp in go.GetComponents<Component>())
-                {
-                    if (comp == null) continue;
-                    var so = new SerializedObject(comp);
-                    if (so.FindProperty(propertyName) != null)
-                    {
-                        component = comp;
-                        break;
-                    }
-                }
-            }
-
-            if (component == null)
-                return new { error = $"Component '{componentType}' not found on {go.name}, or no component has property '{propertyName}'" };
-
-            var serialized = new SerializedObject(component);
-            var prop = serialized.FindProperty(propertyName);
-            if (prop == null)
-                return new { error = $"Property '{propertyName}' not found" };
-
-            if (prop.propertyType != SerializedPropertyType.ObjectReference)
-                return new { error = $"Property '{propertyName}' is not an ObjectReference (type: {prop.propertyType})" };
-
-            // Resolve the reference
-            UnityEngine.Object targetRef = null;
-
-            if (!string.IsNullOrEmpty(referencePath))
-            {
-                // Load from asset path
-                targetRef = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(referencePath);
-                if (targetRef == null)
-                    return new { error = $"Asset not found at '{referencePath}'" };
-            }
-            else if (!string.IsNullOrEmpty(referenceGameObject))
-            {
-                // Find in scene
-                targetRef = GameObject.Find(referenceGameObject);
-                if (targetRef == null)
-                {
-                    // Try finding by component
-                    var allObjects = UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
-                    foreach (var obj in allObjects)
-                    {
-                        if (obj.name == referenceGameObject)
-                        {
-                            targetRef = obj;
-                            break;
-                        }
-                    }
-                }
-                if (targetRef == null)
-                    return new { error = $"GameObject '{referenceGameObject}' not found in scene" };
-            }
-            else
-            {
-                // Set to null (clear reference)
-                prop.objectReferenceValue = null;
-                serialized.ApplyModifiedProperties();
-                return new { success = true, gameObject = go.name, property = propertyName, reference = "null (cleared)" };
-            }
-
-            prop.objectReferenceValue = targetRef;
-            serialized.ApplyModifiedProperties();
-
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "gameObject", go.name },
-                { "component", component.GetType().Name },
-                { "property", propertyName },
-                { "reference", targetRef.name },
-                { "referenceType", targetRef.GetType().Name },
-            };
-        }
-
-        /// <summary>
-        /// Duplicate a GameObject (with all children and components).
-        /// </summary>
-        public static object Duplicate(Dictionary<string, object> args)
-        {
-            var go = MCPGameObjectCommands.FindGameObject(args);
-            if (go == null)
-                return new { error = "GameObject not found" };
-
-            string newName = args.ContainsKey("newName") ? args["newName"].ToString() : go.name + " (Copy)";
-
-            var duplicate = UnityEngine.Object.Instantiate(go);
-            duplicate.name = newName;
-
-            if (go.transform.parent != null)
-                duplicate.transform.SetParent(go.transform.parent);
-
-            Undo.RegisterCreatedObjectUndo(duplicate, $"Duplicate {go.name}");
-
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "original", go.name },
-                { "duplicate", duplicate.name },
-                { "instanceId", MCPObjectId.Get(duplicate) },
-            };
-        }
-
-        /// <summary>
-        /// Set a GameObject active/inactive.
-        /// </summary>
-        public static object SetActive(Dictionary<string, object> args)
-        {
-            var go = MCPGameObjectCommands.FindGameObject(args);
-            if (go == null) return new { error = "GameObject not found" };
-
-            bool active = args.ContainsKey("active") ? Convert.ToBoolean(args["active"]) : true;
-            Undo.RecordObject(go, "Set Active");
-            go.SetActive(active);
-
-            return new { success = true, gameObject = go.name, active };
-        }
-
-        /// <summary>
-        /// Reparent a GameObject under a new parent.
-        /// </summary>
-        public static object Reparent(Dictionary<string, object> args)
-        {
-            var go = MCPGameObjectCommands.FindGameObject(args);
-            if (go == null) return new { error = "GameObject not found" };
-
-            string parentPath = args.ContainsKey("newParent") ? args["newParent"].ToString() : "";
-            bool worldPositionStays = !args.ContainsKey("worldPositionStays") || Convert.ToBoolean(args["worldPositionStays"]);
-
-            Undo.SetTransformParent(go.transform,
-                string.IsNullOrEmpty(parentPath) ? null : GameObject.Find(parentPath)?.transform,
-                worldPositionStays,
-                "Reparent");
-
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "gameObject", go.name },
-                { "newParent", string.IsNullOrEmpty(parentPath) ? "root" : parentPath },
-                { "worldPositionStays", worldPositionStays },
-            };
-        }
-
         // ─── Helpers ───
 
         private static void EnsureDirectory(string assetPath)
@@ -394,20 +222,5 @@ namespace UnityMCP.Editor
             }
         }
 
-        private static Type FindType(string name)
-        {
-            Type t = Type.GetType($"UnityEngine.{name}, UnityEngine");
-            if (t != null) return t;
-            t = Type.GetType($"UnityEngine.{name}, UnityEngine.CoreModule");
-            if (t != null) return t;
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                t = assembly.GetType(name);
-                if (t != null) return t;
-                t = assembly.GetType($"UnityEngine.{name}");
-                if (t != null) return t;
-            }
-            return null;
-        }
     }
 }

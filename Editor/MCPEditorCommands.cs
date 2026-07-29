@@ -844,18 +844,26 @@ namespace UnityMCP.Editor
                 "UnityEditor.SceneManagement",
             };
 
-            foreach (string namespaceName in GetAdditionalUsingNamespaces(args))
+            if (!TryAddUsingNamespaces(
+                    namespaces,
+                    MCPSettingsManager.GetExecuteCodeAdditionalNamespaces(),
+                    "Project Settings > Unity MCP > Execute Code",
+                    out error))
             {
-                if (IsValidNamespace(namespaceName) == false)
-                {
-                    generatedPrefixLineCount = 0;
-                    userCodeLineCount = 0;
-                    error = $"Invalid namespace in usings: '{namespaceName}'.";
-                    return "";
-                }
+                generatedPrefixLineCount = 0;
+                userCodeLineCount = 0;
+                return "";
+            }
 
-                if (namespaces.Contains(namespaceName, StringComparer.Ordinal) == false)
-                    namespaces.Add(namespaceName);
+            if (!TryAddUsingNamespaces(
+                    namespaces,
+                    GetRequestUsingNamespaces(args),
+                    "usings",
+                    out error))
+            {
+                generatedPrefixLineCount = 0;
+                userCodeLineCount = 0;
+                return "";
             }
 
             var prefix = new StringBuilder();
@@ -874,36 +882,55 @@ namespace UnityMCP.Editor
                    Environment.NewLine + "}";
         }
 
-        private static IEnumerable<string> GetAdditionalUsingNamespaces(Dictionary<string, object> args)
+        private static bool TryAddUsingNamespaces(
+            List<string> namespaces,
+            IEnumerable<string> additionalNamespaces,
+            string source,
+            out string error)
+        {
+            foreach (string namespaceName in additionalNamespaces)
+            {
+                if (!IsValidNamespace(namespaceName))
+                {
+                    error = $"Invalid namespace in {source}: '{namespaceName}'.";
+                    return false;
+                }
+
+                if (!namespaces.Contains(namespaceName, StringComparer.Ordinal))
+                    namespaces.Add(namespaceName);
+            }
+
+            error = "";
+            return true;
+        }
+
+        private static IEnumerable<string> GetRequestUsingNamespaces(Dictionary<string, object> args)
         {
             if (args == null)
                 yield break;
 
-            foreach (string key in new[] { "using", "usings" })
+            if (!args.TryGetValue("usings", out object value) || value == null)
+                yield break;
+
+            if (value is string text)
             {
-                if (args.TryGetValue(key, out object value) == false || value == null)
-                    continue;
+                if (!string.IsNullOrWhiteSpace(text))
+                    yield return text.Trim();
+                yield break;
+            }
 
-                if (value is string text)
+            if (value is IEnumerable enumerable)
+            {
+                foreach (object item in enumerable)
                 {
-                    if (string.IsNullOrWhiteSpace(text) == false)
-                        yield return text.Trim();
-                    continue;
-                }
-
-                if (value is IEnumerable enumerable)
-                {
-                    foreach (object item in enumerable)
-                    {
-                        string namespaceName = item?.ToString()?.Trim();
-                        if (string.IsNullOrEmpty(namespaceName) == false)
-                            yield return namespaceName;
-                    }
+                    string namespaceName = item?.ToString()?.Trim();
+                    if (!string.IsNullOrEmpty(namespaceName))
+                        yield return namespaceName;
                 }
             }
         }
 
-        private static bool IsValidNamespace(string namespaceName)
+        internal static bool IsValidNamespace(string namespaceName)
         {
             if (string.IsNullOrWhiteSpace(namespaceName))
                 return false;

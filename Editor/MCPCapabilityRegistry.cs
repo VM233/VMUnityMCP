@@ -32,13 +32,6 @@ namespace UnityMCP.Editor
             },
             new Capability
             {
-                Name = "amplify",
-                RoutePrefix = "amplify/",
-                IsAvailable = MCPAmplifyCommands.IsAmplifyInstalled,
-                Requirement = "Amplify Shader Editor"
-            },
-            new Capability
-            {
                 Name = "uma",
                 RoutePrefix = "uma/",
                 IsAvailable = IsUmaAvailable,

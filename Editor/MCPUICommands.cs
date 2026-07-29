@@ -845,8 +845,6 @@ namespace UnityMCP.Editor
             bool runtime = GetBool(args, "runtime", false);
             string outputPath = GetString(args, "outputPath");
             if (string.IsNullOrEmpty(outputPath))
-                outputPath = GetString(args, "pathOutput");
-            if (string.IsNullOrEmpty(outputPath))
                 outputPath = $"Temp/MCP_UIToolkitElement_{DateTime.Now:yyyyMMdd_HHmmss}.png";
 
             string fullWindowPath = GetString(args, "windowOutputPath");
@@ -997,8 +995,6 @@ namespace UnityMCP.Editor
                 return new { error = "referencePath is required" };
 
             string actualPath = GetString(args, "actualPath");
-            if (string.IsNullOrEmpty(actualPath))
-                actualPath = GetString(args, "outputPath");
             if (string.IsNullOrEmpty(actualPath))
                 actualPath = $"Temp/MCP_UIToolkitCompare_{DateTime.Now:yyyyMMdd_HHmmss}.png";
 

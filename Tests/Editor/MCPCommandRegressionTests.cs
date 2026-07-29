@@ -648,7 +648,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void UnifiedExecutionRoutes_AreDeferredAndLegacyBatchRoutesAreRemoved()
+        public void UnifiedExecutionRoutes_AreDeferredAndRetiredBatchRoutesAreRemoved()
         {
             var routesProperty = typeof(MCPBridgeServer).GetProperty("DeferredRouteNames",
                 BindingFlags.Static | BindingFlags.NonPublic);
@@ -664,8 +664,7 @@ namespace UnityMCP.Editor.Tests
             Assert.That(routes, Does.Contain("uitoolkit/refresh"));
             Assert.That(routes, Does.Contain("profiler/memory-snapshot"));
 
-            var registered = RequireDictionary(MCPToolMetadata.GetRegisteredRoutes());
-            var registeredRoutes = (List<string>)registered["routes"];
+            var registeredRoutes = GetBuiltInRoutes();
             Assert.That(registeredRoutes, Does.Not.Contain("prefab-asset/batch-edit"));
             Assert.That(registeredRoutes, Does.Not.Contain("asset/move-batch"));
             Assert.That(registeredRoutes, Does.Not.Contain("component/batch-wire"));
@@ -693,6 +692,22 @@ namespace UnityMCP.Editor.Tests
             Assert.That(typeof(MCPBridgeServer).GetField("_mainThreadQueue",
                 BindingFlags.Static | BindingFlags.NonPublic), Is.Null,
                 "A second unbounded main-thread queue must not be reintroduced beside MCPRequestQueue.");
+        }
+
+        [Test]
+        public void TransportContract_UsesOnlyAsyncQueueExecution()
+        {
+            Assert.That(typeof(MCPRequestQueue).GetField("_waiters",
+                BindingFlags.Static | BindingFlags.NonPublic), Is.Null);
+            Assert.That(typeof(MCPRequestQueue).GetMethod("WaitForTicket",
+                BindingFlags.Static | BindingFlags.NonPublic), Is.Null);
+            Assert.That(typeof(MCPRequestQueue).GetMethods(
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .Any(method => method.Name.Contains("WithTracking")), Is.False);
+            Assert.That(typeof(MCPBridgeServer).GetMethod("BuildRequestKey",
+                BindingFlags.Static | BindingFlags.NonPublic), Is.Null);
+            Assert.That(GetBuiltInRoutes(), Does.Contain("queue/status"));
+            Assert.That(GetBuiltInRoutes(), Does.Contain("queue/cancel"));
         }
 
         [Test]
@@ -867,6 +882,7 @@ namespace UnityMCP.Editor.Tests
                 { "stableFrames", 3 },
                 { "stableMs", 500 },
                 { "_resumeCount", 0 },
+                { "_remainingTimeoutMs", 5000 },
             };
             var snapshot = new Dictionary<string, object>
             {
@@ -895,55 +911,6 @@ namespace UnityMCP.Editor.Tests
                 Is.InRange(1, 5000));
             Assert.That(Convert.ToInt32(restored.PersistentArguments["_resumeCount"]), Is.EqualTo(1));
             Assert.That(restored.PersistentArguments.ContainsKey("_deadlineUtc"), Is.True);
-
-            var deferredProperty = typeof(MCPRequestQueue.RequestTicket).GetProperty(
-                "ProgressiveDeferredAction", BindingFlags.Instance | BindingFlags.NonPublic);
-            Assert.That(deferredProperty, Is.Not.Null);
-            Assert.That(deferredProperty.GetValue(restored), Is.Not.Null);
-        }
-
-        [Test]
-        public void EditorIdleWait_LegacyExpiredReloadSnapshotGetsFreshActiveTimeBudget()
-        {
-            long ticketId = DateTime.UtcNow.Ticks;
-            var persistentArguments = new Dictionary<string, object>
-            {
-                { "timeoutMs", 5000 },
-                { "_originalTimeoutMs", 5000 },
-                { "stableFrames", 3 },
-                { "stableMs", 500 },
-                { "_resumeCount", 0 },
-                { "_deadlineUtc", DateTime.UtcNow.AddSeconds(-1).ToString("O") },
-            };
-            var snapshot = new Dictionary<string, object>
-            {
-                { "ticketId", ticketId },
-                { "agentId", "expired-reload-regression" },
-                { "actionName", "wait/editor-idle" },
-                { "status", MCPRequestQueue.RequestStatus.Executing.ToString() },
-                { "queuePosition", 0 },
-                { "submittedAt", DateTime.UtcNow.AddSeconds(-6).ToString("O") },
-                { "requestKey", "wait/editor-idle|5000|3|500" },
-                { "persistentArguments", persistentArguments },
-                { "resumeCount", 0 },
-            };
-
-            var method = typeof(MCPRequestQueue).GetMethod("TryRestoreEditorIdleWait",
-                BindingFlags.Static | BindingFlags.NonPublic);
-            Assert.That(method, Is.Not.Null);
-            var invokeArguments = new object[] { snapshot, null };
-            Assert.That(method.Invoke(null, invokeArguments), Is.EqualTo(true));
-
-            var restored = (MCPRequestQueue.RequestTicket)invokeArguments[1];
-            Assert.That(restored.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Queued));
-            Assert.That(restored.CompletedAt, Is.Null);
-            Assert.That(restored.ErrorCode, Is.Null);
-            Assert.That(restored.Retryable, Is.False);
-            Assert.That(restored.ResumeCount, Is.EqualTo(1));
-            Assert.That(Convert.ToInt32(restored.PersistentArguments["timeoutMs"]), Is.EqualTo(5000));
-            Assert.That(DateTime.Parse(restored.PersistentArguments["_deadlineUtc"].ToString()),
-                Is.GreaterThan(DateTime.UtcNow));
-            Assert.That(restored.PersistentArguments.ContainsKey("_remainingTimeoutMs"), Is.False);
 
             var deferredProperty = typeof(MCPRequestQueue.RequestTicket).GetProperty(
                 "ProgressiveDeferredAction", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -1037,148 +1004,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void RequestQueue_CompletionBeforeWaiterRegistrationReturnsImmediately()
-        {
-            long ticketId = DateTime.UtcNow.Ticks;
-            var expected = new Dictionary<string, object> { { "success", true } };
-            var ticket = new MCPRequestQueue.RequestTicket
-            {
-                TicketId = ticketId,
-                AgentId = "waiter-race-regression",
-                ActionName = "wait/editor-idle",
-                Status = MCPRequestQueue.RequestStatus.Completed,
-                SubmittedAt = DateTime.UtcNow,
-                CompletedAt = DateTime.UtcNow,
-                Result = expected,
-            };
-            var completedField = typeof(MCPRequestQueue).GetField("_completedTickets",
-                BindingFlags.Static | BindingFlags.NonPublic);
-            var queueLockField = typeof(MCPRequestQueue).GetField("_queueLock",
-                BindingFlags.Static | BindingFlags.NonPublic);
-            var waitMethod = typeof(MCPRequestQueue).GetMethod("WaitForTicket",
-                BindingFlags.Static | BindingFlags.NonPublic, null,
-                new[] { typeof(MCPRequestQueue.RequestTicket) }, null);
-            Assert.That(completedField, Is.Not.Null);
-            Assert.That(queueLockField, Is.Not.Null);
-            Assert.That(waitMethod, Is.Not.Null);
-            var completed = (Dictionary<long, MCPRequestQueue.RequestTicket>)completedField.GetValue(null);
-            object queueLock = queueLockField.GetValue(null);
-
-            try
-            {
-                lock (queueLock)
-                    completed[ticketId] = ticket;
-                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var actual = waitMethod.Invoke(null, new object[] { ticket });
-                stopwatch.Stop();
-
-                Assert.That(actual, Is.SameAs(expected));
-                Assert.That(stopwatch.ElapsedMilliseconds, Is.LessThan(1000));
-            }
-            finally
-            {
-                lock (queueLock)
-                    completed.Remove(ticketId);
-            }
-        }
-
-        [Test]
-        public void RequestQueue_SynchronousWaitReadsCompletionFromReplacementDomainSnapshot()
-        {
-            string path = Path.Combine(Path.GetTempPath(),
-                "unity-mcp-reload-wait-" + Guid.NewGuid().ToString("N") + ".json");
-            long ticketId = DateTime.UtcNow.Ticks;
-            var ticket = new MCPRequestQueue.RequestTicket
-            {
-                TicketId = ticketId,
-                AgentId = "replacement-domain-regression",
-                ActionName = "testing/get-package-job",
-                Status = MCPRequestQueue.RequestStatus.Queued,
-                SubmittedAt = DateTime.UtcNow,
-            };
-            File.WriteAllText(path,
-                $"[{{\"ticketId\":{ticketId},\"agentId\":\"{ticket.AgentId}\",\"actionName\":\"{ticket.ActionName}\",\"status\":\"Queued\",\"resumeCount\":1}}]");
-            var waitMethod = typeof(MCPRequestQueue).GetMethod("WaitForTicket",
-                BindingFlags.Static | BindingFlags.NonPublic, null,
-                new[] { typeof(MCPRequestQueue.RequestTicket), typeof(int), typeof(int), typeof(string) },
-                null);
-            Assert.That(waitMethod, Is.Not.Null);
-
-            var writer = new System.Threading.Thread(() =>
-            {
-                System.Threading.Thread.Sleep(60);
-                File.WriteAllText(path,
-                    $"[{{\"ticketId\":{ticketId},\"agentId\":\"{ticket.AgentId}\",\"actionName\":\"{ticket.ActionName}\",\"status\":\"Completed\",\"resumeCount\":1,\"result\":{{\"success\":true,\"source\":\"replacement-domain\"}}}}]");
-            });
-            try
-            {
-                writer.Start();
-                var result = RequireDictionary(waitMethod.Invoke(null,
-                    new object[] { ticket, 10, 1000, path }));
-
-                Assert.That(result["success"], Is.EqualTo(true));
-                Assert.That(result["source"], Is.EqualTo("replacement-domain"));
-                Assert.That(ticket.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Queued));
-                Assert.That(ticket.ErrorCode, Is.Null);
-                Assert.That(ticket.ErrorMessage, Is.Null);
-                Assert.That(ticket.Retryable, Is.False);
-            }
-            finally
-            {
-                writer.Join(1000);
-                foreach (string candidate in new[] { path, path + ".bak", path + ".tmp" })
-                {
-                    if (File.Exists(candidate))
-                        File.Delete(candidate);
-                }
-            }
-        }
-
-        [Test]
-        public void RequestQueue_SynchronousTransportTimeoutDoesNotMutatePersistentTicket()
-        {
-            string path = Path.Combine(Path.GetTempPath(),
-                "unity-mcp-transport-timeout-" + Guid.NewGuid().ToString("N") + ".json");
-            long ticketId = DateTime.UtcNow.Ticks;
-            var ticket = new MCPRequestQueue.RequestTicket
-            {
-                TicketId = ticketId,
-                AgentId = "transport-timeout-regression",
-                ActionName = "editor/state",
-                Status = MCPRequestQueue.RequestStatus.Queued,
-                SubmittedAt = DateTime.UtcNow,
-            };
-            File.WriteAllText(path,
-                $"[{{\"ticketId\":{ticketId},\"agentId\":\"{ticket.AgentId}\",\"actionName\":\"{ticket.ActionName}\",\"status\":\"Queued\",\"resumeCount\":0}}]");
-            var waitMethod = typeof(MCPRequestQueue).GetMethod("WaitForTicket",
-                BindingFlags.Static | BindingFlags.NonPublic, null,
-                new[] { typeof(MCPRequestQueue.RequestTicket), typeof(int), typeof(int), typeof(string) },
-                null);
-            Assert.That(waitMethod, Is.Not.Null);
-
-            try
-            {
-                var result = RequireDictionary(waitMethod.Invoke(null,
-                    new object[] { ticket, 20, 100, path }));
-                Assert.That(result["errorCode"], Is.EqualTo("sync_wait_timeout"));
-                Assert.That(ticket.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Queued));
-                Assert.That(ticket.ErrorCode, Is.Null);
-                Assert.That(ticket.ErrorMessage, Is.Null);
-                Assert.That(ticket.Retryable, Is.False);
-                Assert.That(File.ReadAllText(path), Does.Not.Contain("sync_wait_timeout"));
-            }
-            finally
-            {
-                foreach (string candidate in new[] { path, path + ".bak", path + ".tmp" })
-                {
-                    if (File.Exists(candidate))
-                        File.Delete(candidate);
-                }
-            }
-        }
-
-        [Test]
-        public void InstanceRegistry_ReloadLeaseExpiresOnlyWhenProcessIsDeadOrPortIsReleased()
+        public void InstanceRegistry_UsesCurrentReloadLeaseContract()
         {
             var method = typeof(MCPInstanceRegistry).GetMethod("ShouldRemoveRegistryEntry",
                 BindingFlags.Static | BindingFlags.NonPublic);
@@ -1204,6 +1030,9 @@ namespace UnityMCP.Editor.Tests
             Assert.That(Remove(Entry(true, nowUtc.AddMinutes(-1)), true, true), Is.False);
             Assert.That(Remove(Entry(true, nowUtc.AddMinutes(-20)), true, true), Is.True);
             Assert.That(Remove(Entry(true, nowUtc.AddMinutes(-20)), true, false), Is.False);
+            var missingReloadTimestamp = Entry(true, nowUtc);
+            missingReloadTimestamp.Remove("reloadStartedAt");
+            Assert.That(Remove(missingReloadTimestamp, true, false), Is.True);
         }
 
         [Test]
@@ -2029,6 +1858,29 @@ namespace UnityMCP.Editor.Tests
             Assert.That(failure["error"], Is.EqualTo("Compilation failed"));
             var errors = (List<string>)failure["errors"];
             Assert.That(errors.Any(error => error.StartsWith("Line 2:", StringComparison.Ordinal)), Is.True);
+        }
+
+        [Test]
+        public void ExecuteCode_ProjectNamespacesAreImported()
+        {
+            string originalNamespaces = MCPSettingsManager.ExecuteCodeAdditionalNamespacesText;
+            try
+            {
+                MCPSettingsManager.ExecuteCodeAdditionalNamespacesText = "System.IO";
+
+                var response = RequireDictionary(MCPEditorCommands.ExecuteCode(
+                    new Dictionary<string, object>
+                    {
+                        { "code", "return Path.GetFileName(\"folder/file.txt\");" },
+                    }));
+
+                Assert.That(response["success"], Is.EqualTo(true));
+                Assert.That(response["result"], Is.EqualTo("file.txt"));
+            }
+            finally
+            {
+                MCPSettingsManager.ExecuteCodeAdditionalNamespacesText = originalNamespaces;
+            }
         }
 
         [Test]
@@ -2957,9 +2809,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void RouteRegistry_OmitsDuplicateGraphicsGameCapture()
         {
-            var registered = RequireDictionary(
-                MCPToolMetadata.GetRegisteredRoutes());
-            var routes = (List<string>)registered["routes"];
+            var routes = GetBuiltInRoutes();
 
             Assert.That(routes, Does.Not.Contain("graphics/game-capture"));
         }
@@ -2967,8 +2817,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void RouteRegistry_ExposesOneAuthorityPerConsolidatedToolProduct()
         {
-            var registered = RequireDictionary(MCPToolMetadata.GetRegisteredRoutes());
-            var routes = (List<string>)registered["routes"];
+            var routes = GetBuiltInRoutes();
             string[] canonicalRoutes =
             {
                 "asset/list",
@@ -3983,7 +3832,7 @@ namespace UnityMCP.Editor.Tests
             CollectionAssert.IsSubsetOf(switchRoutes, registered);
             CollectionAssert.AreEquivalent(new[]
             {
-                "_meta/routes", "_meta/tools", "_meta/capabilities",
+                "_meta/tools", "_meta/capabilities",
                 "queue/cancel", "queue/info", "queue/status"
             }, registered.Except(switchRoutes).ToArray());
         }
@@ -5207,7 +5056,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void ToolMetadata_DetailedPageDoesNotDuplicateSchemaAliases()
+        public void ToolMetadata_DetailedPageUsesOneSchemaKey()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
                 firstClassOnly: false, compact: false, includeSchema: true, limit: 5));
@@ -5220,7 +5069,54 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void ToolMetadata_FirstClassSchemasOmitCompatibilityAliasesAndFalseAnnotations()
+        public void ToolMetadata_UsesOnlyTheCurrentMetadataContract()
+        {
+            var method = typeof(MCPToolMetadata).GetMethod(nameof(MCPToolMetadata.GetRegisteredTools),
+                BindingFlags.Static | BindingFlags.Public);
+            Assert.That(method, Is.Not.Null);
+            Assert.That(method.GetParameters().Select(parameter => parameter.Name),
+                Does.Not.Contain("includeCollections"));
+            Assert.That(typeof(MCPToolMetadata).GetMethod("GetRegisteredRoutes",
+                BindingFlags.Static | BindingFlags.Public), Is.Null);
+
+            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: false, compact: false, includeSchema: true, limit: 20));
+            foreach (string retiredCollection in new[]
+                     {
+                         "routes", "mcpTools", "firstClassTools", "fallbackTools", "categories"
+                     })
+            {
+                Assert.That(result.ContainsKey(retiredCollection), Is.False, retiredCollection);
+            }
+
+            var tools = (List<Dictionary<string, object>>)result["tools"];
+            Assert.That(tools.All(tool => !tool.ContainsKey("name")), Is.True);
+            Assert.That(tools.All(tool => !tool.ContainsKey("legacyToolName")), Is.True);
+
+            var routes = GetBuiltInRoutes();
+            Assert.That(routes, Does.Not.Contain("_meta/routes"));
+            Assert.That(routes.Any(route => route.StartsWith("amplify/", StringComparison.Ordinal)),
+                Is.False);
+            foreach (string retiredRoute in new[]
+                     {
+                         "prefab/set-object-reference", "prefab/duplicate",
+                         "prefab/set-active", "prefab/reparent"
+                     })
+            {
+                Assert.That(routes, Does.Not.Contain(retiredRoute), retiredRoute);
+            }
+            foreach (string currentRoute in new[]
+                     {
+                         "gameobject/duplicate", "gameobject/set-active", "gameobject/reparent"
+                     })
+            {
+                Assert.That(routes, Does.Contain(currentRoute), currentRoute);
+            }
+            Assert.That(MCPSettingsManager.GetAllCategoryNames(), Does.Not.Contain("amplify"));
+        }
+
+        [Test]
+        public void ToolMetadata_FirstClassSchemasUseCanonicalFieldsAndTrueAnnotations()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
                 firstClassOnly: true, compact: true, includeSchema: true, limit: 200));
@@ -6230,6 +6126,16 @@ namespace UnityMCP.Editor.Tests
         {
             Assert.That(value, Is.TypeOf<Dictionary<string, object>>());
             return (Dictionary<string, object>)value;
+        }
+
+        private static List<string> GetBuiltInRoutes()
+        {
+            Type registry = typeof(MCPToolMetadata).Assembly.GetType("UnityMCP.Editor.MCPRouteRegistry");
+            Assert.That(registry, Is.Not.Null);
+            var property = registry.GetProperty("BuiltInRoutes",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(property, Is.Not.Null);
+            return ((IEnumerable<string>)property.GetValue(null)).ToList();
         }
 
         private static Dictionary<string, object> InvokeUIBuilderPixelAnalysis(Color32[] pixels, int width,

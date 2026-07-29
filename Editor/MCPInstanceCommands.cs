@@ -67,8 +67,6 @@ namespace UnityMCP.Editor
         {
             string expectedProjectPath = GetExpectedProjectPath(args);
             string expectedProjectName = GetString(args, "expectedProjectName");
-            if (string.IsNullOrEmpty(expectedProjectName))
-                expectedProjectName = GetString(args, "projectName");
 
             var mismatch = BuildProjectMismatch(expectedProjectPath, expectedProjectName, "instance/assert-project");
             if (mismatch != null)
@@ -104,13 +102,7 @@ namespace UnityMCP.Editor
 
         public static string GetExpectedProjectPath(Dictionary<string, object> args)
         {
-            string expectedProjectPath = GetString(args, "expectedProjectPath");
-            if (string.IsNullOrEmpty(expectedProjectPath))
-                expectedProjectPath = GetString(args, "targetProjectPath");
-            if (string.IsNullOrEmpty(expectedProjectPath))
-                expectedProjectPath = GetString(args, "unityProjectPath");
-
-            return expectedProjectPath;
+            return GetString(args, "expectedProjectPath");
         }
 
         private static object BuildMismatchResult(string route, string expectedProjectPath, string expectedProjectName)
@@ -133,15 +125,8 @@ namespace UnityMCP.Editor
             List<Dictionary<string, object>> instances, Dictionary<string, object> args)
         {
             string projectPath = GetString(args, "projectPath");
-            if (string.IsNullOrEmpty(projectPath))
-                projectPath = GetString(args, "path");
-            if (string.IsNullOrEmpty(projectPath))
-                projectPath = GetExpectedProjectPath(args);
 
             string projectName = GetString(args, "projectName");
-            string expectedProjectName = GetString(args, "expectedProjectName");
-            if (string.IsNullOrEmpty(projectName))
-                projectName = expectedProjectName;
 
             int port = GetInt(args, "port", 0);
 

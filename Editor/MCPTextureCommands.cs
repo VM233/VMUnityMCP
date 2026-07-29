@@ -238,9 +238,7 @@ namespace UnityMCP.Editor
         {
             string path = GetString(args, "path");
             if (string.IsNullOrEmpty(path))
-                path = GetString(args, "assetPath");
-            if (string.IsNullOrEmpty(path))
-                return new { error = "path or assetPath is required" };
+                return new { error = "path is required" };
 
             var importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null)
@@ -259,10 +257,7 @@ namespace UnityMCP.Editor
             }
 
             string preset = GetString(args, "preset");
-            if (string.IsNullOrEmpty(preset))
-                preset = GetString(args, "importPreset");
-            if (string.Equals(preset, "pixel-sprite", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(preset, "pixelSprite", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(preset, "pixel-sprite", StringComparison.OrdinalIgnoreCase))
             {
                 importer.textureType = TextureImporterType.Sprite;
                 importer.spriteImportMode = SpriteImportMode.Single;
@@ -271,9 +266,9 @@ namespace UnityMCP.Editor
                 importer.textureCompression = TextureImporterCompression.Uncompressed;
                 importer.alphaIsTransparency = true;
                 importer.npotScale = TextureImporterNPOTScale.None;
-                if (!args.ContainsKey("readable") && !args.ContainsKey("isReadable"))
+                if (!args.ContainsKey("readable"))
                     importer.isReadable = true;
-                if (!args.ContainsKey("spritePixelsPerUnit") && !args.ContainsKey("pixelsPerUnit"))
+                if (!args.ContainsKey("pixelsPerUnit"))
                     importer.spritePixelsPerUnit = 32;
                 SetDefaultPlatformFormat(importer, TextureImporterFormat.RGBA32,
                     TextureImporterCompression.Uncompressed);
@@ -297,21 +292,17 @@ namespace UnityMCP.Editor
         {
             string sourcePath = GetString(args, "sourcePath");
             string sourceUrl = GetString(args, "sourceUrl");
-            if (string.IsNullOrEmpty(sourceUrl))
-                sourceUrl = GetString(args, "url");
 
             if (string.IsNullOrEmpty(sourcePath) && string.IsNullOrEmpty(sourceUrl))
-                return new { error = "sourcePath, sourceUrl, or url is required" };
+                return new { error = "sourcePath or sourceUrl is required" };
 
             string targetPath = GetString(args, "targetPath");
             if (string.IsNullOrEmpty(targetPath))
             {
                 string targetFolder = GetString(args, "targetFolder");
                 string assetName = GetString(args, "assetName");
-                if (string.IsNullOrEmpty(assetName))
-                    assetName = GetString(args, "name");
                 if (string.IsNullOrEmpty(targetFolder) || string.IsNullOrEmpty(assetName))
-                    return new { error = "Pass targetPath, or targetFolder plus assetName/name" };
+                    return new { error = "Pass targetPath, or targetFolder plus assetName" };
 
                 if (Path.HasExtension(assetName) == false)
                     assetName += ".png";
@@ -493,13 +484,13 @@ namespace UnityMCP.Editor
                 updated.Add("spriteMode");
             }
 
-            if (args.ContainsKey("pixelsPerUnit") || args.ContainsKey("spritePixelsPerUnit"))
+            if (args.ContainsKey("pixelsPerUnit"))
             {
-                importer.spritePixelsPerUnit = GetFloat(args, "spritePixelsPerUnit", GetFloat(args, "pixelsPerUnit", importer.spritePixelsPerUnit));
+                importer.spritePixelsPerUnit = GetFloat(args, "pixelsPerUnit", importer.spritePixelsPerUnit);
                 updated.Add("spritePixelsPerUnit");
             }
 
-            if (TryGetVector2(args, "pivot", out Vector2 pivot) || TryGetVector2(args, "spritePivot", out pivot))
+            if (TryGetVector2(args, "pivot", out Vector2 pivot))
             {
                 importer.spritePivot = pivot;
                 updated.Add("spritePivot");
@@ -545,9 +536,9 @@ namespace UnityMCP.Editor
                 updated.Add("defaultPlatformCompression");
             }
 
-            if (args.ContainsKey("readable") || args.ContainsKey("isReadable"))
+            if (args.ContainsKey("readable"))
             {
-                importer.isReadable = GetBool(args, "readable", GetBool(args, "isReadable", importer.isReadable));
+                importer.isReadable = GetBool(args, "readable", importer.isReadable);
                 updated.Add("readable");
             }
 
@@ -709,8 +700,7 @@ namespace UnityMCP.Editor
             if (reference != null)
                 AddReferenceComparisons(comparisons, importer, reference, tolerance);
 
-            if (string.Equals(preset, "pixel-sprite", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(preset, "pixelSprite", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(preset, "pixel-sprite", StringComparison.OrdinalIgnoreCase))
             {
                 AddPixelSpriteComparisons(comparisons, importer, tolerance);
             }
@@ -872,8 +862,6 @@ namespace UnityMCP.Editor
         {
             var paths = GetStringList(args, "assetPaths");
             string assetPath = GetString(args, "assetPath");
-            if (string.IsNullOrEmpty(assetPath))
-                assetPath = GetString(args, "path");
             if (string.IsNullOrEmpty(assetPath) == false)
                 paths.Add(assetPath);
 

@@ -224,8 +224,6 @@ namespace UnityMCP.Editor
 
             string label = GetString(args, "label");
             if (string.IsNullOrEmpty(label))
-                label = GetString(args, "name");
-            if (string.IsNullOrEmpty(label))
                 label = $"{width}x{height}";
 
             setCustomResolution.Invoke(gameView, new object[] { new Vector2(width, height), label });
@@ -286,11 +284,7 @@ namespace UnityMCP.Editor
         {
             string sourcePath = GetString(args, "sourcePath");
             if (string.IsNullOrEmpty(sourcePath))
-                sourcePath = GetString(args, "imagePath");
-            if (string.IsNullOrEmpty(sourcePath))
-                sourcePath = GetString(args, "path");
-            if (string.IsNullOrEmpty(sourcePath))
-                return new { error = "sourcePath, imagePath, or path is required" };
+                return new { error = "sourcePath is required" };
 
             string absoluteSourcePath = ResolveFilePath(sourcePath);
             if (File.Exists(absoluteSourcePath) == false)

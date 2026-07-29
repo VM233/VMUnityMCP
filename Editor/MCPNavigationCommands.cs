@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.AI;
@@ -27,9 +28,7 @@ namespace UnityMCP.Editor
             if (args.ContainsKey("agentClimb"))
                 settings.agentClimb = Convert.ToSingle(args["agentClimb"]);
 
-#pragma warning disable CS0618 // NavMeshBuilder: migration to NavMeshSurface API deferred
-            UnityEditor.AI.NavMeshBuilder.BuildNavMesh();
-#pragma warning restore CS0618
+            InvokeEditorNavMeshBuilder("BuildNavMesh");
 
             var triangulation = NavMesh.CalculateTriangulation();
             return new Dictionary<string, object>
@@ -44,14 +43,47 @@ namespace UnityMCP.Editor
 
         public static object ClearNavMesh(Dictionary<string, object> args)
         {
-#pragma warning disable CS0618 // NavMeshBuilder: migration to NavMeshSurface API deferred
-            UnityEditor.AI.NavMeshBuilder.ClearAllNavMeshes();
-#pragma warning restore CS0618
+            InvokeEditorNavMeshBuilder("ClearAllNavMeshes");
             return new Dictionary<string, object>
             {
                 { "success", true },
                 { "message", "All NavMeshes cleared" },
             };
+        }
+
+        private static void InvokeEditorNavMeshBuilder(string methodName)
+        {
+            Type builderType = null;
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                builderType = assembly.GetType("UnityEditor.AI.NavMeshBuilder", false);
+                if (builderType != null)
+                    break;
+            }
+
+            if (builderType == null)
+                throw new NotSupportedException(
+                    "The Unity Editor NavMesh builder API is unavailable in this Unity version.");
+
+            var method = builderType.GetMethod(
+                methodName,
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                Type.EmptyTypes,
+                null);
+            if (method == null)
+                throw new MissingMethodException(builderType.FullName, methodName);
+
+            try
+            {
+                method.Invoke(null, null);
+            }
+            catch (TargetInvocationException exception) when (exception.InnerException != null)
+            {
+                throw new InvalidOperationException(
+                    $"Unity NavMesh operation '{methodName}' failed.",
+                    exception.InnerException);
+            }
         }
 
         // ─── Add NavMeshAgent ───

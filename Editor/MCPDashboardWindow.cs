@@ -688,7 +688,7 @@ namespace UnityMCP.Editor
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
 
             EditorGUILayout.LabelField("User Preferences", EditorStyles.boldLabel);
-            MCPSettingsGUI.DrawUserPreferences(false, false);
+            MCPSettingsGUI.DrawUserPreferences(false);
 
             EditorGUILayout.Space(8);
 

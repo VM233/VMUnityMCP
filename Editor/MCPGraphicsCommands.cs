@@ -377,8 +377,6 @@ namespace UnityMCP.Editor
         public static object InspectImageAlphaBounds(Dictionary<string, object> args)
         {
             string assetPath = GetString(args, "assetPath");
-            if (string.IsNullOrEmpty(assetPath))
-                assetPath = GetString(args, "path");
             string filePath = GetString(args, "filePath");
 
             Texture2D source = null;
@@ -538,12 +536,6 @@ namespace UnityMCP.Editor
         public static object AnnotateRects(Dictionary<string, object> args)
         {
             string sourcePath = GetString(args, "sourcePath");
-            if (string.IsNullOrEmpty(sourcePath))
-                sourcePath = GetString(args, "imagePath");
-            if (string.IsNullOrEmpty(sourcePath))
-                sourcePath = GetString(args, "filePath");
-            if (string.IsNullOrEmpty(sourcePath))
-                sourcePath = GetString(args, "path");
             if (string.IsNullOrEmpty(sourcePath))
                 return new { error = "sourcePath is required" };
 
@@ -764,21 +756,17 @@ namespace UnityMCP.Editor
         public static object CompareImages(Dictionary<string, object> args)
         {
             string expectedPath = GetString(args, "expectedPath");
-            if (string.IsNullOrEmpty(expectedPath))
-                expectedPath = GetString(args, "referencePath");
             string actualPath = GetString(args, "actualPath");
-            if (string.IsNullOrEmpty(actualPath))
-                actualPath = GetString(args, "currentPath");
 
             if (string.IsNullOrEmpty(expectedPath) || string.IsNullOrEmpty(actualPath))
-                return new { error = "expectedPath/referencePath and actualPath/currentPath are required" };
+                return new { error = "expectedPath and actualPath are required" };
 
             string expectedAbsolute = ResolveAbsolutePath(expectedPath);
             string actualAbsolute = ResolveAbsolutePath(actualPath);
             if (File.Exists(expectedAbsolute) == false)
-                return new { error = $"Expected/reference image not found: '{expectedPath}'" };
+                return new { error = $"Expected image not found: '{expectedPath}'" };
             if (File.Exists(actualAbsolute) == false)
-                return new { error = $"Actual/current image not found: '{actualPath}'" };
+                return new { error = $"Actual image not found: '{actualPath}'" };
 
             Texture2D expected = null;
             Texture2D actual = null;

@@ -227,7 +227,6 @@ namespace UnityMCP.Editor
             { "testing",    TestTesting },
             { "shadergraph",    TestShaderGraph },
             { "terrain",        TestTerrain },
-            { "amplify",        TestAmplify },
             { "constraint",     TestConstraint },
             { "graphics",       TestGraphics },
             { "memoryprofiler", TestMemoryProfiler },
@@ -933,20 +932,6 @@ namespace UnityMCP.Editor
             catch (Exception ex)
             {
                 return $"Terrain.ListTerrains threw: {ex.Message}";
-            }
-        }
-
-        // --- Amplify ---
-        private static string TestAmplify()
-        {
-            try
-            {
-                var result = MCPAmplifyCommands.GetStatus(EmptyArgs());
-                return AssertNotNull(result, "Amplify.GetStatus");
-            }
-            catch (Exception ex)
-            {
-                return $"Amplify.GetStatus threw: {ex.Message}";
             }
         }
 

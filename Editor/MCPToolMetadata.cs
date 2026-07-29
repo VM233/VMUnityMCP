@@ -100,7 +100,6 @@ namespace UnityMCP.Editor
 
             AddProfile(profiles, ToolProfile.FirstClass(readOnly: true),
                 "_meta/capabilities",
-                "_meta/routes",
                 "_meta/tools",
                 "context",
                 "context/*",
@@ -259,36 +258,8 @@ namespace UnityMCP.Editor
             return slash > 0 ? path.Substring(0, slash) : path;
         }
 
-        /// <summary>
-        /// Returns all registered routes for dynamic tool discovery.
-        /// Used by the MCP server's lazy loading system to discover tools
-        /// added to the plugin without needing a server restart.
-        /// </summary>
-        public static object GetRegisteredRoutes()
-        {
-            EnsureRouteCache();
-            var routes = _cachedRoutes;
-
-            // Group by category
-            var grouped = new Dictionary<string, List<string>>();
-            foreach (var route in routes)
-            {
-                string cat = ExtractCategory(route);
-                if (!grouped.ContainsKey(cat)) grouped[cat] = new List<string>();
-                grouped[cat].Add(route);
-            }
-
-            return new Dictionary<string, object>
-            {
-                { "routes", routes },
-                { "categories", grouped },
-                { "totalRoutes", routes.Count }
-            };
-        }
-
         public static object GetRegisteredTools(bool firstClassOnly = true, bool compact = true,
-            bool includeSchema = false, int offset = 0, int limit = 50, string category = null,
-            bool includeCollections = false)
+            bool includeSchema = false, int offset = 0, int limit = 50, string category = null)
         {
             if (firstClassOnly)
                 EnsureFirstClassToolMetadataCache();
@@ -332,32 +303,6 @@ namespace UnityMCP.Editor
             result["metadataSource"] = "MCPToolMetadata.ToolProfiles";
             result["tools"] = page.Select(tool => ToDetailedToolDescriptor(tool, includeSchema)).ToList();
             result["metadataIssues"] = BuildMetadataIssues(page);
-            if (!includeCollections)
-                return result;
-
-            var routes = page.Select(tool => tool["route"].ToString()).ToList();
-            var firstClassTools = page.Where(IsFirstClassTool).ToList();
-            var fallbackTools = page.Where(tool => string.Equals(
-                tool.TryGetValue("exposure", out var exposure) ? exposure?.ToString() : "",
-                "fallback", StringComparison.Ordinal)).ToList();
-
-            var grouped = new Dictionary<string, List<string>>();
-            foreach (var tool in tools)
-            {
-                string toolCategory = tool["category"].ToString();
-                if (!grouped.ContainsKey(toolCategory))
-                    grouped[toolCategory] = new List<string>();
-                grouped[toolCategory].Add(tool["toolName"].ToString());
-            }
-
-            result["routes"] = routes;
-            result["mcpTools"] = firstClassTools.Select(tool =>
-                ToMcpToolDescriptor(tool, includeSchema)).ToList();
-            result["firstClassTools"] = firstClassTools.Select(tool =>
-                ToDetailedToolDescriptor(tool, includeSchema)).ToList();
-            result["fallbackTools"] = fallbackTools.Select(tool =>
-                ToDetailedToolDescriptor(tool, includeSchema)).ToList();
-            result["categories"] = grouped;
             return result;
         }
 
@@ -450,7 +395,6 @@ namespace UnityMCP.Editor
             {
                 { "route", route },
                 { "toolName", toolName },
-                { "name", toolName },
                 { "category", ExtractCategory(route) },
                 { "capability", MCPCapabilityRegistry.GetCapabilityName(route) },
                 { "description", description },
@@ -489,7 +433,6 @@ namespace UnityMCP.Editor
                 ? shortNameValue?.ToString()
                 : "";
             string toolName = ProjectToolNameToToolName(projectToolName, shortName);
-            string legacyToolName = "unity_project_tool_" + NormalizeProjectToolName(projectToolName);
             bool explicitMutatesAssets = GetBool(projectTool, "mutatesAssets", false);
             bool mutatesRuntime = GetBool(projectTool, "mutatesRuntime", false);
             bool readOnly = GetBool(projectTool, "readOnly", false);
@@ -517,13 +460,11 @@ namespace UnityMCP.Editor
             {
                 { "route", route },
                 { "toolName", toolName },
-                { "name", toolName },
                 { "category", "project-tools" },
                 { "capability", "project" },
                 { "description", string.IsNullOrEmpty(description) ? $"Project MCP tool: {projectToolName}" : description },
                 { "inputSchema", inputSchema },
                 { "projectToolName", projectToolName },
-                { "legacyToolName", legacyToolName },
                 { "firstClass", isFirstClass },
                 { "exposure", profile.Exposure },
                 { "preferred", profile.Preferred },
@@ -633,23 +574,6 @@ namespace UnityMCP.Editor
             if (MCPProjectToolCommands.TryGetToolDictionaryForDirectRoute(route, out var projectTool))
                 return GetBool(projectTool, "mayReloadDomain", false);
             return GetToolProfile(route).MayReloadDomain;
-        }
-
-        private static Dictionary<string, object> ToMcpToolDescriptor(Dictionary<string, object> tool,
-            bool includeSchema)
-        {
-            var descriptor = new Dictionary<string, object>
-            {
-                { "name", tool.TryGetValue("toolName", out var name) ? name : "" },
-                { "description", tool.TryGetValue("description", out var description) ? description : "" },
-                { "annotations", tool.TryGetValue("annotations", out var annotations) ? annotations : new Dictionary<string, object>() },
-                { "route", tool.TryGetValue("route", out var route) ? route : "" },
-            };
-            if (includeSchema)
-                descriptor["inputSchema"] = tool.TryGetValue("inputSchema", out var schema)
-                    ? schema
-                    : new Dictionary<string, object>();
-            return descriptor;
         }
 
         private static List<Dictionary<string, object>> BuildMetadataIssues(List<Dictionary<string, object>> tools)
@@ -1304,7 +1228,7 @@ namespace UnityMCP.Editor
                 case "editor/execute-code":
                     return Schema(Props(
                         Prop("code", "string", "C# method body to execute. Return a value to serialize it."),
-                        Prop("usings", "array", "Additional namespace imports. UnityEngine.UIElements is included by default."),
+                        Prop("usings", "array", "Additional namespace imports for this call. Recurring imports can be configured in Project Settings > Unity MCP > Execute Code. UnityEngine.UIElements is included by default."),
                         Prop("maxResultItems", "number", "Maximum serialized collection/object entries across the result. Defaults to 200; capped at 2000."),
                         Prop("maxResultDepth", "number", "Maximum serialized result depth. Defaults to 8; capped at 16."),
                         Prop("maxResultStringLength", "number", "Maximum characters per returned string. Defaults to 20000; capped at 200000.")

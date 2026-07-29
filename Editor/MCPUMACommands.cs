@@ -94,9 +94,8 @@ namespace UnityMCP.Editor
             string smrName = GetOptionalString(args, "smrName", null);
             string slotName = GetRequiredString(args, "slotName");
             string outputFolder = GetRequiredString(args, "outputFolder");
-            string umaMaterialPath = GetOptionalString(args, "umaMaterialPath", null)
-                ?? GetOptionalString(args, "umaMaterial", null)
-                ?? "Assets/UMA/Content/UMA_Core/MaterialSamples/UMA_ClothesBase.asset";
+            string umaMaterialPath = GetOptionalString(args, "umaMaterialPath",
+                "Assets/UMA/Content/UMA_Core/MaterialSamples/UMA_ClothesBase.asset");
             // Validate umaMaterialPath: if agent passed a name instead of a path, try to resolve it
             if (!umaMaterialPath.Contains("/") && !umaMaterialPath.EndsWith(".asset"))
             {
@@ -208,7 +207,6 @@ namespace UnityMCP.Editor
 
             // Pitfall #4: Move files from subfolder to output folder
             string subfolder = outputFolder + "/" + slotName;
-            string finalSlotPath = null;
             if (AssetDatabase.IsValidFolder(subfolder))
             {
                 var guids = AssetDatabase.FindAssets("", new[] { subfolder });
@@ -218,8 +216,6 @@ namespace UnityMCP.Editor
                     string fileName = System.IO.Path.GetFileName(src);
                     string dest = outputFolder + "/" + fileName;
                     AssetDatabase.MoveAsset(src, dest);
-                    if (fileName.EndsWith("_slot.asset") || fileName.EndsWith("_Slot.asset"))
-                        finalSlotPath = dest;
                 }
                 AssetDatabase.DeleteAsset(subfolder);
             }
@@ -271,15 +267,9 @@ namespace UnityMCP.Editor
 
             AssetDatabase.SaveAssets();
 
-            // Determine primary slot path for backward compat
-            if (finalSlotPath == null && allCreatedSlots.Count > 0)
-                finalSlotPath = allCreatedSlots[0]["slotAssetPath"]?.ToString();
-
             return new Dictionary<string, object>
             {
                 { "success", true },
-                { "slotName", slotName },
-                { "slotAssetPath", finalSlotPath ?? "unknown" },
                 { "slotCount", allCreatedSlots.Count },
                 { "allSlots", allCreatedSlots },
                 // keepList removed - UMA handles bone filtering internally
@@ -420,8 +410,7 @@ namespace UnityMCP.Editor
             string wardrobeSlot = GetRequiredString(args, "wardrobeSlot");
             string outputFolder = GetRequiredString(args, "outputFolder");
 
-            // FIX Issue #1: Resolve compatibleRaces with auto-detection.
-            // Supports both "compatibleRaces" (array from TS tool) and "race" (string, legacy).
+            // Resolve compatibleRaces with auto-detection.
             // If "Generic" is passed or nothing, auto-detect from existing wardrobe recipes.
             var resolvedRaces = new List<string>();
             var compatRacesList = GetOptionalList(args, "compatibleRaces");
@@ -430,13 +419,6 @@ namespace UnityMCP.Editor
                 foreach (var r in compatRacesList)
                     if (r != null) resolvedRaces.Add(r.ToString());
             }
-            else
-            {
-                string singleRace = GetOptionalString(args, "race", null);
-                if (!string.IsNullOrEmpty(singleRace))
-                    resolvedRaces.Add(singleRace);
-            }
-
             // Auto-detect: if empty or contains only "Generic", query existing recipes
             bool needsAutoDetect = resolvedRaces.Count == 0
                 || (resolvedRaces.Count == 1 && resolvedRaces[0].Equals("Generic", StringComparison.OrdinalIgnoreCase));
@@ -493,26 +475,9 @@ namespace UnityMCP.Editor
                 // Get overlays array for this slot
                 var overlaysList = GetOptionalList(slotDict, "overlays");
 
-                // Backward compat: if no "overlays" array, try single "overlayName"
                 if (overlaysList == null || overlaysList.Count == 0)
                 {
-                    string singleOverlay = GetOptionalString(slotDict, "overlayName", null);
-                    if (singleOverlay != null)
-                    {
-                        int ch = GetOptionalInt(slotDict, "channelCount", 3);
-                        overlaysList = new List<object>
-                        {
-                            new Dictionary<string, object>
-                            {
-                                { "overlayName", singleOverlay },
-                                { "channelCount", ch }
-                            }
-                        };
-                    }
-                    else
-                    {
-                        return Error($"Slot '{slotId}' must have an 'overlays' array or a single 'overlayName'.");
-                    }
+                    return Error($"Slot '{slotId}' must have a non-empty 'overlays' array.");
                 }
 
                 if (!isFirstSlot) sb.Append(",");
@@ -854,13 +819,10 @@ namespace UnityMCP.Editor
 
         /// <summary>
         /// List available wardrobe slots for a given race.
-        /// Accepts "raceName" (from MCP tool schema) or "race" (legacy).
         /// </summary>
         public static object ListWardrobeSlots(Dictionary<string, object> args)
         {
-            // Accept both "raceName" (MCP schema) and "race" (legacy) keys
-            string raceName = GetOptionalString(args, "raceName", null)
-                           ?? GetOptionalString(args, "race", "HumanRace");
+            string raceName = GetOptionalString(args, "raceName", "HumanRace");
 
             var context = UMAAssetIndexer.Instance;
             var raceAssets = context.GetAllAssets<RaceData>(null);
@@ -1228,10 +1190,9 @@ namespace UnityMCP.Editor
             string fbxPath = GetRequiredString(args, "fbxPath");
             string outputFolder = GetRequiredString(args, "outputFolder");
             string wardrobeSlot = GetRequiredString(args, "wardrobeSlot");
-            string umaMaterialPath = GetOptionalString(args, "umaMaterialPath", null)
-                ?? GetOptionalString(args, "umaMaterial", null);
+            string umaMaterialPath = GetOptionalString(args, "umaMaterialPath", null);
             if (string.IsNullOrEmpty(umaMaterialPath))
-                return Error("Missing required parameter: umaMaterialPath (or umaMaterial). Pass the full asset path like 'Assets/UMA/.../MyMaterial.asset' or just the material name.");
+                return Error("Missing required parameter: umaMaterialPath. Pass the full asset path like 'Assets/UMA/.../MyMaterial.asset' or just the material name.");
 
             // Validate umaMaterialPath: if agent passed a name instead of a path, try to resolve it
             if (!umaMaterialPath.Contains("/") && !umaMaterialPath.EndsWith(".asset"))
@@ -1292,10 +1253,7 @@ namespace UnityMCP.Editor
                 var vDict = vObj as Dictionary<string, object>;
                 if (vDict == null) continue;
                 var vd = new VariantDef();
-                // Accept "suffix", "name", or "variantName" - agents frequently use the wrong key
-                vd.suffix = GetOptionalString(vDict, "suffix", null)
-                    ?? GetOptionalString(vDict, "name", null)
-                    ?? GetOptionalString(vDict, "variantName", null);
+                vd.suffix = GetOptionalString(vDict, "suffix", null);
                 if (string.IsNullOrEmpty(vd.suffix))
                     return Error("Each variant must have a 'suffix' field. Example: { \"suffix\": \"Iron\" }");
 
@@ -2338,7 +2296,7 @@ namespace UnityMCP.Editor
                 if (tags != null)
                     race.tags = tags.Select(t => t.ToString()).ToList();
 
-                // 2e. Backwards compatibility
+                // 2e. UMA race cross-compatibility
                 var compat = GetOptionalList(args, "backwardsCompatibleWith");
                 if (compat != null)
                     race.backwardsCompatibleWith = compat.Select(c => c.ToString()).ToList();
@@ -2663,7 +2621,7 @@ namespace UnityMCP.Editor
                 if (tagsParam != null)
                     newRace.tags = tagsParam.Select(t => t.ToString()).ToList();
 
-                // Backwards compatibility
+                // UMA race cross-compatibility
                 var compatParam = GetOptionalList(args, "backwardsCompatibleWith");
                 if (compatParam != null)
                     newRace.backwardsCompatibleWith = compatParam.Select(c => c.ToString()).ToList();

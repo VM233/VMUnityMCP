@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
@@ -17,9 +18,6 @@ namespace UnityMCP.Editor
     /// </summary>
     public static class MCPSettingsManager
     {
-        // Legacy pre-2-tier global prefix — kept only for one-shot migration.
-        private const string LegacyPrefix = "UnityMCP_";
-
         private static string _instancePrefix;
         private static string _projectPrefix;
 
@@ -56,57 +54,10 @@ namespace UnityMCP.Editor
             }
         }
 
-        static MCPSettingsManager()
-        {
-            MigrateLegacyKeys();
-        }
-
-        /// <summary>
-        /// One-shot migration: copy any pre-2-tier global "UnityMCP_*" value into its
-        /// new tiered key so existing users keep their settings. Best-effort.
-        /// </summary>
-        private static void MigrateLegacyKeys()
-        {
-            try
-            {
-                MigrateInt("Port", InstancePrefix);
-                MigrateBool("UseManualPort", InstancePrefix);
-                MigrateBool("AutoStart", InstancePrefix);
-                MigrateBool("StartOnVirtualPlayers", ProjectPrefix);
-                MigrateBool("ContextEnabled", ProjectPrefix);
-                MigrateString("ContextPath", ProjectPrefix);
-                MigrateBool("ActionHistoryPersistence", ProjectPrefix);
-                MigrateInt("ActionHistoryMaxEntries", ProjectPrefix);
-                MigrateString("EnabledCategories", ProjectPrefix);
-            }
-            catch { /* migration is best-effort — never block startup on it */ }
-        }
-
-        private static void MigrateBool(string name, string prefix)
-        {
-            string newKey = prefix + name, oldKey = LegacyPrefix + name;
-            if (!EditorPrefs.HasKey(newKey) && EditorPrefs.HasKey(oldKey))
-                EditorPrefs.SetBool(newKey, EditorPrefs.GetBool(oldKey));
-        }
-
-        private static void MigrateInt(string name, string prefix)
-        {
-            string newKey = prefix + name, oldKey = LegacyPrefix + name;
-            if (!EditorPrefs.HasKey(newKey) && EditorPrefs.HasKey(oldKey))
-                EditorPrefs.SetInt(newKey, EditorPrefs.GetInt(oldKey));
-        }
-
-        private static void MigrateString(string name, string prefix)
-        {
-            string newKey = prefix + name, oldKey = LegacyPrefix + name;
-            if (!EditorPrefs.HasKey(newKey) && EditorPrefs.HasKey(oldKey))
-                EditorPrefs.SetString(newKey, EditorPrefs.GetString(oldKey));
-        }
-
         // ─── Categories ───
         private static readonly string[] AllCategories = new[]
         {
-            "advanced", "amplify", "animation", "asmdef", "asset", "audio", "build", "component", "console",
+            "advanced", "animation", "asmdef", "asset", "audio", "build", "component", "console",
             "constraint", "debug", "debugger", "editor", "gameobject", "graphics", "input", "instance", "lighting",
             "gameview",
             "memoryprofiler", "mppm", "navigation", "packagemanager", "particle", "physics", "prefab",
@@ -149,13 +100,12 @@ namespace UnityMCP.Editor
 
         /// <summary>
         /// When false, the MCP bridge does not auto-start on MPPM Virtual Players —
-        /// only on the main Editor. Manual start still works. Default true
-        /// (preserves the historical behaviour where every Editor starts a bridge).
+        /// only on the main Editor. Manual start still works. Defaults to false.
         /// Project-scoped so the virtual players inherit the project's policy.
         /// </summary>
         public static bool StartOnVirtualPlayers
         {
-            get => EditorPrefs.GetBool(ProjectPrefix + "StartOnVirtualPlayers", true);
+            get => EditorPrefs.GetBool(ProjectPrefix + "StartOnVirtualPlayers", false);
             set => EditorPrefs.SetBool(ProjectPrefix + "StartOnVirtualPlayers", value);
         }
 
@@ -171,6 +121,30 @@ namespace UnityMCP.Editor
         {
             get => EditorPrefs.GetString(ProjectPrefix + "ContextPath", "Assets/MCP/Context");
             set => EditorPrefs.SetString(ProjectPrefix + "ContextPath", value);
+        }
+
+        // ─── Execute Code (project-scoped) ───
+
+        public static string ExecuteCodeAdditionalNamespacesText
+        {
+            get => EditorPrefs.GetString(ProjectPrefix + "ExecuteCodeAdditionalNamespaces", "");
+            set => EditorPrefs.SetString(ProjectPrefix + "ExecuteCodeAdditionalNamespaces", value ?? "");
+        }
+
+        public static IReadOnlyList<string> GetExecuteCodeAdditionalNamespaces()
+        {
+            var namespaces = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            string configured = ExecuteCodeAdditionalNamespacesText;
+            foreach (string line in configured.Split(
+                         new[] { '\r', '\n' },
+                         StringSplitOptions.RemoveEmptyEntries))
+            {
+                string namespaceName = line.Trim();
+                if (namespaceName.Length > 0 && seen.Add(namespaceName))
+                    namespaces.Add(namespaceName);
+            }
+            return namespaces;
         }
 
         // ─── Action History (project-scoped) ───
@@ -258,9 +232,10 @@ namespace UnityMCP.Editor
         /// </summary>
         public static void ResetProjectSettingsToDefaults()
         {
-            StartOnVirtualPlayers = true;
+            StartOnVirtualPlayers = false;
             ContextEnabled = true;
             ContextPath = "Assets/MCP/Context";
+            EditorPrefs.DeleteKey(ProjectPrefix + "ExecuteCodeAdditionalNamespaces");
             ActionHistoryPersistence = false;
             ActionHistoryMaxEntries = 500;
             _enabledCategories = null;

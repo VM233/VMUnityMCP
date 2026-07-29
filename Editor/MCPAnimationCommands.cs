@@ -134,8 +134,7 @@ namespace UnityMCP.Editor
         public static object ValidateController(Dictionary<string, object> args)
         {
             args ??= new Dictionary<string, object>();
-            string path = args.ContainsKey("controllerPath") ? args["controllerPath"].ToString() :
-                args.ContainsKey("path") ? args["path"].ToString() : "";
+            string path = args.ContainsKey("controllerPath") ? args["controllerPath"].ToString() : "";
             var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
             if (controller == null)
                 return new { error = $"Animator controller not found at '{path}'" };
@@ -355,9 +354,7 @@ namespace UnityMCP.Editor
             {
                 string motionPath = args.ContainsKey("motionPath")
                     ? args["motionPath"].ToString()
-                    : args.ContainsKey("clipPath")
-                        ? args["clipPath"].ToString()
-                        : "";
+                    : "";
 
                 if (!string.IsNullOrEmpty(motionPath))
                 {

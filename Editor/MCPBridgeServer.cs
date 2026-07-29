@@ -14,11 +14,8 @@ namespace UnityMCP.Editor
     /// HTTP server that runs inside the Unity Editor, enabling external MCP tools
     /// to control the editor via REST API calls.
     ///
-    /// Supports two modes:
-    ///   1. Queue mode (async):  POST /api/queue/submit → poll GET /api/queue/status
-    ///   2. Legacy mode (sync):  POST /api/{command}    → blocks until done
-    ///
-    /// Both modes go through MCPRequestQueue for fair round-robin scheduling.
+    /// Commands use the asynchronous ticket queue:
+    /// POST /api/queue/submit → poll GET /api/queue/status.
     /// </summary>
     [InitializeOnLoad]
     public static class MCPBridgeServer
@@ -211,10 +208,11 @@ namespace UnityMCP.Editor
                     IsBackground = true,
                     Name = "AB Unity MCP Server"
                 };
-                _listenerThread.Start();
 
-                // Register in the shared instance registry
+                // Register and cache instance identity on the main thread before the
+                // listener can serve the infrastructure ping endpoint.
                 MCPInstanceRegistry.Register(port);
+                _listenerThread.Start();
 
                 // Successful bind — clear any pending manual-port retry state.
                 _manualPortRetryCount = 0;
@@ -382,6 +380,14 @@ namespace UnityMCP.Editor
                     return;
                 }
 
+                // Instance discovery needs one non-command liveness endpoint before a
+                // client has selected a target. All executable routes still use queue/submit.
+                if (apiPath == "ping")
+                {
+                    SendJson(response, 200, BuildPingResponse());
+                    return;
+                }
+
                 // ═══ Queue endpoints (async, non-blocking) ═══
                 if (apiPath == "queue/submit")
                 {
@@ -404,30 +410,9 @@ namespace UnityMCP.Editor
                     return;
                 }
 
-                // ═══ Deferred paths (Unity APIs with async callbacks) ═══
-                if (apiPath == "wait/editor-idle")
-                {
-                    var result = MCPRequestQueue.ExecuteResumableEditorIdleWait(agentId, ParseJson(body));
-                    SendJson(response, 200, result);
-                    return;
-                }
-                if (_deferredRoutes.TryGetValue(apiPath, out var deferredHandler))
-                {
-                    string requestKey = BuildRequestKey(agentId, apiPath, request, requestArgs);
-                    var result = MCPRequestQueue.ExecutePersistentDeferredWithTracking(agentId, apiPath,
-                        (resolve, progress) => deferredHandler(ParseJson(body), resolve, progress),
-                        body, requestKey);
-                    SendJson(response, 200, result);
-                    return;
-                }
-
-                // ═══ Legacy synchronous path (blocks until main thread processes) ═══
-                {
-                    string requestKey = BuildRequestKey(agentId, apiPath, request, requestArgs);
-                    var result = MCPRequestQueue.ExecutePersistentWithTracking(agentId, apiPath,
-                        request.HttpMethod, body, requestKey);
-                    SendJson(response, 200, result);
-                }
+                SendJson(response, 404, MCPResponse.Error(
+                    "Direct command endpoints are not supported. Submit commands through queue/submit.",
+                    "queue_submit_required"));
             }
             catch (Exception ex)
             {
@@ -550,15 +535,6 @@ namespace UnityMCP.Editor
             SendJson(response, MCPResponse.TryGetError(result, out _, out _, out _) ? 409 : 200, result);
         }
 
-        private static string BuildRequestKey(string agentId, string apiPath, HttpListenerRequest request,
-            Dictionary<string, object> args)
-        {
-            string requestId = request?.Headers["Idempotency-Key"] ?? request?.Headers["X-Request-Id"];
-            if (string.IsNullOrEmpty(requestId))
-                requestId = GetArgumentString(args, "requestId");
-            return string.IsNullOrEmpty(requestId) ? null : agentId + "|" + apiPath + "|" + requestId;
-        }
-
         // ─── Route Request (runs on main thread) ───
 
         private static string ExtractCategory(string path)
@@ -570,8 +546,6 @@ namespace UnityMCP.Editor
         private static object ExecuteAdvancedRoute(Dictionary<string, object> args, string outerMethod)
         {
             string route = GetArgumentString(args, "route");
-            if (string.IsNullOrEmpty(route))
-                route = GetArgumentString(args, "path");
             if (string.IsNullOrEmpty(route))
                 return new { error = "route is required" };
 
@@ -587,8 +561,6 @@ namespace UnityMCP.Editor
             if (string.IsNullOrEmpty(nestedBody))
             {
                 var nestedArgs = GetArgumentDictionary(args, "args")
-                                 ?? GetArgumentDictionary(args, "arguments")
-                                 ?? GetArgumentDictionary(args, "parameters")
                                  ?? new Dictionary<string, object>();
                 nestedBody = MiniJson.Serialize(nestedArgs);
             }
@@ -599,8 +571,6 @@ namespace UnityMCP.Editor
         private static void ExecuteAdvancedRouteDeferred(Dictionary<string, object> args, Action<object> resolve)
         {
             string route = GetArgumentString(args, "route");
-            if (string.IsNullOrEmpty(route))
-                route = GetArgumentString(args, "path");
             if (string.IsNullOrEmpty(route))
             {
                 resolve(new { error = "route is required" });
@@ -616,8 +586,6 @@ namespace UnityMCP.Editor
 
             string nestedBody = GetArgumentString(args, "body");
             var nestedArgs = GetArgumentDictionary(args, "args")
-                             ?? GetArgumentDictionary(args, "arguments")
-                             ?? GetArgumentDictionary(args, "parameters")
                              ?? new Dictionary<string, object>();
             if (string.IsNullOrEmpty(nestedBody))
                 nestedBody = MiniJson.Serialize(nestedArgs);
@@ -667,10 +635,7 @@ namespace UnityMCP.Editor
 
             if (args.ContainsKey("expectedProjectPath") == false)
             {
-                string expectedProjectPath =
-                    request.Headers["X-UnityMCP-Expected-Project-Path"] ??
-                    request.Headers["X-Unity-Project-Path"] ??
-                    request.Headers["X-Unity-Project-Root"];
+                string expectedProjectPath = request.Headers["X-UnityMCP-Expected-Project-Path"];
 
                 if (!string.IsNullOrEmpty(expectedProjectPath))
                     args["expectedProjectPath"] = expectedProjectPath;
@@ -678,9 +643,7 @@ namespace UnityMCP.Editor
 
             if (args.ContainsKey("expectedProjectName") == false)
             {
-                string expectedProjectName =
-                    request.Headers["X-UnityMCP-Expected-Project-Name"] ??
-                    request.Headers["X-Unity-Project-Name"];
+                string expectedProjectName = request.Headers["X-UnityMCP-Expected-Project-Name"];
 
                 if (!string.IsNullOrEmpty(expectedProjectName))
                     args["expectedProjectName"] = expectedProjectName;
@@ -696,10 +659,6 @@ namespace UnityMCP.Editor
 
             string expectedProjectPath = MCPInstanceCommands.GetExpectedProjectPath(args);
             string expectedProjectName = GetArgumentString(args, "expectedProjectName");
-            if (string.IsNullOrEmpty(expectedProjectName))
-                expectedProjectName = GetArgumentString(args, "targetProjectName");
-            if (string.IsNullOrEmpty(expectedProjectName))
-                expectedProjectName = GetArgumentString(args, "unityProjectName");
 
             if (string.IsNullOrEmpty(expectedProjectPath) && string.IsNullOrEmpty(expectedProjectName))
             {
@@ -750,16 +709,12 @@ namespace UnityMCP.Editor
 
         /// <summary>
         /// Route API requests to the appropriate handler.
-        /// NOTE: This entire method runs on the main thread (dispatched by HandleRequest
-        /// or by MCPRequestQueue.ProcessNextRequests), so all Unity APIs work correctly.
+        /// NOTE: This entire method runs on the main thread through
+        /// MCPRequestQueue.ProcessNextRequests, so all Unity APIs work correctly.
         /// </summary>
         private static object RouteRequest(string path, string method, string body)
         {
             // ─── Meta endpoints (no category check) ───
-            if (path == "_meta/routes")
-            {
-                return MCPToolMetadata.GetRegisteredRoutes();
-            }
             if (path == "_meta/tools")
             {
                 var args = ParseJson(body);
@@ -769,8 +724,6 @@ namespace UnityMCP.Editor
                                value == null || Convert.ToBoolean(value);
                 bool includeSchema = args.TryGetValue("includeSchema", out value) &&
                                      value != null && Convert.ToBoolean(value);
-                bool includeCollections = args.TryGetValue("includeCollections", out value) &&
-                                          value != null && Convert.ToBoolean(value);
                 int offset = args.TryGetValue("offset", out value) && value != null
                     ? Convert.ToInt32(value)
                     : 0;
@@ -779,7 +732,7 @@ namespace UnityMCP.Editor
                     : 50;
                 string metadataCategory = args.TryGetValue("category", out value) ? value?.ToString() : null;
                 return MCPToolMetadata.GetRegisteredTools(firstClassOnly, compact, includeSchema,
-                    offset, limit, metadataCategory, includeCollections);
+                    offset, limit, metadataCategory);
             }
             if (path == "_meta/capabilities")
             {
@@ -825,17 +778,7 @@ namespace UnityMCP.Editor
             {
                 // ─── Ping ───
                 case "ping":
-                    return new
-                    {
-                        status = "ok",
-                        unityVersion = Application.unityVersion,
-                        projectName = Application.productName,
-                        projectPath = GetProjectPath(),
-                        platform = Application.platform.ToString(),
-                        isClone = MCPInstanceRegistry.IsParrelSyncClone(),
-                        cloneIndex = MCPInstanceRegistry.GetParrelSyncCloneIndex(),
-                        processId = System.Diagnostics.Process.GetCurrentProcess().Id
-                    };
+                    return BuildPingResponse();
 
                 // ─── Instance Routing ───
                 case "instance/current":
@@ -898,6 +841,12 @@ namespace UnityMCP.Editor
                     return MCPGameObjectCommands.GetInfo(ParseJson(body));
                 case "gameobject/set-transform":
                     return MCPGameObjectCommands.SetTransform(ParseJson(body));
+                case "gameobject/duplicate":
+                    return MCPGameObjectCommands.Duplicate(ParseJson(body));
+                case "gameobject/set-active":
+                    return MCPGameObjectCommands.SetActive(ParseJson(body));
+                case "gameobject/reparent":
+                    return MCPGameObjectCommands.Reparent(ParseJson(body));
 
                 // ─── Component ───
                 case "component/add":
@@ -1072,15 +1021,6 @@ namespace UnityMCP.Editor
                     return MCPPrefabCommands.RevertOverrides(ParseJson(body));
                 case "prefab/unpack":
                     return MCPPrefabCommands.Unpack(ParseJson(body));
-                case "prefab/set-object-reference":
-                    return MCPPrefabCommands.SetObjectReference(ParseJson(body));
-                case "prefab/duplicate":
-                    return MCPPrefabCommands.Duplicate(ParseJson(body));
-                case "prefab/set-active":
-                    return MCPPrefabCommands.SetActive(ParseJson(body));
-                case "prefab/reparent":
-                    return MCPPrefabCommands.Reparent(ParseJson(body));
-
                 // ─── Prefab Asset (Direct Editing) ───
                 case "prefab-asset/hierarchy":
                     return MCPPrefabAssetCommands.GetHierarchy(ParseJson(body));
@@ -1286,54 +1226,6 @@ namespace UnityMCP.Editor
                     return MCPShaderGraphCommands.SetGraphNodeProperty(ParseJson(body));
                 case "shadergraph/get-node-types":
                     return MCPShaderGraphCommands.GetNodeTypes(ParseJson(body));
-
-                // ─── Amplify Shader Editor ───
-                case "amplify/status":
-                    return MCPAmplifyCommands.GetStatus(ParseJson(body));
-                case "amplify/list":
-                    return MCPAmplifyCommands.ListAmplifyShaders(ParseJson(body));
-                case "amplify/info":
-                    return MCPAmplifyCommands.GetAmplifyShaderInfo(ParseJson(body));
-                case "amplify/open":
-                    return MCPAmplifyCommands.OpenAmplifyShader(ParseJson(body));
-                case "amplify/list-functions":
-                    return MCPAmplifyCommands.ListAmplifyFunctions(ParseJson(body));
-                case "amplify/get-node-types":
-                    return MCPAmplifyCommands.GetAmplifyNodeTypes(ParseJson(body));
-                case "amplify/get-nodes":
-                    return MCPAmplifyCommands.GetAmplifyGraphNodes(ParseJson(body));
-                case "amplify/get-connections":
-                    return MCPAmplifyCommands.GetAmplifyGraphConnections(ParseJson(body));
-                case "amplify/create-shader":
-                    return MCPAmplifyCommands.CreateAmplifyShader(ParseJson(body));
-                case "amplify/add-node":
-                    return MCPAmplifyCommands.AddAmplifyNode(ParseJson(body));
-                case "amplify/remove-node":
-                    return MCPAmplifyCommands.RemoveAmplifyNode(ParseJson(body));
-                case "amplify/connect":
-                    return MCPAmplifyCommands.ConnectAmplifyNodes(ParseJson(body));
-                case "amplify/disconnect":
-                    return MCPAmplifyCommands.DisconnectAmplifyNodes(ParseJson(body));
-                case "amplify/node-info":
-                    return MCPAmplifyCommands.GetAmplifyNodeInfo(ParseJson(body));
-                case "amplify/set-node-property":
-                    return MCPAmplifyCommands.SetAmplifyNodeProperty(ParseJson(body));
-                case "amplify/move-node":
-                    return MCPAmplifyCommands.MoveAmplifyNode(ParseJson(body));
-                case "amplify/save":
-                    return MCPAmplifyCommands.SaveAmplifyGraph(ParseJson(body));
-                case "amplify/close":
-                    return MCPAmplifyCommands.CloseAmplifyEditor(ParseJson(body));
-                case "amplify/create-from-template":
-                    return MCPAmplifyCommands.CreateAmplifyFromTemplate(ParseJson(body));
-                case "amplify/focus-node":
-                    return MCPAmplifyCommands.FocusAmplifyNode(ParseJson(body));
-                case "amplify/master-node-info":
-                    return MCPAmplifyCommands.GetAmplifyMasterNodeInfo(ParseJson(body));
-                case "amplify/disconnect-all":
-                    return MCPAmplifyCommands.DisconnectAllAmplifyNode(ParseJson(body));
-                case "amplify/duplicate-node":
-                    return MCPAmplifyCommands.DuplicateAmplifyNode(ParseJson(body));
 
                 // ─── Agent Management ───
                 case "agents/list":
@@ -1786,6 +1678,13 @@ namespace UnityMCP.Editor
         }
 
         // ─── Helpers ───
+
+        private static Dictionary<string, object> BuildPingResponse()
+        {
+            var response = MCPInstanceRegistry.GetCurrentInstanceInfo();
+            response["status"] = "ok";
+            return response;
+        }
 
         private static Dictionary<string, object> ParseJson(string json)
         {

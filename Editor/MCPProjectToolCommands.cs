@@ -141,15 +141,11 @@ namespace UnityMCP.Editor
         public static object Execute(Dictionary<string, object> args)
         {
             string toolName = GetString(args, "toolName");
-            if (string.IsNullOrEmpty(toolName))
-                toolName = GetString(args, "name");
 
             if (string.IsNullOrEmpty(toolName))
                 return MCPResponse.Error("toolName is required", "invalid_arguments");
 
             var toolArgs = GetDictionary(args, "args")
-                ?? GetDictionary(args, "arguments")
-                ?? GetDictionary(args, "parameters")
                 ?? new Dictionary<string, object>();
             foreach (string contextKey in new[] { "_agentId", "_requestId" })
             {

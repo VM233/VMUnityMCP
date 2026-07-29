@@ -2,6 +2,13 @@
 
 All notable changes to this package will be documented in this file.
 
+## [4.1.0] - 2026-07-29
+
+- Add project-configurable namespaces for Execute Code and expose the setting in Project Settings and Preferences without redundant scope notices.
+- Remove Amplify Shader Editor support and obsolete compatibility surfaces from tool metadata, request handling, and response contracts while retaining Unity-version compatibility adapters.
+- Fix collection-wide localization entry removal so shared data and every locale table are persisted as dirty assets.
+- Tighten current project-context classification and related regression coverage.
+
 ## [4.0.1] - 2026-07-29
 
 - Remove the Welcome window completely, including its automatic startup hook, Editor menu entry, dedicated assembly, styles, configuration, and image assets.

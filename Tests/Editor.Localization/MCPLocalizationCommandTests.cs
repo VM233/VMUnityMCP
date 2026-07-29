@@ -11,6 +11,7 @@ using UnityEngine;
 using UnityEngine.Localization.Settings;
 using UnityEngine.Localization.SmartFormat.Extensions;
 using UnityEngine.Localization.SmartFormat.PersistentVariables;
+using UnityEngine.Localization.Tables;
 using UnityEngine.TestTools;
 
 namespace UnityMCP.Editor.Localization.Tests
@@ -278,6 +279,12 @@ namespace UnityMCP.Editor.Localization.Tests
             Assert.That(value["value"], Is.EqualTo("Hello {player}"));
             Assert.That(value["smart"], Is.EqualTo(true));
 
+            var persistedCollection =
+                LocalizationEditorSettings.GetStringTableCollection("MCP Test Strings");
+            var persistedPaths = new[] { AssetDatabase.GetAssetPath(persistedCollection.SharedData) }
+                .Concat(persistedCollection.StringTables.Select(AssetDatabase.GetAssetPath))
+                .ToList();
+
             var removed = Execute("localization/remove-entry", new Dictionary<string, object>
             {
                 { "collection", "MCP Test Strings" },
@@ -290,6 +297,77 @@ namespace UnityMCP.Editor.Localization.Tests
                 { "collection", "MCP Test Strings" },
             });
             Assert.That(Convert.ToInt32(entries["total"]), Is.EqualTo(0));
+
+            foreach (string path in persistedPaths)
+            {
+                AssetDatabase.ImportAsset(
+                    path,
+                    ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            }
+
+            var reloadedCollection =
+                LocalizationEditorSettings.GetStringTableCollection("MCP Test Strings");
+            Assert.That(reloadedCollection.SharedData.GetEntry("Greeting"), Is.Null);
+            Assert.That(
+                reloadedCollection.StringTables.All(table => table.GetEntry("Greeting") == null),
+                Is.True);
+        }
+
+        [Test]
+        public void RemoveEntry_LocaleScopeReportsOnlyActualLocaleRemoval()
+        {
+            CreateLocale(EnglishCode, "English");
+            CreateLocale(ChineseCode, "Chinese");
+            Execute("localization/create-collection", new Dictionary<string, object>
+            {
+                { "name", "MCP Scoped Strings" },
+                { "type", "string" },
+                { "assetDirectory", TestFolder + "/Scoped Tables" },
+                { "locales", new[] { EnglishCode, ChineseCode } },
+            });
+            var upserted = Execute("localization/upsert-entry", new Dictionary<string, object>
+            {
+                { "collection", "MCP Scoped Strings" },
+                { "entries", new object[]
+                    {
+                        new Dictionary<string, object>
+                        {
+                            { "locale", EnglishCode },
+                            { "key", "OnlyEnglish" },
+                            { "value", "English value" },
+                        },
+                    }
+                },
+            });
+            Assert.That(upserted["success"], Is.EqualTo(true));
+
+            var chineseNoOp = Execute("localization/remove-entry", new Dictionary<string, object>
+            {
+                { "collection", "MCP Scoped Strings" },
+                { "locale", ChineseCode },
+                { "key", "OnlyEnglish" },
+            });
+            Assert.That(chineseNoOp["removed"], Is.EqualTo(false));
+
+            var collection =
+                LocalizationEditorSettings.GetStringTableCollection("MCP Scoped Strings");
+            var englishLocale = LocalizationEditorSettings.GetLocale(EnglishCode);
+            var chineseLocale = LocalizationEditorSettings.GetLocale(ChineseCode);
+            Assert.That(((StringTable)collection.GetTable(englishLocale.Identifier))
+                .GetEntry("OnlyEnglish"), Is.Not.Null);
+            Assert.That(((StringTable)collection.GetTable(chineseLocale.Identifier))
+                .GetEntry("OnlyEnglish"), Is.Null);
+
+            var englishRemoval = Execute("localization/remove-entry", new Dictionary<string, object>
+            {
+                { "collection", "MCP Scoped Strings" },
+                { "locale", EnglishCode },
+                { "key", "OnlyEnglish" },
+            });
+            Assert.That(englishRemoval["removed"], Is.EqualTo(true));
+            Assert.That(collection.SharedData.GetEntry("OnlyEnglish"), Is.Not.Null);
+            Assert.That(((StringTable)collection.GetTable(englishLocale.Identifier))
+                .GetEntry("OnlyEnglish"), Is.Null);
         }
 
         [Test]

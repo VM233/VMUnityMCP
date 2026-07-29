@@ -719,10 +719,8 @@ namespace UnityMCP.Editor
                     };
                 case SerializedPropertyType.Generic:
                     return GetSerializedGenericValue(prop, depth, maxDepth, maxArrayElements);
-#if UNITY_2020_1_OR_NEWER
                 case SerializedPropertyType.ManagedReference:
                     return GetSerializedGenericValue(prop, depth, maxDepth, maxArrayElements);
-#endif
                 default:
                     return prop.propertyType.ToString();
             }
@@ -813,11 +811,9 @@ namespace UnityMCP.Editor
                 case SerializedPropertyType.Generic:
                     SetSerializedGenericValue(prop, value);
                     break;
-#if UNITY_2020_1_OR_NEWER
                 case SerializedPropertyType.ManagedReference:
                     SetManagedReferenceValue(prop, value);
                     break;
-#endif
                 default:
                     throw new NotSupportedException($"Cannot set property type: {prop.propertyType}");
             }
@@ -884,20 +880,16 @@ namespace UnityMCP.Editor
                     { "maxDepth", maxDepth },
                 };
 
-#if UNITY_2020_1_OR_NEWER
                 if (prop.propertyType == SerializedPropertyType.ManagedReference && prop.managedReferenceValue != null)
                     truncatedResult[ManagedReferenceTypeKey] = GetManagedReferenceTypeName(prop.managedReferenceValue.GetType());
-#endif
 
                 return truncatedResult;
             }
 
             var result = new Dictionary<string, object>();
 
-#if UNITY_2020_1_OR_NEWER
             if (prop.propertyType == SerializedPropertyType.ManagedReference && prop.managedReferenceValue != null)
                 result[ManagedReferenceTypeKey] = GetManagedReferenceTypeName(prop.managedReferenceValue.GetType());
-#endif
 
             var iterator = prop.Copy();
             var end = iterator.GetEndProperty();
@@ -926,13 +918,11 @@ namespace UnityMCP.Editor
             for (int i = 0; i < items.Count; i++)
             {
                 var element = prop.GetArrayElementAtIndex(i);
-#if UNITY_2020_1_OR_NEWER
                 if (element.propertyType == SerializedPropertyType.ManagedReference)
                 {
                     SetManagedReferenceValue(element, items[i], fallbackManagedReferenceType);
                     continue;
                 }
-#endif
                 SetSerializedValue(element, items[i]);
             }
         }
@@ -976,7 +966,6 @@ namespace UnityMCP.Editor
             }
         }
 
-#if UNITY_2020_1_OR_NEWER
         private static void SetManagedReferenceValue(SerializedProperty prop, object value, Type fallbackType = null)
         {
             if (value == null)
@@ -1083,8 +1072,6 @@ namespace UnityMCP.Editor
         {
             return $"{type.Assembly.GetName().Name}::{type.FullName}";
         }
-#endif
-
         private static string GetRelativePropertyPath(string parentPath, string childPath)
         {
             if (string.IsNullOrEmpty(parentPath))

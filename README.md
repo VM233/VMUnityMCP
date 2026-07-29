@@ -188,7 +188,8 @@ Concrete `project-tools/call/...` routes are reserved for tools that explicitly 
 ## Notes
 
 - Use the upstream README for the general feature list and MCP setup flow.
-- `_meta/tools` defaults to compact first-class metadata, 50 tools per page, and no schemas. Use `includeSchema=true`, `offset`, `limit`, and optional `category` as needed. Legacy duplicate collections are returned only with `compact=false&includeCollections=true`.
+- `_meta/tools` defaults to compact first-class metadata, 50 tools per page, and no schemas. Use `includeSchema=true`, `offset`, `limit`, and optional `category` as needed.
+- Configure namespaces used by every `editor/execute-code` call under **Project Settings > Unity MCP > Execute Code**. Keep one namespace per line; the `usings` request field remains available for one-off imports.
 - Successful wire responses omit the redundant inner `success=true`. Project-tool success envelopes are unwrapped, exact collection counts and completed-pagination aliases are omitted, and false truncation flags are absent. A partial page keeps only its collection, total, and `nextOffset`.
 - Wire-only Unity values use compact scalar forms such as `position: "(1,2)"`, `rect: "(1,2)-(4,5),size:(3,3)"`, `bounds: "(0,0,0)-(2,4,6),size:(2,4,6)"`, `color: "rgba(1,0.5,0,1)"`, and `margin: "LTRB(1,2,3,4)"`. Equivalent dictionary shapes, execute-code values, complete reflected `Rect` aliases, and dimension pairs inside larger results are compacted centrally; internally queued command data remains structured.
 - The repeated transport identity is `mcpInstance: "Project@port"`. Detailed paths and process metadata remain available from the instance routes; wrong-project errors keep the actual path, name, and port.

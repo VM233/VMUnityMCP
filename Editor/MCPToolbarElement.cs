@@ -432,12 +432,12 @@ namespace UnityMCP.Editor
                 EditorApplication.update -= TryInject;
 
                 _mcpRoot.schedule.Execute(() => RefreshMainToolbar()).Every(1000);
-                Debug.Log("[AB-UMCP] Injected into main toolbar (legacy mode).");
+                Debug.Log("[AB-UMCP] Injected into main toolbar (pre-6000.3 reflection mode).");
             }
             catch (Exception ex)
             {
                 if (_retryCount >= MaxRetries)
-                    Debug.LogWarning($"[AB-UMCP] Legacy injection failed: {ex.Message}");
+                    Debug.LogWarning($"[AB-UMCP] Pre-6000.3 toolbar injection failed: {ex.Message}");
             }
         }
 

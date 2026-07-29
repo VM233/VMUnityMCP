@@ -11,7 +11,7 @@ namespace UnityMCP.Editor
             return new SettingsProvider(MCPSettingsGUI.UserPreferencesPath, SettingsScope.User)
             {
                 label = "Unity MCP",
-                guiHandler = _ => MCPSettingsGUI.DrawUserPreferences(true, true),
+                guiHandler = _ => MCPSettingsGUI.DrawUserPreferences(true),
                 keywords = new HashSet<string>
                 {
                     "Unity",
@@ -29,11 +29,14 @@ namespace UnityMCP.Editor
             return new SettingsProvider(MCPSettingsGUI.ProjectSettingsPath, SettingsScope.Project)
             {
                 label = "Unity MCP",
-                guiHandler = _ => MCPSettingsGUI.DrawProjectSettings(true, true),
+                guiHandler = _ => MCPSettingsGUI.DrawProjectSettings(true),
                 keywords = new HashSet<string>
                 {
                     "Unity",
                     "MCP",
+                    "execute code",
+                    "namespace",
+                    "usings",
                     "context",
                     "categories",
                     "action history",

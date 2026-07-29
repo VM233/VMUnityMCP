@@ -17,7 +17,7 @@ namespace UnityMCP.Editor
 
         public static object EditUxml(Dictionary<string, object> args)
         {
-            string assetPath = NormalizeAssetPath(GetString(args, "assetPath") ?? GetString(args, "uxmlPath"));
+            string assetPath = NormalizeAssetPath(GetString(args, "assetPath"));
             var operations = GetDictionaryList(args, "operations");
             bool dryRun = GetBool(args, "dryRun", false);
             if (!TryGetAbsoluteAssetFile(assetPath, ".uxml", out string absolutePath, out string error))
@@ -63,7 +63,7 @@ namespace UnityMCP.Editor
 
         public static object EditUss(Dictionary<string, object> args)
         {
-            string assetPath = NormalizeAssetPath(GetString(args, "assetPath") ?? GetString(args, "ussPath"));
+            string assetPath = NormalizeAssetPath(GetString(args, "assetPath"));
             var operations = GetDictionaryList(args, "operations");
             bool dryRun = GetBool(args, "dryRun", false);
             if (!TryGetAbsoluteAssetFile(assetPath, ".uss", out string absolutePath, out string error))

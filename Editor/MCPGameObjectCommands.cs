@@ -143,6 +143,63 @@ namespace UnityMCP.Editor
             return result;
         }
 
+        public static object Duplicate(Dictionary<string, object> args)
+        {
+            var go = FindGameObject(args);
+            if (go == null)
+                return new { error = "GameObject not found" };
+
+            string newName = args.ContainsKey("newName") ? args["newName"].ToString() : go.name + " (Copy)";
+            var duplicate = UnityEngine.Object.Instantiate(go);
+            duplicate.name = newName;
+            if (go.transform.parent != null)
+                duplicate.transform.SetParent(go.transform.parent);
+            Undo.RegisterCreatedObjectUndo(duplicate, $"Duplicate {go.name}");
+
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "original", go.name },
+                { "duplicate", duplicate.name },
+                { "instanceId", MCPObjectId.Get(duplicate) },
+            };
+        }
+
+        public static object SetActive(Dictionary<string, object> args)
+        {
+            var go = FindGameObject(args);
+            if (go == null)
+                return new { error = "GameObject not found" };
+
+            bool active = args.ContainsKey("active") ? Convert.ToBoolean(args["active"]) : true;
+            Undo.RecordObject(go, "Set Active");
+            go.SetActive(active);
+            return new { success = true, gameObject = go.name, active };
+        }
+
+        public static object Reparent(Dictionary<string, object> args)
+        {
+            var go = FindGameObject(args);
+            if (go == null)
+                return new { error = "GameObject not found" };
+
+            string parentPath = args.ContainsKey("newParent") ? args["newParent"].ToString() : "";
+            bool worldPositionStays = !args.ContainsKey("worldPositionStays") ||
+                                      Convert.ToBoolean(args["worldPositionStays"]);
+            Undo.SetTransformParent(go.transform,
+                string.IsNullOrEmpty(parentPath) ? null : GameObject.Find(parentPath)?.transform,
+                worldPositionStays,
+                "Reparent");
+
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "gameObject", go.name },
+                { "newParent", string.IsNullOrEmpty(parentPath) ? "root" : parentPath },
+                { "worldPositionStays", worldPositionStays },
+            };
+        }
+
         // ─── Helpers ───
 
         public static GameObject FindGameObject(Dictionary<string, object> args)

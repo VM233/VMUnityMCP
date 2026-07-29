@@ -456,11 +456,8 @@ namespace UnityMCP.Editor
             if (!ExtractBool(entry, "isReloading"))
                 return false;
 
-            DateTime reloadStartedAt;
-            if (!TryExtractDateTime(entry, "reloadStartedAt", out reloadStartedAt) &&
-                !TryExtractDateTime(entry, "lastSeen", out reloadStartedAt) &&
-                !TryExtractDateTime(entry, "registeredAt", out reloadStartedAt))
-                return false;
+            if (!TryExtractDateTime(entry, "reloadStartedAt", out DateTime reloadStartedAt))
+                return true;
 
             if ((nowUtc - reloadStartedAt.ToUniversalTime()).TotalSeconds <=
                 ReloadRegistrationGraceSeconds)

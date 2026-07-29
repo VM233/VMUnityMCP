@@ -10,15 +10,8 @@ namespace UnityMCP.Editor
 
         private static Vector2 _categoryScrollPosition;
 
-        public static void DrawUserPreferences(bool showScopeHelp, bool showResetButton)
+        public static void DrawUserPreferences(bool showResetButton)
         {
-            if (showScopeHelp)
-            {
-                EditorGUILayout.HelpBox(
-                    "These settings are stored per Unity Editor instance on this machine.",
-                    MessageType.Info);
-            }
-
             DrawAutoStartSettings();
             EditorGUILayout.Space(6);
             DrawPortSettings();
@@ -40,16 +33,11 @@ namespace UnityMCP.Editor
             }
         }
 
-        public static void DrawProjectSettings(bool showScopeHelp, bool showResetButton)
+        public static void DrawProjectSettings(bool showResetButton)
         {
-            if (showScopeHelp)
-            {
-                EditorGUILayout.HelpBox(
-                    "These settings are scoped to this Unity project on this machine.",
-                    MessageType.Info);
-            }
-
             DrawProjectStartupSettings();
+            EditorGUILayout.Space(8);
+            DrawExecuteCodeSettings();
             EditorGUILayout.Space(8);
             DrawProjectContextSettings();
             EditorGUILayout.Space(8);
@@ -86,6 +74,35 @@ namespace UnityMCP.Editor
 
             if (startOnVirtualPlayers != MCPSettingsManager.StartOnVirtualPlayers)
                 MCPSettingsManager.StartOnVirtualPlayers = startOnVirtualPlayers;
+        }
+
+        private static void DrawExecuteCodeSettings()
+        {
+            EditorGUILayout.LabelField("Execute Code", EditorStyles.boldLabel);
+
+            var label = new GUIContent(
+                "Additional Namespaces",
+                "One namespace per line. Each namespace is imported by every unity_execute_code compilation.");
+            string configured = MCPSettingsManager.ExecuteCodeAdditionalNamespacesText;
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel(label);
+            string updated = EditorGUILayout.TextArea(configured, GUILayout.MinHeight(54));
+            EditorGUILayout.EndHorizontal();
+
+            if (updated != configured)
+                MCPSettingsManager.ExecuteCodeAdditionalNamespacesText = updated;
+
+            foreach (string namespaceName in MCPSettingsManager.GetExecuteCodeAdditionalNamespaces())
+            {
+                if (MCPEditorCommands.IsValidNamespace(namespaceName))
+                    continue;
+
+                EditorGUILayout.HelpBox(
+                    $"'{namespaceName}' is not a valid C# namespace.",
+                    MessageType.Warning);
+                break;
+            }
         }
 
         private static void DrawAutoStartSettings()
