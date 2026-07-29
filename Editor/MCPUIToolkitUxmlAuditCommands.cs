@@ -346,6 +346,14 @@ namespace UnityMCP.Editor
                 suppressedTooltip.SuppressedCount == 1 &&
                 suppressedTooltip.Issues.Single().Suppressed);
 
+            var disabledTooltip = AuditFixture(
+                "<ui:Button tooltip=\"View Battle\"/>",
+                uxmlTooltipAttributes: false);
+            AddSelfTestCase(cases, "disabled tooltip audit is silent",
+                disabledTooltip.WarningCount == 0 &&
+                disabledTooltip.SuppressedCount == 0 &&
+                disabledTooltip.Issues.Count == 0);
+
             var suppressed = AuditFixture(
                 $"<!-- {SUPPRESSION_MARKER} fixture owns an intentional interaction region -->" +
                 suspiciousElement, includeSuppressed: true);
@@ -823,7 +831,8 @@ namespace UnityMCP.Editor
             UxmlLayoutContractIndex layoutContracts = null,
             UxmlInlineStyleContractIndex inlineStyleContracts = null,
             UxmlElementNameReferenceIndex elementNameReferences = null,
-            bool pixelGridEnabled = false, int pixelGridStep = 3)
+            bool pixelGridEnabled = false, int pixelGridStep = 3,
+            bool uxmlTooltipAttributes = true)
         {
             var text =
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
@@ -834,12 +843,12 @@ namespace UnityMCP.Editor
                 ScannedUxmlCount = 1,
                 IndexedUxmlCount = 1
             };
-            var options = MCPUIToolkitAuditOptions.FromArguments(
-                new Dictionary<string, object>
+            var options = MCPUIToolkitAuditOptions.FromProjectSettings(
+                new MCPUIToolkitAuditProjectSettings
                 {
-                    { "useProjectSettings", false },
-                    { "pixelGridEnabled", pixelGridEnabled },
-                    { "pixelGridStep", pixelGridStep }
+                    PixelGridEnabled = pixelGridEnabled,
+                    PixelGridStep = pixelGridStep,
+                    UxmlTooltipAttributes = uxmlTooltipAttributes
                 });
             AuditText("Assets/__UxmlLayoutAuditSelfTest.uxml", text,
                 layoutContracts ?? new UxmlLayoutContractIndex(),
@@ -863,7 +872,8 @@ namespace UnityMCP.Editor
                 new Dictionary<string, object> { { "useProjectSettings", false } });
             inlineStyleContracts = inlineStyleContracts ??
                                    BuildInlineStyleContractIndex(assetPath, document, report);
-            AuditTooltipAttributes(assetPath, document, report, includeSuppressed);
+            if (options.UxmlTooltipAttributes)
+                AuditTooltipAttributes(assetPath, document, report, includeSuppressed);
             AuditPixelGridDeclarations(assetPath, document, options, report,
                 includeSuppressed);
             foreach (var element in document.Descendants())

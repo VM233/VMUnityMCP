@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text;
 using UnityEditor;
 using UnityEngine;
 
@@ -20,6 +21,7 @@ namespace UnityMCP.Editor
         internal string Error = "";
         internal bool AutomaticUssSingleUseStyles;
         internal bool AutomaticUxmlLayoutContracts;
+        internal bool UxmlTooltipAttributes = true;
         internal bool PixelGridEnabled;
         internal int PixelGridStep = 3;
         internal readonly List<string> AssetRoots = new List<string> { "Assets" };
@@ -46,6 +48,10 @@ namespace UnityMCP.Editor
                     MCPUIToolkitAuditUtility.GetBool(automatic, "ussSingleUseStyles", false);
                 settings.AutomaticUxmlLayoutContracts =
                     MCPUIToolkitAuditUtility.GetBool(automatic, "uxmlLayoutContracts", false);
+
+                Dictionary<string, object> rules = GetDictionary(values, "rules");
+                settings.UxmlTooltipAttributes =
+                    MCPUIToolkitAuditUtility.GetBool(rules, "uxmlTooltipAttributes", true);
 
                 Dictionary<string, object> pixelGrid = GetDictionary(values, "pixelGrid");
                 settings.PixelGridEnabled =
@@ -77,6 +83,41 @@ namespace UnityMCP.Editor
             }
 
             return settings;
+        }
+
+        internal void Save()
+        {
+            string fullPath = Path.Combine(MCPUIToolkitAuditUtility.GetProjectRoot(),
+                ConfigPath.Replace('/', Path.DirectorySeparatorChar));
+            string directory = Path.GetDirectoryName(fullPath);
+            if (string.IsNullOrEmpty(directory) == false)
+                Directory.CreateDirectory(directory);
+
+            var serialized = new SerializedConfig
+            {
+                automaticAudit = new SerializedAutomaticAudit
+                {
+                    ussSingleUseStyles = AutomaticUssSingleUseStyles,
+                    uxmlLayoutContracts = AutomaticUxmlLayoutContracts
+                },
+                rules = new SerializedRules
+                {
+                    uxmlTooltipAttributes = UxmlTooltipAttributes
+                },
+                pixelGrid = new SerializedPixelGrid
+                {
+                    enabled = PixelGridEnabled,
+                    step = Math.Max(1, PixelGridStep)
+                },
+                assetRoots = AssetRoots.ToArray(),
+                runtimeSourceRoots = RuntimeSourceRoots.ToArray(),
+                excludePaths = ExcludePaths.ToArray()
+            };
+            File.WriteAllText(fullPath, JsonUtility.ToJson(serialized, true) + Environment.NewLine,
+                new UTF8Encoding(false));
+            Found = true;
+            Valid = true;
+            Error = "";
         }
 
         private static Dictionary<string, object> GetDictionary(
@@ -111,6 +152,37 @@ namespace UnityMCP.Editor
             values.Clear();
             foreach (string value in normalized)
                 values.Add(value);
+        }
+
+        [Serializable]
+        private sealed class SerializedConfig
+        {
+            public SerializedAutomaticAudit automaticAudit;
+            public SerializedRules rules;
+            public SerializedPixelGrid pixelGrid;
+            public string[] assetRoots;
+            public string[] runtimeSourceRoots;
+            public string[] excludePaths;
+        }
+
+        [Serializable]
+        private sealed class SerializedAutomaticAudit
+        {
+            public bool ussSingleUseStyles;
+            public bool uxmlLayoutContracts;
+        }
+
+        [Serializable]
+        private sealed class SerializedRules
+        {
+            public bool uxmlTooltipAttributes = true;
+        }
+
+        [Serializable]
+        private sealed class SerializedPixelGrid
+        {
+            public bool enabled;
+            public int step = 3;
         }
     }
 
@@ -430,16 +502,18 @@ namespace UnityMCP.Editor
         internal readonly List<string> AssetRoots;
         internal readonly List<string> RuntimeSourceRoots;
         internal readonly List<string> ExcludePaths;
+        internal readonly bool UxmlTooltipAttributes;
         internal readonly bool PixelGridEnabled;
         internal readonly int PixelGridStep;
 
         private MCPUIToolkitAuditOptions(IEnumerable<string> assetRoots,
             IEnumerable<string> runtimeSourceRoots, IEnumerable<string> excludePaths,
-            bool pixelGridEnabled, int pixelGridStep)
+            bool uxmlTooltipAttributes, bool pixelGridEnabled, int pixelGridStep)
         {
             AssetRoots = NormalizeRoots(assetRoots, "Assets");
             RuntimeSourceRoots = NormalizeRoots(runtimeSourceRoots, "Assets");
             ExcludePaths = NormalizeRoots(excludePaths, null);
+            UxmlTooltipAttributes = uxmlTooltipAttributes;
             PixelGridEnabled = pixelGridEnabled;
             PixelGridStep = Math.Max(1, pixelGridStep);
         }
@@ -471,7 +545,7 @@ namespace UnityMCP.Editor
                 : settings.PixelGridStep;
 
             return new MCPUIToolkitAuditOptions(assetRoots, runtimeRoots, excludePaths,
-                pixelGridEnabled, pixelGridStep);
+                settings.UxmlTooltipAttributes, pixelGridEnabled, pixelGridStep);
         }
 
         internal static MCPUIToolkitAuditOptions FromProjectSettings(
@@ -480,7 +554,8 @@ namespace UnityMCP.Editor
             settings = settings ?? MCPUIToolkitAuditProjectSettings.Load();
             return new MCPUIToolkitAuditOptions(settings.AssetRoots,
                 settings.RuntimeSourceRoots, settings.ExcludePaths,
-                settings.PixelGridEnabled, settings.PixelGridStep);
+                settings.UxmlTooltipAttributes, settings.PixelGridEnabled,
+                settings.PixelGridStep);
         }
 
         internal bool Includes(string assetPath)
@@ -504,6 +579,13 @@ namespace UnityMCP.Editor
                 { "roots", AssetRoots.ToArray() },
                 { "runtimeSourceRoots", RuntimeSourceRoots.ToArray() },
                 { "excludePaths", ExcludePaths.ToArray() },
+                {
+                    "rules",
+                    new Dictionary<string, object>
+                    {
+                        { "uxmlTooltipAttributes", UxmlTooltipAttributes }
+                    }
+                },
                 {
                     "pixelGrid",
                     new Dictionary<string, object>

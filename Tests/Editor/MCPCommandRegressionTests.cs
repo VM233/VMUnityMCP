@@ -2598,6 +2598,68 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUxmlTooltipAudit_DefaultsOnAndHonorsProjectSetting()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Tooltip Project Setting.uxml";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<ui:Button tooltip=\"View Battle\"/>" +
+                "</ui:UXML>");
+
+            string configPath = Path.Combine(
+                MCPUIToolkitAuditUtility.GetProjectRoot(),
+                MCPUIToolkitAuditProjectSettings.ConfigPath.Replace(
+                    '/', Path.DirectorySeparatorChar));
+            bool configExisted = File.Exists(configPath);
+            byte[] originalConfig = configExisted ? File.ReadAllBytes(configPath) : null;
+
+            try
+            {
+                if (configExisted)
+                    File.Delete(configPath);
+
+                MCPUIToolkitAuditProjectSettings defaults =
+                    MCPUIToolkitAuditProjectSettings.Load();
+                Assert.That(defaults.UxmlTooltipAttributes, Is.True);
+
+                defaults.AssetRoots.Clear();
+                defaults.AssetRoots.Add(TEST_FOLDER);
+                defaults.RuntimeSourceRoots.Clear();
+                defaults.RuntimeSourceRoots.Add(TEST_FOLDER);
+                MCPUIToolkitAuditOptions enabledOptions =
+                    MCPUIToolkitAuditOptions.FromProjectSettings(defaults);
+                Assert.That(
+                    MCPUxmlLayoutAuditor.Audit(
+                        new[] { uxmlPath }, false, 20, enabledOptions).WarningCount,
+                    Is.EqualTo(1));
+
+                defaults.UxmlTooltipAttributes = false;
+                defaults.Save();
+
+                MCPUIToolkitAuditProjectSettings disabled =
+                    MCPUIToolkitAuditProjectSettings.Load();
+                Assert.That(disabled.UxmlTooltipAttributes, Is.False);
+                MCPUIToolkitAuditOptions disabledOptions =
+                    MCPUIToolkitAuditOptions.FromProjectSettings(disabled);
+                Assert.That(
+                    MCPUxmlLayoutAuditor.Audit(
+                        new[] { uxmlPath }, false, 20, disabledOptions).WarningCount,
+                    Is.EqualTo(0));
+
+                var effectiveRules = RequireDictionary(
+                    disabledOptions.ToDictionary()["rules"]);
+                Assert.That(effectiveRules["uxmlTooltipAttributes"], Is.EqualTo(false));
+            }
+            finally
+            {
+                if (configExisted)
+                    File.WriteAllBytes(configPath, originalConfig);
+                else if (File.Exists(configPath))
+                    File.Delete(configPath);
+            }
+        }
+
+        [Test]
         public void UIToolkitUxmlAudit_ReportsOnlyUnconsumedElementNames()
         {
             const string uxmlPath = TEST_FOLDER + "/Element Name Consumers.uxml";

@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [4.3.2] - 2026-07-30
+
+- Add a default-on **Project Settings > Unity MCP > UI Toolkit Audit** switch for authored UXML `tooltip` attribute findings.
+- Apply the project rule switch consistently to requested, menu-driven, and automatic UXML audits while exposing the effective rule state in audit results.
+
 ## [4.3.1] - 2026-07-30
 
 - Extend the UXML layout audit with an independent `authored-tooltip-attribute` finding for every authored `tooltip` attribute.

@@ -9,6 +9,7 @@ namespace UnityMCP.Editor
         public const string ProjectSettingsPath = "Project/Unity MCP";
 
         private static Vector2 _categoryScrollPosition;
+        private static string _uiToolkitAuditWriteError = "";
 
         public static void DrawUserPreferences(bool showResetButton)
         {
@@ -39,6 +40,8 @@ namespace UnityMCP.Editor
             EditorGUILayout.Space(8);
             DrawExecuteCodeSettings();
             EditorGUILayout.Space(8);
+            DrawUIToolkitAuditSettings();
+            EditorGUILayout.Space(8);
             DrawProjectContextSettings();
             EditorGUILayout.Space(8);
             DrawActionHistorySettings();
@@ -57,8 +60,68 @@ namespace UnityMCP.Editor
                         "Cancel"))
                     {
                         MCPSettingsManager.ResetProjectSettingsToDefaults();
+                        ResetUIToolkitAuditSettings();
                     }
                 }
+            }
+        }
+
+        private static void DrawUIToolkitAuditSettings()
+        {
+            EditorGUILayout.LabelField("UI Toolkit Audit", EditorStyles.boldLabel);
+
+            MCPUIToolkitAuditProjectSettings settings =
+                MCPUIToolkitAuditProjectSettings.Load();
+            if (settings.Valid == false)
+            {
+                EditorGUILayout.HelpBox(
+                    $"{MCPUIToolkitAuditProjectSettings.ConfigPath}: {settings.Error}",
+                    MessageType.Error);
+                return;
+            }
+
+            bool enabled = EditorGUILayout.Toggle(
+                new GUIContent(
+                    "Audit UXML Tooltip Attributes",
+                    "Report tooltip attributes authored directly in UXML. Enabled by default."),
+                settings.UxmlTooltipAttributes);
+            if (enabled != settings.UxmlTooltipAttributes)
+            {
+                settings.UxmlTooltipAttributes = enabled;
+                TrySaveUIToolkitAuditSettings(settings);
+            }
+
+            if (string.IsNullOrEmpty(_uiToolkitAuditWriteError) == false)
+                EditorGUILayout.HelpBox(_uiToolkitAuditWriteError, MessageType.Error);
+        }
+
+        private static void ResetUIToolkitAuditSettings()
+        {
+            var settings = MCPUIToolkitAuditProjectSettings.Load();
+            if (settings.Valid == false)
+            {
+                _uiToolkitAuditWriteError =
+                    $"{MCPUIToolkitAuditProjectSettings.ConfigPath}: {settings.Error}";
+                return;
+            }
+
+            settings.UxmlTooltipAttributes = true;
+            TrySaveUIToolkitAuditSettings(settings);
+        }
+
+        private static void TrySaveUIToolkitAuditSettings(
+            MCPUIToolkitAuditProjectSettings settings)
+        {
+            try
+            {
+                settings.Save();
+                _uiToolkitAuditWriteError = "";
+            }
+            catch (System.Exception exception)
+            {
+                _uiToolkitAuditWriteError =
+                    $"Failed to save {MCPUIToolkitAuditProjectSettings.ConfigPath}: " +
+                    exception.Message;
             }
         }
 
