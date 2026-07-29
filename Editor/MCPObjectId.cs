@@ -1,3 +1,4 @@
+using System.Globalization;
 using UnityEngine;
 using UnityEditor;
 
@@ -17,15 +18,17 @@ namespace UnityMCP.Editor
     /// classic int InstanceID. The JSON "instanceId" wire field is a string on
     /// every Unity version.
     /// </summary>
-    internal static class MCPObjectId
+    public static class MCPObjectId
     {
         /// <summary>Stable per-object id as a decimal string (JSON "instanceId" wire field).</summary>
         public static string Get(Object obj)
         {
 #if UNITY_6000_5_OR_NEWER
-            return EntityId.ToULong(obj.GetEntityId()).ToString();
+            return EntityId.ToULong(obj.GetEntityId())
+                .ToString(CultureInfo.InvariantCulture);
 #else
-            return obj.GetInstanceID().ToString();
+            return obj.GetInstanceID()
+                .ToString(CultureInfo.InvariantCulture);
 #endif
         }
 
