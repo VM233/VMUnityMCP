@@ -2197,6 +2197,73 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUssAudit_ReportsDeclarationAlreadyOwnedByPanelTheme()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Theme Duplicate.uxml";
+            const string ussPath = TEST_FOLDER + "/Theme Duplicate.uss";
+            const string themeUssPath = TEST_FOLDER + "/Theme Defaults.uss";
+            const string themePath = TEST_FOLDER + "/Default Theme.tss";
+            const string panelSettingsPath = TEST_FOLDER + "/Panel Settings.asset";
+
+            File.WriteAllText(GetAbsolutePath(themeUssPath),
+                "* { -unity-slice-scale: 3px; }\n");
+            File.WriteAllText(GetAbsolutePath(themePath),
+                "@import url(\"Theme Defaults.uss\");\n");
+            AssetDatabase.ImportAsset(themeUssPath, ImportAssetOptions.ForceSynchronousImport);
+            AssetDatabase.ImportAsset(themePath, ImportAssetOptions.ForceSynchronousImport);
+
+            var panelSettings = ScriptableObject.CreateInstance<PanelSettings>();
+            AssetDatabase.CreateAsset(panelSettings, panelSettingsPath);
+            var serializedSettings = new SerializedObject(panelSettings);
+            var themeProperty = serializedSettings.FindProperty("themeUss");
+            Assert.That(themeProperty, Is.Not.Null);
+            themeProperty.objectReferenceValue = AssetDatabase.LoadMainAssetAtPath(themePath);
+            serializedSettings.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(panelSettings);
+            AssetDatabase.SaveAssets();
+
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<Style src=\"Theme Duplicate.uss\"/>" +
+                "<ui:VisualElement class=\"duplicate-theme-value\"/>" +
+                "<ui:VisualElement class=\"duplicate-theme-value\"/>" +
+                "<ui:VisualElement class=\"different-theme-value\"/>" +
+                "<ui:VisualElement class=\"different-theme-value\"/>" +
+                "</ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                ".duplicate-theme-value { -unity-slice-scale: 3px; }\n" +
+                ".duplicate-theme-value:hover { -unity-slice-scale: 4px; }\n" +
+                ".different-theme-value { -unity-slice-scale: 2px; }\n");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUssAuditCommands.AuditUssStyles(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { ussPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "runtimeSourceRoots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                        { "runSelfTests", true }
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            var issue = issues.Single();
+            Assert.That(issue["kind"], Is.EqualTo("redundant-declaration"));
+            Assert.That(issue["selector"], Is.EqualTo(".duplicate-theme-value"));
+            Assert.That(issue["property"], Is.EqualTo("-unity-slice-scale"));
+            Assert.That(issue["value"], Is.EqualTo("3px"));
+            Assert.That(issue["authoredUsageCount"], Is.EqualTo(2));
+            var sourceRules =
+                (List<Dictionary<string, object>>)issue["stylesheetRules"];
+            Assert.That(sourceRules, Has.Count.EqualTo(1));
+            Assert.That(sourceRules[0]["selector"], Is.EqualTo("*"));
+            Assert.That(sourceRules[0]["sourcePath"], Is.EqualTo(themeUssPath));
+            Assert.That(RequireDictionary(result["selfTests"])["passed"], Is.EqualTo(true));
+        }
+
+        [Test]
         public void UIToolkitUxmlAudit_ReportsRepeatedInlineAuthoredLayoutVariant()
         {
             const string uxmlPath = TEST_FOLDER + "/Repeated Inline Variant.uxml";

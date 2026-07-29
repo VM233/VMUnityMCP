@@ -896,7 +896,7 @@ namespace UnityMCP.Editor
                 case "animation/validate-controller":
                     return "Validate Animator parameters, states, motions, required transitions, and pairwise state connections.";
                 case "uitoolkit/audit-uss-styles":
-                    return "Audit USS selectors that serve exactly one authored UXML element without a pseudo-state, shared, generated, runtime-class, or other reusable contract.";
+                    return "Audit USS selectors that serve exactly one authored UXML element and declarations that repeat the same winning value already supplied by the loaded PanelSettings theme or another loaded stylesheet.";
                 case "uitoolkit/audit-uxml-layout":
                     return "Audit authored UXML for unconsumed element names, fully fixed flex partitions, layout-only manually centered containers, removable single-child centering wrappers, visually inert centered-label stretching or growth, repeated inline layout variants, and inline declarations already owned by loaded USS defaults.";
                 case "uitoolkit/windows":

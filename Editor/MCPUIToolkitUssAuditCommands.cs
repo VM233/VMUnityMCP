@@ -18,7 +18,7 @@ namespace UnityMCP.Editor
         {
             args = args ?? new Dictionary<string, object>();
             var options = MCPUIToolkitAuditOptions.FromArguments(args);
-            var report = MCPUssSingleUseStyleAuditor.Audit(
+            var report = MCPUssStyleAuditor.Audit(
                 MCPUIToolkitAuditUtility.GetStringList(args, "paths"),
                 MCPUIToolkitAuditUtility.GetBool(args, "includeSuppressed"),
                 Mathf.Clamp(MCPUIToolkitAuditUtility.GetInt(args, "maxIssues", 200), 1, 5000),
@@ -33,7 +33,7 @@ namespace UnityMCP.Editor
                 MCPUIToolkitAutomaticAuditCoordinator.GetStatus(".uss");
             if (MCPUIToolkitAuditUtility.GetBool(args, "runSelfTests"))
             {
-                var selfTests = MCPUssSingleUseStyleAuditor.RunSelfTests();
+                var selfTests = MCPUssStyleAuditor.RunSelfTests();
                 result["selfTests"] = selfTests;
                 object passed;
                 if (selfTests.TryGetValue("passed", out passed) &&
@@ -44,12 +44,12 @@ namespace UnityMCP.Editor
             return result;
         }
 
-        [MenuItem("Tools/UI Toolkit/Audit USS Single-Use Styles")]
+        [MenuItem("Tools/UI Toolkit/Audit USS Styles")]
         private static void AuditAllFromMenu()
         {
             var options = MCPUIToolkitAuditOptions.FromProjectSettings(
                 MCPUIToolkitAuditProjectSettings.Load());
-            var report = MCPUssSingleUseStyleAuditor.Audit(
+            var report = MCPUssStyleAuditor.Audit(
                 Array.Empty<string>(), true, 5000, options);
             MCPUssStyleAuditConsoleReporter.Log(report, false);
         }
@@ -83,9 +83,11 @@ namespace UnityMCP.Editor
         }
     }
 
-    internal static class MCPUssSingleUseStyleAuditor
+    internal static class MCPUssStyleAuditor
     {
         internal const string SUPPRESSION_MARKER = "uss-audit: allow-single-use";
+        internal const string REDUNDANT_DECLARATION_SUPPRESSION_MARKER =
+            "uss-audit: allow-redundant-declaration";
 
         private static readonly Regex commentRegex =
             new Regex(@"/\*.*?\*/", RegexOptions.Compiled | RegexOptions.Singleline);
@@ -93,6 +95,18 @@ namespace UnityMCP.Editor
         private static readonly Regex suppressionRegex =
             new Regex(@"/\*\s*uss-audit:\s*allow-single-use\s+(?<reason>.+?)\*/\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex redundantDeclarationSuppressionRegex =
+            new Regex(@"/\*\s*uss-audit:\s*allow-redundant-declaration\s+(?<reason>.+?)\*/\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex importRegex =
+            new Regex(@"@import\s+url\(\s*(?:[""'](?<quoted>[^""']+)[""']|(?<plain>[^)\s]+))\s*\)\s*;",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private static readonly Regex panelThemeGuidRegex =
+            new Regex(@"^\s*themeUss:\s*\{[^}\r\n]*\bguid:\s*(?<guid>[0-9a-fA-F]{32})\b[^}\r\n]*\}",
+                RegexOptions.Compiled | RegexOptions.Multiline);
 
         private static readonly Regex simpleClassSelectorRegex =
             new Regex(@"^\.(?<token>[A-Za-z_][A-Za-z0-9_-]*)$", RegexOptions.Compiled);
@@ -148,8 +162,12 @@ namespace UnityMCP.Editor
             var requestedPathList = (requestedPaths ?? Array.Empty<string>())
                 .Where(path => string.IsNullOrWhiteSpace(path) == false).ToList();
             var requested = NormalizeRequestedPaths(requestedPathList, report.Errors);
+            var commonThemePath = FindCommonPanelThemePath(options);
+            var commonThemeStylePaths = EnumerateImportedStylePaths(commonThemePath,
+                report.Errors);
             var allStyleSheetPaths = MCPUIToolkitAuditUtility.FindAssetFiles(".uss", options)
                 .Concat(requested)
+                .Concat(commonThemeStylePaths)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(path => path, StringComparer.Ordinal)
                 .ToList();
@@ -172,6 +190,8 @@ namespace UnityMCP.Editor
             }
 
             var usageIndex = BuildUsageIndex(rulesByPath.Values.SelectMany(rules => rules), options);
+            var cascadeIndex = BuildCascadeIndex(commonThemePath, rulesByPath, usageIndex,
+                report.Errors);
             report.IndexedUxmlCount = usageIndex.IndexedUxmlCount;
             report.IndexedRuntimeSourceCount = usageIndex.IndexedRuntimeSourceCount;
 
@@ -188,6 +208,8 @@ namespace UnityMCP.Editor
                 }
 
                 AuditRules(rules, usageIndex, report, includeSuppressed);
+                AuditRedundantDeclarations(rules, usageIndex, cascadeIndex, report,
+                    includeSuppressed);
             }
 
             report.SortIssues();
@@ -241,10 +263,54 @@ namespace UnityMCP.Editor
             AuditRules(rules, index, report, true);
             report.SortIssues();
 
+            const string themePath = "Assets/__UssAuditSelfTestTheme.uss";
+            const string duplicatePath = "Assets/__UssAuditSelfTestDuplicate.uss";
+            var themeRules = ParseStyleSheet(themePath,
+                "* { -unity-slice-scale: 3px; }\n");
+            var duplicateRules = ParseStyleSheet(duplicatePath,
+                ".duplicate { -unity-slice-scale: 3px; }\n" +
+                ".different { -unity-slice-scale: 2px; }\n" +
+                "/* uss-audit: allow-redundant-declaration fixture documents ownership */\n" +
+                ".suppressed-duplicate { -unity-slice-scale: 3px; }\n");
+            var duplicateUsageIndex = new UssUsageIndex();
+            CollectSelectorContracts(duplicateRules, duplicateUsageIndex);
+            var duplicateDocument = new UssAuthoredDocument("Assets/Duplicate.uxml",
+                XDocument.Parse(
+                    "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                    "<ui:VisualElement class=\"duplicate\"/>" +
+                    "<ui:VisualElement class=\"different\"/>" +
+                    "<ui:VisualElement class=\"suppressed-duplicate\"/>" +
+                    "</ui:UXML>", LoadOptions.SetLineInfo));
+            duplicateUsageIndex.Documents.Add(duplicateDocument);
+            var duplicateCascade = new UssCascadeIndex();
+            var duplicateCascadeDocument = new UssCascadeDocument(duplicateDocument);
+            AppendSelfTestRules(duplicateCascadeDocument, themeRules, 0);
+            AppendSelfTestRules(duplicateCascadeDocument, duplicateRules, 1);
+            duplicateCascade.Documents.Add(duplicateCascadeDocument);
+            var duplicateReport = new MCPUssStyleAuditReport(100)
+            {
+                ScannedStyleSheetCount = 1,
+                IndexedStyleSheetCount = 2,
+                IndexedUxmlCount = 1
+            };
+            AuditRedundantDeclarations(duplicateRules, duplicateUsageIndex, duplicateCascade,
+                duplicateReport, true);
+            duplicateReport.SortIssues();
+
             var activeTokens = report.Issues.Where(issue => issue.Suppressed == false)
                 .Select(issue => issue.Token).OrderBy(token => token, StringComparer.Ordinal).ToArray();
             var suppressedTokens = report.Issues.Where(issue => issue.Suppressed)
                 .Select(issue => issue.Token).OrderBy(token => token, StringComparer.Ordinal).ToArray();
+            var activeRedundantSelectors = duplicateReport.Issues
+                .Where(issue => issue.Suppressed == false)
+                .Select(issue => issue.Selector)
+                .OrderBy(selector => selector, StringComparer.Ordinal)
+                .ToArray();
+            var suppressedRedundantSelectors = duplicateReport.Issues
+                .Where(issue => issue.Suppressed)
+                .Select(issue => issue.Selector)
+                .OrderBy(selector => selector, StringComparer.Ordinal)
+                .ToArray();
             var cases = new List<Dictionary<string, object>>();
 
             AddSelfTestCase(cases, "single class warns", activeTokens.Contains("single"));
@@ -267,14 +333,43 @@ namespace UnityMCP.Editor
             AddSelfTestCase(cases, "active finding set is exact",
                 activeTokens.SequenceEqual(
                     new[] { "IdContainer", "Unique", "UniqueChild", "child", "container", "single" }));
+            AddSelfTestCase(cases, "same winning theme value warns",
+                activeRedundantSelectors.SequenceEqual(new[] { ".duplicate" }));
+            AddSelfTestCase(cases, "different-value override passes",
+                activeRedundantSelectors.Contains(".different") == false);
+            AddSelfTestCase(cases, "reasoned redundant-declaration suppression is retained",
+                suppressedRedundantSelectors.SequenceEqual(new[] { ".suppressed-duplicate" }));
 
             return new Dictionary<string, object>
             {
                 { "passed", cases.All(testCase => (bool)testCase["passed"]) },
                 { "cases", cases },
                 { "activeTokens", activeTokens },
-                { "suppressedTokens", suppressedTokens }
+                { "suppressedTokens", suppressedTokens },
+                { "activeRedundantSelectors", activeRedundantSelectors },
+                { "suppressedRedundantSelectors", suppressedRedundantSelectors }
             };
+        }
+
+        private static void AppendSelfTestRules(UssCascadeDocument document,
+            IEnumerable<UssRule> rules, int origin)
+        {
+            foreach (var rule in rules)
+            {
+                document.LoadedAssetPaths.Add(rule.AssetPath);
+                foreach (var selectorText in rule.Selectors)
+                {
+                    TryParseSimpleSelector(selectorText, out var selector);
+                    document.Rules.Add(new UssCascadeRule
+                    {
+                        Rule = rule,
+                        SelectorText = selectorText,
+                        Selector = selector,
+                        Origin = origin,
+                        SourceOrder = document.NextSourceOrder()
+                    });
+                }
+            }
         }
 
         private static UssUsageIndex BuildUsageIndex(IEnumerable<UssRule> allRules,
@@ -335,6 +430,7 @@ namespace UnityMCP.Editor
                     var document = XDocument.Parse(text,
                         LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
                     index.IndexedUxmlCount++;
+                    index.AddDocument(path, document);
                     foreach (XElement element in document.Descendants())
                     {
                         XAttribute classAttribute = GetAttribute(element, "class");
@@ -372,6 +468,56 @@ namespace UnityMCP.Editor
             }
         }
 
+        private static string ResolveStyleReference(string rawPath, string ownerAssetPath)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath))
+            {
+                return "";
+            }
+
+            var path = rawPath.Trim().Replace('\\', '/');
+            var queryIndex = path.IndexOf('?');
+            if (queryIndex >= 0)
+            {
+                path = path.Substring(0, queryIndex);
+            }
+
+            var fragmentIndex = path.IndexOf('#');
+            if (fragmentIndex >= 0)
+            {
+                path = path.Substring(0, fragmentIndex);
+            }
+
+            const string projectPrefix = "project://database/";
+            if (path.StartsWith(projectPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                path = path.Substring(projectPrefix.Length);
+            }
+
+            if (path.StartsWith("unity-theme://", StringComparison.OrdinalIgnoreCase))
+            {
+                return "";
+            }
+
+            path = Uri.UnescapeDataString(path);
+            if (Path.IsPathRooted(path))
+            {
+                return MCPUIToolkitAuditUtility.ToAssetPath(path);
+            }
+
+            if (path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
+            {
+                return MCPUIToolkitAuditUtility.NormalizeAssetPath(path);
+            }
+
+            var ownerDirectory = Path.GetDirectoryName(ownerAssetPath) ?? "";
+            var combined = Path.Combine(ownerDirectory,
+                path.Replace('/', Path.DirectorySeparatorChar));
+            return MCPUIToolkitAuditUtility.ToAssetPath(
+                MCPUIToolkitAuditUtility.ToFullPath(combined));
+        }
+
         private static void IndexRuntimeClassReferences(UssUsageIndex index,
             MCPUIToolkitAuditOptions options)
         {
@@ -406,6 +552,418 @@ namespace UnityMCP.Editor
                     }
                 }
             }
+        }
+
+        private static string FindCommonPanelThemePath(MCPUIToolkitAuditOptions options)
+        {
+            var themePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var assetPath in MCPUIToolkitAuditUtility.FindAssetFiles(".asset", options))
+            {
+                string text;
+                try
+                {
+                    text = File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(assetPath));
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (text.Contains("UnityEngine.UIElements.PanelSettings",
+                        StringComparison.Ordinal) == false)
+                {
+                    continue;
+                }
+
+                var match = panelThemeGuidRegex.Match(text);
+                if (match.Success == false)
+                {
+                    continue;
+                }
+
+                var themePath = AssetDatabase.GUIDToAssetPath(match.Groups["guid"].Value);
+                if (string.IsNullOrWhiteSpace(themePath) == false)
+                {
+                    themePaths.Add(MCPUIToolkitAuditUtility.NormalizeAssetPath(themePath));
+                }
+            }
+
+            return themePaths.Count == 1 ? themePaths.Single() : "";
+        }
+
+        private static IReadOnlyCollection<string> EnumerateImportedStylePaths(string rootPath,
+            ICollection<string> errors)
+        {
+            var stylePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            CollectImportedStylePaths(rootPath, stylePaths, visited, errors);
+            return stylePaths;
+        }
+
+        private static void CollectImportedStylePaths(string assetPath,
+            ISet<string> stylePaths, ISet<string> visited, ICollection<string> errors)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath) || visited.Add(assetPath) == false)
+            {
+                return;
+            }
+
+            string text;
+            try
+            {
+                text = File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(assetPath));
+            }
+            catch (Exception exception)
+            {
+                errors.Add($"Failed to read theme stylesheet '{assetPath}': {exception.Message}");
+                return;
+            }
+
+            foreach (var importPath in GetImportedStylePaths(assetPath, text))
+            {
+                if (importPath.EndsWith(".uss", StringComparison.OrdinalIgnoreCase))
+                {
+                    stylePaths.Add(importPath);
+                }
+
+                CollectImportedStylePaths(importPath, stylePaths, visited, errors);
+            }
+        }
+
+        private static IEnumerable<string> GetImportedStylePaths(string ownerPath, string text)
+        {
+            foreach (Match match in importRegex.Matches(commentRegex.Replace(text ?? "", "")))
+            {
+                var rawPath = match.Groups["quoted"].Success
+                    ? match.Groups["quoted"].Value
+                    : match.Groups["plain"].Value;
+                var resolved = ResolveStyleReference(rawPath, ownerPath);
+                if (string.IsNullOrWhiteSpace(resolved) == false)
+                {
+                    yield return resolved;
+                }
+            }
+        }
+
+        private static UssCascadeIndex BuildCascadeIndex(string commonThemePath,
+            IReadOnlyDictionary<string, List<UssRule>> rulesByPath, UssUsageIndex usageIndex,
+            ICollection<string> errors)
+        {
+            var index = new UssCascadeIndex();
+            var additionalRules =
+                new Dictionary<string, List<UssRule>>(StringComparer.OrdinalIgnoreCase);
+            var reportedErrors = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var authoredDocument in usageIndex.Documents)
+            {
+                var cascadeDocument = new UssCascadeDocument(authoredDocument);
+                if (string.IsNullOrWhiteSpace(commonThemePath) == false)
+                {
+                    AppendStyleSheetCascade(commonThemePath, 0, cascadeDocument, rulesByPath,
+                        additionalRules, new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                        errors, reportedErrors);
+                }
+
+                foreach (var stylePath in authoredDocument.StylePaths)
+                {
+                    AppendStyleSheetCascade(stylePath, 1, cascadeDocument, rulesByPath,
+                        additionalRules, new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                        errors, reportedErrors);
+                }
+
+                index.Documents.Add(cascadeDocument);
+            }
+
+            return index;
+        }
+
+        private static void AppendStyleSheetCascade(string assetPath, int origin,
+            UssCascadeDocument document,
+            IReadOnlyDictionary<string, List<UssRule>> rulesByPath,
+            IDictionary<string, List<UssRule>> additionalRules,
+            ISet<string> importStack, ICollection<string> errors, ISet<string> reportedErrors)
+        {
+            assetPath = MCPUIToolkitAuditUtility.NormalizeAssetPath(assetPath);
+            if (string.IsNullOrWhiteSpace(assetPath) || importStack.Add(assetPath) == false)
+            {
+                return;
+            }
+
+            try
+            {
+                var fullPath = MCPUIToolkitAuditUtility.ToFullPath(assetPath);
+                if (File.Exists(fullPath) == false)
+                {
+                    var message = $"Referenced stylesheet does not exist: {assetPath}";
+                    if (reportedErrors.Add(message))
+                    {
+                        errors.Add(message);
+                    }
+
+                    return;
+                }
+
+                var text = File.ReadAllText(fullPath);
+                foreach (var importPath in GetImportedStylePaths(assetPath, text))
+                {
+                    AppendStyleSheetCascade(importPath, origin, document, rulesByPath,
+                        additionalRules, importStack, errors, reportedErrors);
+                }
+
+                if (rulesByPath.TryGetValue(assetPath, out var rules) == false &&
+                    additionalRules.TryGetValue(assetPath, out rules) == false)
+                {
+                    rules = ParseStyleSheet(assetPath, text);
+                    additionalRules[assetPath] = rules;
+                }
+
+                document.LoadedAssetPaths.Add(assetPath);
+                foreach (var rule in rules)
+                {
+                    foreach (var selectorText in rule.Selectors)
+                    {
+                        TryParseSimpleSelector(selectorText, out var selector);
+                        document.Rules.Add(new UssCascadeRule
+                        {
+                            Rule = rule,
+                            SelectorText = selectorText,
+                            Selector = selector,
+                            Origin = origin,
+                            SourceOrder = document.NextSourceOrder()
+                        });
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                var message = $"Failed to index stylesheet cascade '{assetPath}': " +
+                              exception.Message;
+                if (reportedErrors.Add(message))
+                {
+                    errors.Add(message);
+                }
+            }
+            finally
+            {
+                importStack.Remove(assetPath);
+            }
+        }
+
+        private static void AuditRedundantDeclarations(IReadOnlyList<UssRule> rules,
+            UssUsageIndex usageIndex, UssCascadeIndex cascadeIndex,
+            MCPUssStyleAuditReport report, bool includeSuppressed)
+        {
+            foreach (var rule in rules)
+            {
+                var selectors = new List<UssSimpleSelector>();
+                var fullySupported = true;
+                foreach (var selectorText in rule.Selectors)
+                {
+                    if (TryParseSimpleSelector(selectorText, out var selector) == false)
+                    {
+                        fullySupported = false;
+                        break;
+                    }
+
+                    selectors.Add(selector);
+                }
+
+                if (fullySupported == false || selectors.Count == 0 ||
+                    selectors.All(selector => selector.Specificity == 0) ||
+                    rule.Selectors.Any(selector =>
+                        SelectorHasRuntimeClassContract(selector, usageIndex)))
+                {
+                    continue;
+                }
+
+                foreach (var declaration in rule.Declarations)
+                {
+                    var authoredUsages = new List<UssUsageLocation>();
+                    var fallbackRules = new List<UssResolvedDeclaration>();
+                    var targetWon = false;
+                    var uncertain = false;
+
+                    foreach (var document in cascadeIndex.Documents.Where(document =>
+                                 document.LoadedAssetPaths.Contains(rule.AssetPath)))
+                    {
+                        if (document.HasUnsupportedCompetingDeclaration(
+                                declaration.Key, declaration.Value))
+                        {
+                            uncertain = true;
+                            break;
+                        }
+
+                        foreach (var element in document.AuthoredDocument.Elements.Where(element =>
+                                     selectors.Any(selector => selector.Matches(element))))
+                        {
+                            var current = document.Resolve(element, declaration.Key, null);
+                            if (current == null || ReferenceEquals(current.Rule, rule) == false)
+                            {
+                                continue;
+                            }
+
+                            targetWon = true;
+                            var fallback = document.Resolve(element, declaration.Key, rule);
+                            if (fallback == null ||
+                                StyleValuesEqual(fallback.Value, declaration.Value) == false)
+                            {
+                                uncertain = true;
+                                break;
+                            }
+
+                            authoredUsages.Add(new UssUsageLocation(
+                                document.AuthoredDocument.AssetPath, element.Line, element.Column));
+                            fallbackRules.Add(fallback);
+                        }
+
+                        if (uncertain)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (uncertain || targetWon == false || fallbackRules.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    AddRedundantDeclarationIssue(report, rule, declaration.Key,
+                        declaration.Value, authoredUsages, fallbackRules, includeSuppressed);
+                }
+            }
+        }
+
+        private static void AddRedundantDeclarationIssue(MCPUssStyleAuditReport report,
+            UssRule rule, string property, string value,
+            IEnumerable<UssUsageLocation> authoredUsages,
+            IEnumerable<UssResolvedDeclaration> fallbackDeclarations,
+            bool includeSuppressed)
+        {
+            var usages = authoredUsages
+                .GroupBy(usage => $"{usage.Path}:{usage.Line}:{usage.Column}",
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList();
+            var fallbackRules = fallbackDeclarations
+                .GroupBy(fallback =>
+                        $"{fallback.Rule.AssetPath}\n{fallback.SelectorText}\n{property}",
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(fallback => fallback.Rule.AssetPath, StringComparer.Ordinal)
+                .ThenBy(fallback => fallback.Rule.Line)
+                .ThenBy(fallback => fallback.SelectorText, StringComparer.Ordinal)
+                .ToList();
+            var sourceLabels = fallbackRules
+                .Select(fallback =>
+                    $"'{fallback.SelectorText}' in {fallback.Rule.AssetPath}")
+                .ToList();
+            var selectorLabel = string.Join(", ", rule.Selectors);
+            var issue = new MCPUssStyleAuditIssue
+            {
+                AssetPath = rule.AssetPath,
+                Line = rule.Line,
+                Selector = selectorLabel,
+                Token = property,
+                Kind = "redundant-declaration",
+                Property = property,
+                Value = value,
+                AuthoredUsageCount = usages.Count,
+                UsageLocations = usages.Take(20)
+                    .Select(location => location.ToDictionary()).ToList(),
+                StylesheetRules = fallbackRules.Select(fallback =>
+                    new Dictionary<string, object>
+                    {
+                        { "property", property },
+                        { "value", fallback.Value },
+                        { "selector", fallback.SelectorText },
+                        { "sourcePath", fallback.Rule.AssetPath },
+                        { "line", fallback.Rule.Line }
+                    }).ToList(),
+                Suppressed = string.IsNullOrWhiteSpace(
+                    rule.RedundantDeclarationSuppressionReason) == false,
+                SuppressionReason = rule.RedundantDeclarationSuppressionReason,
+                Message =
+                    $"Declaration '{property}: {value}' in selector '{selectorLabel}' repeats " +
+                    $"the same winning value already supplied by {string.Join(", ", sourceLabels)} " +
+                    $"for {usages.Count} authored UXML element(s). Remove the duplicate declaration " +
+                    "so the broader loaded style remains the single owner."
+            };
+            report.Record(issue, includeSuppressed);
+        }
+
+        private static bool TryParseSimpleSelector(string rawSelector,
+            out UssSimpleSelector selector)
+        {
+            selector = null;
+            var value = (rawSelector ?? "").Trim();
+            var match = Regex.Match(value,
+                @"^(?<type>\*|[A-Za-z_][A-Za-z0-9_-]*)?" +
+                @"(?<tokens>(?:[.#][A-Za-z_][A-Za-z0-9_-]*)*)$");
+            if (match.Success == false || value.Length == 0)
+            {
+                return false;
+            }
+
+            var classNames = classTokenRegex.Matches(value)
+                .Cast<Match>()
+                .Select(item => item.Groups["token"].Value)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var ids = idTokenRegex.Matches(value)
+                .Cast<Match>()
+                .Select(item => item.Groups["token"].Value)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (ids.Count > 1)
+            {
+                return false;
+            }
+
+            var typeName = match.Groups["type"].Value;
+            if (typeName == "*")
+            {
+                typeName = "";
+            }
+
+            selector = new UssSimpleSelector
+            {
+                Text = value,
+                TypeName = typeName,
+                Id = ids.SingleOrDefault() ?? "",
+                Specificity = ids.Count * 100 + classNames.Count * 10 +
+                              (string.IsNullOrWhiteSpace(typeName) ? 0 : 1)
+            };
+            selector.ClassNames.AddRange(classNames);
+            return true;
+        }
+
+        private static bool StyleValuesEqual(string left, string right)
+        {
+            return string.Equals(
+                Regex.Replace((left ?? "").Trim(), @"\s+", " "),
+                Regex.Replace((right ?? "").Trim(), @"\s+", " "),
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsDynamicStateSelector(string selector)
+        {
+            var dynamicStates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "active",
+                "checked",
+                "disabled",
+                "enabled",
+                "focus",
+                "focus-visible",
+                "focus-within",
+                "hover",
+                "inactive",
+                "selected"
+            };
+            return Regex.Matches(selector ?? "",
+                    @":{1,2}(?<state>[A-Za-z_][A-Za-z0-9_-]*)")
+                .Cast<Match>()
+                .Any(match => dynamicStates.Contains(match.Groups["state"].Value));
         }
 
         private static void AuditRules(IEnumerable<UssRule> rules, UssUsageIndex usageIndex,
@@ -643,14 +1201,22 @@ namespace UnityMCP.Editor
                     var selectorIndex = cursor + selectorOffset + leadingLength;
                     var suppressionContext = originalHeader.Substring(0, selectorOffset + leadingLength);
                     var suppression = suppressionRegex.Match(suppressionContext);
+                    var redundantSuppression =
+                        redundantDeclarationSuppressionRegex.Match(suppressionContext);
                     rules.Add(new UssRule
                     {
                         AssetPath = assetPath,
                         Line = GetLineNumber(text, selectorIndex),
                         Selectors = SplitSelectors(selectorGroup),
+                        Declarations = ParseDeclarations(
+                            text.Substring(openBrace + 1, closeBrace - openBrace - 1)),
                         SuppressionReason = suppression.Success
                             ? suppression.Groups["reason"].Value.Trim()
-                            : ""
+                            : "",
+                        RedundantDeclarationSuppressionReason =
+                            redundantSuppression.Success
+                                ? redundantSuppression.Groups["reason"].Value.Trim()
+                                : ""
                     });
                 }
 
@@ -658,6 +1224,70 @@ namespace UnityMCP.Editor
             }
 
             return rules;
+        }
+
+        private static Dictionary<string, string> ParseDeclarations(string body)
+        {
+            var declarations =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            body = commentRegex.Replace(body ?? "", "");
+            var start = 0;
+            var parentheses = 0;
+            var quote = '\0';
+
+            for (var index = 0; index <= body.Length; index++)
+            {
+                var character = index < body.Length ? body[index] : ';';
+                if (quote != '\0')
+                {
+                    if (character == quote && (index == 0 || body[index - 1] != '\\'))
+                    {
+                        quote = '\0';
+                    }
+
+                    continue;
+                }
+
+                if (character == '"' || character == '\'')
+                {
+                    quote = character;
+                    continue;
+                }
+
+                if (character == '(')
+                {
+                    parentheses++;
+                    continue;
+                }
+
+                if (character == ')')
+                {
+                    parentheses = Math.Max(0, parentheses - 1);
+                    continue;
+                }
+
+                if (character != ';' || parentheses != 0)
+                {
+                    continue;
+                }
+
+                var declaration = body.Substring(start, index - start).Trim();
+                start = index + 1;
+                var colon = declaration.IndexOf(':');
+                if (colon <= 0)
+                {
+                    continue;
+                }
+
+                var property = declaration.Substring(0, colon).Trim();
+                var value = declaration.Substring(colon + 1).Trim();
+                if (property.Length > 0 && value.Length > 0)
+                {
+                    declarations[property] = value;
+                }
+            }
+
+            return declarations;
         }
 
         private static List<string> SplitSelectors(string selectorGroup)
@@ -796,7 +1426,199 @@ namespace UnityMCP.Editor
             public string AssetPath;
             public int Line;
             public List<string> Selectors = new List<string>();
+            public Dictionary<string, string> Declarations =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             public string SuppressionReason;
+            public string RedundantDeclarationSuppressionReason;
+        }
+
+        private sealed class UssSimpleSelector
+        {
+            public string Text;
+            public string TypeName;
+            public string Id;
+            public int Specificity;
+            public readonly List<string> ClassNames = new List<string>();
+
+            public bool Matches(UssAuthoredElement element)
+            {
+                if (string.IsNullOrWhiteSpace(TypeName) == false &&
+                    string.Equals(TypeName, element.TypeName,
+                        StringComparison.Ordinal) == false)
+                {
+                    return false;
+                }
+
+                if (string.IsNullOrWhiteSpace(Id) == false &&
+                    string.Equals(Id, element.Name, StringComparison.Ordinal) == false)
+                {
+                    return false;
+                }
+
+                return ClassNames.All(element.Classes.Contains);
+            }
+        }
+
+        private sealed class UssAuthoredElement
+        {
+            public string TypeName;
+            public string Name;
+            public int Line;
+            public int Column;
+            public readonly HashSet<string> Classes =
+                new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        private sealed class UssAuthoredDocument
+        {
+            public readonly string AssetPath;
+            public readonly List<string> StylePaths = new List<string>();
+            public readonly List<UssAuthoredElement> Elements =
+                new List<UssAuthoredElement>();
+
+            public UssAuthoredDocument(string assetPath, XDocument document)
+            {
+                AssetPath = assetPath;
+                foreach (var styleElement in document.Descendants()
+                             .Where(element => string.Equals(element.Name.LocalName, "Style",
+                                 StringComparison.OrdinalIgnoreCase)))
+                {
+                    var stylePath = ResolveStyleReference(
+                        GetAttributeValue(styleElement, "src"), assetPath);
+                    if (string.IsNullOrWhiteSpace(stylePath) == false)
+                    {
+                        StylePaths.Add(stylePath);
+                    }
+                }
+
+                foreach (var element in document.Descendants().Where(element =>
+                             IsAuthoredVisualElement(element)))
+                {
+                    var authored = new UssAuthoredElement
+                    {
+                        TypeName = element.Name.LocalName,
+                        Name = GetAttributeValue(element, "name"),
+                        Line = GetLineNumber(element),
+                        Column = GetColumnNumber(element)
+                    };
+                    foreach (var className in SplitWhitespace(
+                                 GetAttributeValue(element, "class")))
+                    {
+                        authored.Classes.Add(className);
+                    }
+
+                    Elements.Add(authored);
+                }
+            }
+
+            private static bool IsAuthoredVisualElement(XElement element)
+            {
+                switch (element.Name.LocalName)
+                {
+                    case "UXML":
+                    case "Style":
+                    case "Template":
+                    case "AttributeOverrides":
+                        return false;
+                    default:
+                        return true;
+                }
+            }
+        }
+
+        private sealed class UssCascadeRule
+        {
+            public UssRule Rule;
+            public string SelectorText;
+            public UssSimpleSelector Selector;
+            public int Origin;
+            public int SourceOrder;
+        }
+
+        private sealed class UssResolvedDeclaration
+        {
+            public UssRule Rule;
+            public string SelectorText;
+            public string Value;
+            public int Origin;
+            public int Specificity;
+            public int SourceOrder;
+        }
+
+        private sealed class UssCascadeDocument
+        {
+            private int sourceOrder;
+
+            public readonly UssAuthoredDocument AuthoredDocument;
+            public readonly List<UssCascadeRule> Rules = new List<UssCascadeRule>();
+            public readonly HashSet<string> LoadedAssetPaths =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            public UssCascadeDocument(UssAuthoredDocument authoredDocument)
+            {
+                AuthoredDocument = authoredDocument;
+            }
+
+            public int NextSourceOrder()
+            {
+                return sourceOrder++;
+            }
+
+            public UssResolvedDeclaration Resolve(UssAuthoredElement element,
+                string property, UssRule excludedRule)
+            {
+                UssResolvedDeclaration winner = null;
+                foreach (var contextualRule in Rules)
+                {
+                    if (contextualRule.Selector == null ||
+                        ReferenceEquals(contextualRule.Rule, excludedRule) ||
+                        contextualRule.Selector.Matches(element) == false ||
+                        contextualRule.Rule.Declarations.TryGetValue(property,
+                            out var value) == false)
+                    {
+                        continue;
+                    }
+
+                    if (winner != null &&
+                        (winner.Origin > contextualRule.Origin ||
+                         winner.Origin == contextualRule.Origin &&
+                         winner.Specificity > contextualRule.Selector.Specificity ||
+                         winner.Origin == contextualRule.Origin &&
+                         winner.Specificity == contextualRule.Selector.Specificity &&
+                         winner.SourceOrder > contextualRule.SourceOrder))
+                    {
+                        continue;
+                    }
+
+                    winner = new UssResolvedDeclaration
+                    {
+                        Rule = contextualRule.Rule,
+                        SelectorText = contextualRule.SelectorText,
+                        Value = value,
+                        Origin = contextualRule.Origin,
+                        Specificity = contextualRule.Selector.Specificity,
+                        SourceOrder = contextualRule.SourceOrder
+                    };
+                }
+
+                return winner;
+            }
+
+            public bool HasUnsupportedCompetingDeclaration(string property,
+                string targetValue)
+            {
+                return Rules.Any(contextualRule =>
+                    contextualRule.Selector == null &&
+                    IsDynamicStateSelector(contextualRule.SelectorText) == false &&
+                    contextualRule.Rule.Declarations.TryGetValue(property, out var value) &&
+                    StyleValuesEqual(value, targetValue) == false);
+            }
+        }
+
+        private sealed class UssCascadeIndex
+        {
+            public readonly List<UssCascadeDocument> Documents =
+                new List<UssCascadeDocument>();
         }
 
         private sealed class UssUsageIndex
@@ -823,8 +1645,15 @@ namespace UnityMCP.Editor
                 new HashSet<string>(StringComparer.Ordinal);
             public readonly HashSet<string> PseudoIdTokens =
                 new HashSet<string>(StringComparer.Ordinal);
+            public readonly List<UssAuthoredDocument> Documents =
+                new List<UssAuthoredDocument>();
             public int IndexedUxmlCount;
             public int IndexedRuntimeSourceCount;
+
+            public void AddDocument(string assetPath, XDocument document)
+            {
+                Documents.Add(new UssAuthoredDocument(assetPath, document));
+            }
 
             public void AddClassUsage(string token, string path, int line, string elementName = "")
             {
@@ -996,7 +1825,10 @@ namespace UnityMCP.Editor
                 { "issues", Issues.Select(issue => issue.ToDictionary()).ToList() },
                 { "errors", Errors.ToList() },
                 { "suppressionSyntax",
-                    $"/* {MCPUssSingleUseStyleAuditor.SUPPRESSION_MARKER} <reason> */" }
+                    $"/* {MCPUssStyleAuditor.SUPPRESSION_MARKER} <reason> */" },
+                { "redundantDeclarationSuppressionSyntax",
+                    $"/* {MCPUssStyleAuditor.REDUNDANT_DECLARATION_SUPPRESSION_MARKER} " +
+                    "<reason> */" }
             };
         }
     }
@@ -1008,9 +1840,13 @@ namespace UnityMCP.Editor
         public string Selector;
         public string Token;
         public string Kind;
+        public string Property;
+        public string Value;
         public int AuthoredUsageCount;
         public int RuntimeReferenceCount;
         public List<Dictionary<string, object>> UsageLocations =
+            new List<Dictionary<string, object>>();
+        public List<Dictionary<string, object>> StylesheetRules =
             new List<Dictionary<string, object>>();
         public bool Suppressed;
         public string SuppressionReason;
@@ -1018,7 +1854,7 @@ namespace UnityMCP.Editor
 
         public Dictionary<string, object> ToDictionary()
         {
-            return new Dictionary<string, object>
+            var result = new Dictionary<string, object>
             {
                 { "assetPath", AssetPath },
                 { "line", Line },
@@ -1032,6 +1868,14 @@ namespace UnityMCP.Editor
                 { "suppressionReason", SuppressionReason ?? "" },
                 { "message", Message }
             };
+            if (string.IsNullOrWhiteSpace(Property) == false)
+            {
+                result["property"] = Property;
+                result["value"] = Value ?? "";
+                result["stylesheetRules"] = StylesheetRules;
+            }
+
+            return result;
         }
     }
 

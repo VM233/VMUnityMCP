@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.47] - 2026-07-29
+
+- Extend the USS static audit to report declarations that repeat the same winning value already supplied by the common `PanelSettings` theme or another stylesheet loaded by the authored UXML.
+- Resolve theme and stylesheet imports in cascade order, while leaving different-value overrides, dynamic pseudo-state rules, runtime class contracts, multi-theme projects, and unsupported ambiguous selectors unreported.
+
 ## [3.3.46] - 2026-07-29
 
 - Keep the domain-reload ticket snapshot focused on mutations and the explicitly resumable Editor-idle wait instead of caching completed read-only responses such as repeated tool metadata.

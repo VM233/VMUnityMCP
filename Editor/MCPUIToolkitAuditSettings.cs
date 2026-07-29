@@ -242,7 +242,7 @@ namespace UnityMCP.Editor
                 return;
 
             MCPUssStyleAuditReport report =
-                MCPUssSingleUseStyleAuditor.Audit(paths, false, 5000, options);
+                MCPUssStyleAuditor.Audit(paths, false, 5000, options);
             UssState.Record(paths, report.WarningCount, report.Errors.Count);
             MCPUssStyleAuditConsoleReporter.Log(report, true);
         }
