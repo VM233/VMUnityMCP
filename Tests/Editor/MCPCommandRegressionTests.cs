@@ -1925,6 +1925,29 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ExecuteCode_UnityObjectUsesSharedStringIdentityContract()
+        {
+            var temporary = new GameObject(
+                "Execute Code Object Identity");
+            try
+            {
+                var response = MCPEditorCommands.SerializeResult(
+                    temporary, new Dictionary<string, object>());
+                var result = RequireDictionary(response["result"]);
+
+                Assert.That(result["instanceId"],
+                    Is.EqualTo(MCPObjectId.Get(temporary)));
+                Assert.That(result["instanceId"], Is.TypeOf<string>());
+                Assert.That(MCPObjectId.ToObject(result["instanceId"]),
+                    Is.SameAs(temporary));
+            }
+            finally
+            {
+                Object.DestroyImmediate(temporary);
+            }
+        }
+
+        [Test]
         public void ExecuteCode_UIElementsUsingAndUserLineNumbersAreAvailable()
         {
             var success = RequireDictionary(MCPEditorCommands.ExecuteCode(new Dictionary<string, object>

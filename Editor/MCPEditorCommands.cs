@@ -1139,7 +1139,7 @@ namespace UnityMCP.Editor
                     {
                         { "name", unityObject.name },
                         { "type", unityObject.GetType().FullName },
-                        { "instanceId", unityObject.GetInstanceID() },
+                        { "instanceId", MCPObjectId.Get(unityObject) },
                     };
                     if (!string.IsNullOrEmpty(assetPath))
                         unityResult["assetPath"] = assetPath;
