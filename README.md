@@ -126,8 +126,9 @@ http://127.0.0.1:7890/api/ping
 | UI Toolkit authoring | `unity_uitoolkit_authoring_transaction` | `uitoolkit/authoring-transaction` | Apply multi-file UXML/USS edits with rollback. |
 | Jobs | `unity_jobs_list` | `jobs/list` | List paginated job history owned by the calling agent. |
 | Jobs | `unity_jobs_get` | `jobs/get` | Read one owned historical job snapshot. |
-| Project extensions | `unity_project_tools_list` | `project-tools/list` | List project-defined extension tools from loaded Unity editor assemblies. |
-| Project extensions | `unity_project_tools_execute` | `project-tools/execute` | Execute a project-defined extension tool by `toolName`. |
+| Project extensions | `unity_project_tools_list` | `project-tools/list` | List compact project-tool names, descriptions, and behavior flags without parameter schemas. |
+| Project extensions | `unity_project_tools_get` | `project-tools/get` | Get the complete descriptor and input schema for one project tool. |
+| Project extensions | `unity_project_tools_execute` | `project-tools/execute` | Execute a project tool by `toolName` after inspecting its schema. |
 
 ## Project Extensions
 
@@ -170,9 +171,26 @@ Project tools opt into first-class concrete exposure with `FirstClass = true`, u
 }
 ```
 
-Declare the behavior explicitly: use exactly one of `ReadOnly = true`, `MutatesAssets = true`, or `MutatesRuntime = true`. A first-class project tool must declare one of these operation kinds. Tools without `FirstClass = true` stay out of the default tool surface and remain discoverable through paginated `project-tools/list`.
+Declare the behavior explicitly: use exactly one of `ReadOnly = true`, `MutatesAssets = true`, or `MutatesRuntime = true`. A first-class project tool must declare one of these operation kinds. Tools without `FirstClass = true` stay out of the default tool surface and use the same three-stage discovery contract as the rest of the project catalog.
 
-Execute a lazily exposed project tool through `project-tools/execute` with:
+First list compact summaries:
+
+```json
+{
+  "offset": 0,
+  "limit": 100
+}
+```
+
+Then request the selected tool's full schema:
+
+```json
+{
+  "toolName": "battleidle/add-property"
+}
+```
+
+Finally execute it:
 
 ```json
 {
@@ -183,7 +201,7 @@ Execute a lazily exposed project tool through `project-tools/execute` with:
 }
 ```
 
-Concrete `project-tools/call/...` routes are reserved for tools that explicitly opt into first-class exposure; `project-tools/execute` is the canonical route for the remaining project catalog.
+`project-tools/list` never returns `inputSchema`; only `project-tools/get` returns the detailed descriptor. Concrete `project-tools/call/...` routes are reserved for tools that explicitly opt into first-class exposure; `project-tools/get` plus `project-tools/execute` is the canonical workflow for the remaining project catalog.
 
 ## Notes
 

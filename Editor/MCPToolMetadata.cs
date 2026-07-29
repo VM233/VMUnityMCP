@@ -144,6 +144,7 @@ namespace UnityMCP.Editor
                 "profiler/memory",
                 "profiler/memory-status",
                 "profiler/memory-snapshot-status",
+                "project-tools/get",
                 "project-tools/list");
 
             AddProfile(profiles, ToolProfile.FirstClass(readOnly: true, longRunning: true),
@@ -382,7 +383,7 @@ namespace UnityMCP.Editor
 
         private static Dictionary<string, object> BuildToolMetadata(string route)
         {
-            if (MCPProjectToolCommands.TryGetToolDictionaryForDirectRoute(route, out var projectTool))
+            if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
                 return BuildProjectToolMetadata(route, projectTool);
 
             string toolName = RouteToToolName(route);
@@ -536,28 +537,28 @@ namespace UnityMCP.Editor
 
         internal static bool IsRouteReadOnly(string route)
         {
-            if (MCPProjectToolCommands.TryGetToolDictionaryForDirectRoute(route, out var projectTool))
+            if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
                 return GetBool(projectTool, "readOnly", false);
             return GetToolProfile(route).ReadOnly;
         }
 
         internal static bool RouteMutatesAssets(string route)
         {
-            if (MCPProjectToolCommands.TryGetToolDictionaryForDirectRoute(route, out var projectTool))
+            if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
                 return GetBool(projectTool, "mutatesAssets", false);
             return GetToolProfile(route).MutatesAssets;
         }
 
         internal static bool RouteMutatesRuntime(string route)
         {
-            if (MCPProjectToolCommands.TryGetToolDictionaryForDirectRoute(route, out var projectTool))
+            if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
                 return GetBool(projectTool, "mutatesRuntime", false);
             return GetToolProfile(route).MutatesRuntime;
         }
 
         internal static bool RouteIsDangerous(string route)
         {
-            if (MCPProjectToolCommands.TryGetToolDictionaryForDirectRoute(route, out var projectTool))
+            if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
                 return GetBool(projectTool, "dangerous", false);
             return GetToolProfile(route).Dangerous;
         }
@@ -571,7 +572,7 @@ namespace UnityMCP.Editor
 
         internal static bool RouteMayReloadDomain(string route)
         {
-            if (MCPProjectToolCommands.TryGetToolDictionaryForDirectRoute(route, out var projectTool))
+            if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
                 return GetBool(projectTool, "mayReloadDomain", false);
             return GetToolProfile(route).MayReloadDomain;
         }
@@ -585,7 +586,7 @@ namespace UnityMCP.Editor
                 string exposure = tool.TryGetValue("exposure", out var exposureObj) ? exposureObj?.ToString() : "";
                 string description = tool.TryGetValue("description", out var descObj) ? descObj?.ToString() : "";
                 bool hasProfile = ToolProfiles.ContainsKey(route) ||
-                                  MCPProjectToolCommands.TryGetToolDictionaryForDirectRoute(route, out _);
+                                  MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out _);
 
                 if (!hasProfile && string.Equals(exposure, ExposureFirstClass, StringComparison.Ordinal))
                 {
@@ -964,9 +965,11 @@ namespace UnityMCP.Editor
                 case "localization/remove-variable":
                     return "Remove a Smart String persistent variable from a registered group.";
                 case "project-tools/list":
-                    return "List project-defined MCP extension tools discovered in loaded Unity editor assemblies.";
+                    return "List compact project-defined MCP tool summaries without parameter schemas.";
+                case "project-tools/get":
+                    return "Get the complete descriptor and input schema for one project-defined MCP tool.";
                 case "project-tools/execute":
-                    return "Execute a project-defined MCP extension tool by toolName.";
+                    return "Execute a project-defined MCP tool after discovering it with project-tools/list and inspecting it with project-tools/get.";
                 case "queue/info":
                     return "Inspect queue capacity, active work, and per-agent depth.";
                 case "queue/status":
@@ -1621,6 +1624,10 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("offset", "number", "Result offset."),
                         Prop("limit", "number", "Maximum project tools. Defaults to 100; capped at 200.")));
+                case "project-tools/get":
+                    return Schema(Props(
+                        Prop("toolName", "string", "Exact project tool name from project-tools/list.")
+                    ), "toolName");
                 case "project-tools/execute":
                     return Schema(Props(
                         Prop("toolName", "string", "Project tool name from project-tools/list."),

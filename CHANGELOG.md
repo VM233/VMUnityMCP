@@ -2,6 +2,13 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.0.0] - 2026-07-30
+
+- Remove the complete UMA integration, including command handlers, routes, optional capability detection, category settings, self-tests, assembly references, and Unity assets.
+- Replace project-tool discovery with a strict three-stage contract: compact `project-tools/list`, schema-bearing `project-tools/get`, and validated `project-tools/execute`.
+- Separate project-tool summary and detail serialization so list responses and execution errors cannot leak parameter schemas.
+- Remove compatibility behavior that returned complete descriptors from `project-tools/list`.
+
 ## [4.3.2] - 2026-07-30
 
 - Add a default-on **Project Settings > Unity MCP > UI Toolkit Audit** switch for authored UXML `tooltip` attribute findings.

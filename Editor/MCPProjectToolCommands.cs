@@ -61,28 +61,70 @@ namespace UnityMCP.Editor
 
         public static object List(Dictionary<string, object> args)
         {
-            var allTools = GetToolDictionaries(false);
+            var allTools = GetToolSummaries(false);
             int offset = Math.Max(0, GetInt(args, "offset", 0));
             int limit = Math.Max(1, Math.Min(200, GetInt(args, "limit", 100)));
             var tools = allTools.Skip(offset).Take(limit).ToList();
+            int nextOffset = offset + tools.Count;
 
             return new Dictionary<string, object>
             {
                 { "tools", tools },
-                { "count", tools.Count },
+                { "returnedTools", tools.Count },
                 { "totalTools", allTools.Count },
                 { "offset", offset },
                 { "limit", limit },
-                { "hasMore", offset + tools.Count < allTools.Count }
+                { "hasMore", nextOffset < allTools.Count },
+                { "nextOffset", nextOffset < allTools.Count ? (object)nextOffset : null }
             };
         }
 
-        public static List<Dictionary<string, object>> GetToolDictionaries(bool validOnly)
+        public static object Get(Dictionary<string, object> args)
+        {
+            string toolName = GetString(args, "toolName")?.Trim();
+            if (string.IsNullOrEmpty(toolName))
+                return MCPResponse.Error("toolName is required", "invalid_arguments");
+
+            var matches = FindTools(toolName);
+            if (matches.Count == 0)
+            {
+                return MCPResponse.Error($"Project tool '{toolName}' was not found.", "project_tool_not_found",
+                    false, new Dictionary<string, object>
+                    {
+                        { "listRoute", "project-tools/list" }
+                    });
+            }
+
+            if (matches.Count > 1)
+            {
+                return MCPResponse.Error($"Project tool '{toolName}' is registered more than once.",
+                    "duplicate_project_tool", false, new Dictionary<string, object>
+                    {
+                        { "matches", matches.Select(tool => tool.ToSummaryDictionary()).ToList() }
+                    });
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "tool", matches[0].ToDetailDictionary() }
+            };
+        }
+
+        public static List<Dictionary<string, object>> GetToolSummaries(bool validOnly)
         {
             return DiscoverTools()
                 .Where(tool => validOnly == false || string.IsNullOrEmpty(tool.ValidationError))
                 .OrderBy(tool => tool.ToolName, StringComparer.OrdinalIgnoreCase)
-                .Select(tool => tool.ToDictionary())
+                .Select(tool => tool.ToSummaryDictionary())
+                .ToList();
+        }
+
+        public static List<Dictionary<string, object>> GetToolDetails(bool validOnly)
+        {
+            return DiscoverTools()
+                .Where(tool => validOnly == false || string.IsNullOrEmpty(tool.ValidationError))
+                .OrderBy(tool => tool.ToolName, StringComparer.OrdinalIgnoreCase)
+                .Select(tool => tool.ToDetailDictionary())
                 .ToList();
         }
 
@@ -90,24 +132,31 @@ namespace UnityMCP.Editor
         {
             return DiscoverTools()
                 .Where(tool => string.IsNullOrEmpty(tool.ValidationError) && tool.FirstClass)
+                .GroupBy(tool => tool.ToolName, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() == 1)
+                .Select(group => group.Single())
                 .OrderBy(tool => tool.ToolName, StringComparer.OrdinalIgnoreCase)
                 .Select(tool => GetDirectRoute(tool.ToolName))
                 .ToList();
         }
 
-        public static bool TryGetToolDictionaryForDirectRoute(string path, out Dictionary<string, object> tool)
+        public static bool TryGetToolDetailForDirectRoute(string path, out Dictionary<string, object> tool)
         {
             tool = null;
 
             if (TryGetToolNameFromDirectRoute(path, out var toolName) == false)
                 return false;
 
-            var descriptor = FindTool(toolName);
-            if (descriptor == null || !descriptor.FirstClass ||
+            var matches = FindTools(toolName);
+            if (matches.Count != 1)
+                return false;
+
+            var descriptor = matches[0];
+            if (!descriptor.FirstClass ||
                 string.IsNullOrEmpty(descriptor.ValidationError) == false)
                 return false;
 
-            tool = descriptor.ToDictionary();
+            tool = descriptor.ToDetailDictionary();
             return true;
         }
 
@@ -124,8 +173,12 @@ namespace UnityMCP.Editor
                 return true;
             }
 
-            var descriptor = FindTool(toolName);
-            if (descriptor == null || !descriptor.FirstClass ||
+            var matches = FindTools(toolName);
+            if (matches.Count != 1)
+                return false;
+
+            var descriptor = matches[0];
+            if (!descriptor.FirstClass ||
                 string.IsNullOrEmpty(descriptor.ValidationError) == false)
                 return false;
 
@@ -160,16 +213,14 @@ namespace UnityMCP.Editor
         {
             toolArgs = RemoveProjectBindingArguments(toolArgs);
 
-            var matches = DiscoverTools()
-                .Where(tool => string.Equals(tool.ToolName, toolName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var matches = FindTools(toolName);
 
             if (matches.Count == 0)
             {
                 return MCPResponse.Error($"Project tool '{toolName}' was not found.", "project_tool_not_found",
                     false, new Dictionary<string, object>
                     {
-                        { "availableTools", DiscoverTools().Select(tool => tool.ToolName).OrderBy(name => name).ToList() }
+                        { "listRoute", "project-tools/list" }
                     });
             }
 
@@ -178,14 +229,18 @@ namespace UnityMCP.Editor
                 return MCPResponse.Error($"Project tool '{toolName}' is registered more than once.",
                     "duplicate_project_tool", false, new Dictionary<string, object>
                     {
-                        { "matches", matches.Select(tool => tool.ToDictionary()).ToList() }
+                        { "matches", matches.Select(tool => tool.ToSummaryDictionary()).ToList() }
                     });
             }
 
             var descriptor = matches[0];
             if (!string.IsNullOrEmpty(descriptor.ValidationError))
                 return MCPResponse.Error(descriptor.ValidationError, "invalid_project_tool", false,
-                    new Dictionary<string, object> { { "tool", descriptor.ToDictionary() } });
+                    new Dictionary<string, object>
+                    {
+                        { "tool", descriptor.ToSummaryDictionary() },
+                        { "detailsRoute", "project-tools/get" }
+                    });
 
             if (!descriptor.TryValidateArguments(toolArgs, out var argumentError))
             {
@@ -235,10 +290,11 @@ namespace UnityMCP.Editor
             return businessArguments;
         }
 
-        private static ProjectToolDescriptor FindTool(string toolName)
+        private static List<ProjectToolDescriptor> FindTools(string toolName)
         {
             return DiscoverTools()
-                .FirstOrDefault(tool => string.Equals(tool.ToolName, toolName, StringComparison.OrdinalIgnoreCase));
+                .Where(tool => string.Equals(tool.ToolName, toolName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
         }
 
         private static bool TryGetToolNameFromDirectRoute(string path, out string toolName)
@@ -396,15 +452,33 @@ namespace UnityMCP.Editor
                 return typeResult;
             }
 
-            public Dictionary<string, object> ToDictionary()
+            public Dictionary<string, object> ToSummaryDictionary()
             {
                 return new Dictionary<string, object>
+                {
+                    { "toolName", ToolName },
+                    { "description", Description },
+                    { "readOnly", ReadOnly },
+                    { "mutatesAssets", MutatesAssets },
+                    { "mutatesRuntime", MutatesRuntime },
+                    { "dangerous", Dangerous },
+                    { "longRunning", LongRunning },
+                    { "mayReloadDomain", MayReloadDomain },
+                    { "requiresPlayMode", RequiresPlayMode },
+                    { "firstClass", FirstClass },
+                    { "valid", string.IsNullOrEmpty(ValidationError) }
+                };
+            }
+
+            public Dictionary<string, object> ToDetailDictionary()
+            {
+                var descriptor = new Dictionary<string, object>
                 {
                     { "toolName", ToolName },
                     { "shortName", ShortName },
                     { "description", Description },
                     { "source", Source },
-                    { "route", GetDirectRoute(ToolName) },
+                    { "executeRoute", "project-tools/execute" },
                     { "inputSchema", InputSchema ?? CreateDefaultInputSchema() },
                     { "readOnly", ReadOnly },
                     { "mutatesAssets", MutatesAssets },
@@ -418,6 +492,9 @@ namespace UnityMCP.Editor
                     { "valid", string.IsNullOrEmpty(ValidationError) },
                     { "validationError", ValidationError ?? "" }
                 };
+                if (FirstClass)
+                    descriptor["directRoute"] = GetDirectRoute(ToolName);
+                return descriptor;
             }
 
             private string TrySetInputSchema(string inputSchemaJson)

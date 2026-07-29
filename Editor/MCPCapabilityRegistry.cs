@@ -29,13 +29,6 @@ namespace UnityMCP.Editor
                 RoutePrefix = "shadergraph/",
                 IsAvailable = MCPShaderGraphCommands.IsShaderGraphInstalled,
                 Requirement = "com.unity.shadergraph or a render pipeline package that contains Shader Graph"
-            },
-            new Capability
-            {
-                Name = "uma",
-                RoutePrefix = "uma/",
-                IsAvailable = IsUmaAvailable,
-                Requirement = "UMA with UMA_INSTALLED scripting define"
             }
         };
 
@@ -92,13 +85,5 @@ namespace UnityMCP.Editor
             }
         }
 
-        private static bool IsUmaAvailable()
-        {
-#if UMA_INSTALLED
-            return true;
-#else
-            return false;
-#endif
-        }
     }
 }

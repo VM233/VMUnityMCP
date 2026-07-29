@@ -243,7 +243,6 @@ namespace UnityMCP.Editor
             { "spriteatlas",    TestSpriteAtlas },
             { "texture",        TestTexture },
             { "ui",             TestUI },
-            { "uma",            TestUMA },
             { "undo",           TestUndo },
         };
 
@@ -1167,24 +1166,6 @@ namespace UnityMCP.Editor
             {
                 return $"UI.GetUIInfo threw: {ex.Message}";
             }
-        }
-
-        // --- UMA ---
-        private static string TestUMA()
-        {
-#if UMA_INSTALLED
-            try
-            {
-                var result = MCPUMACommands.GetProjectConfig(EmptyArgs());
-                return AssertNotNull(result, "UMA.GetProjectConfig");
-            }
-            catch (Exception ex)
-            {
-                return $"UMA.GetProjectConfig threw: {ex.Message}";
-            }
-#else
-            return null; // UMA not installed — pass (handler not compiled)
-#endif
         }
 
         // --- Undo ---

@@ -64,7 +64,7 @@ namespace UnityMCP.Editor
             "prefabasset", "prefs", "profiler", "project", "project-tools", "projectsettings", "renderer",
             "scenario", "scene", "screenshot", "script", "scriptableobject", "search",
             "selection", "serialized-object", "shadergraph", "sprite", "spriteatlas", "taglayer", "terrain", "testing",
-            "texture", "ui", "uitoolkit", "uma", "undo"
+            "texture", "ui", "uitoolkit", "undo"
         };
 
         private static Dictionary<string, bool> _enabledCategories;

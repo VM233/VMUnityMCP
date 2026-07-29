@@ -3274,7 +3274,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void RuntimeMutatingProjectTool_IsExplicitlyFirstClass()
         {
-            var descriptor = MCPProjectToolCommands.GetToolDictionaries(validOnly: true)
+            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
                 .Single(tool => tool["toolName"].ToString() == RUNTIME_MUTATION_TOOL_NAME);
             Assert.That(descriptor["readOnly"], Is.EqualTo(false));
             Assert.That(descriptor["mutatesAssets"], Is.EqualTo(false));
@@ -3294,7 +3294,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ProjectTool_FirstClassExposureMustBeExplicit()
         {
-            var descriptor = MCPProjectToolCommands.GetToolDictionaries(validOnly: true)
+            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
                 .Single(tool => tool["toolName"].ToString() == LAZY_READ_TOOL_NAME);
             Assert.That(descriptor["readOnly"], Is.EqualTo(true));
             Assert.That(descriptor["firstClass"], Is.EqualTo(false));
@@ -3304,6 +3304,52 @@ namespace UnityMCP.Editor.Tests
             var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
             Assert.That(tools.Any(item =>
                 item["route"].ToString() == "project-tools/call/" + LAZY_READ_TOOL_NAME), Is.False);
+        }
+
+        [Test]
+        public void ProjectToolDiscovery_SeparatesListGetAndExecuteContracts()
+        {
+            var listResult = RequireDictionary(MCPProjectToolCommands.List(new Dictionary<string, object>
+            {
+                { "offset", 0 },
+                { "limit", 200 }
+            }));
+            var summaries = (List<Dictionary<string, object>>)listResult["tools"];
+            var summary = summaries.Single(tool => tool["toolName"].ToString() == LAZY_READ_TOOL_NAME);
+
+            Assert.That(listResult.ContainsKey("count"), Is.False);
+            Assert.That(Convert.ToInt32(listResult["returnedTools"]), Is.EqualTo(summaries.Count));
+            Assert.That(summary["description"], Is.EqualTo("Regression fixture for an explicitly lazy project tool."));
+            Assert.That(summary.ContainsKey("inputSchema"), Is.False);
+            Assert.That(summary.ContainsKey("source"), Is.False);
+            Assert.That(summary.ContainsKey("route"), Is.False);
+            Assert.That(summary.ContainsKey("validationError"), Is.False);
+
+            var getResult = RequireDictionary(MCPProjectToolCommands.Get(new Dictionary<string, object>
+            {
+                { "toolName", LAZY_READ_TOOL_NAME }
+            }));
+            var detail = RequireDictionary(getResult["tool"]);
+            Assert.That(detail["toolName"], Is.EqualTo(LAZY_READ_TOOL_NAME));
+            Assert.That(detail.ContainsKey("inputSchema"), Is.True);
+            Assert.That(detail.ContainsKey("source"), Is.True);
+            Assert.That(detail.ContainsKey("route"), Is.False);
+            Assert.That(detail.ContainsKey("directRoute"), Is.False);
+            Assert.That(detail["executeRoute"], Is.EqualTo("project-tools/execute"));
+            Assert.That(detail["enforcesInputSchema"], Is.EqualTo(true));
+
+            var metadata = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: true, compact: true, includeSchema: true, limit: 200));
+            var firstClassTools = (List<Dictionary<string, object>>)metadata["tools"];
+            var listTool = firstClassTools.Single(tool =>
+                tool["route"].ToString() == "project-tools/list");
+            var getTool = firstClassTools.Single(tool =>
+                tool["route"].ToString() == "project-tools/get");
+            var listSchema = RequireDictionary(listTool["inputSchema"]);
+            var listProperties = RequireDictionary(listSchema["properties"]);
+            Assert.That(listProperties.ContainsKey("includeSchema"), Is.False);
+            var getSchema = RequireDictionary(getTool["inputSchema"]);
+            CollectionAssert.AreEqual(new[] { "toolName" }, (List<string>)getSchema["required"]);
         }
 
         [Test]
@@ -5322,6 +5368,8 @@ namespace UnityMCP.Editor.Tests
             Assert.That(routes, Does.Not.Contain("_meta/routes"));
             Assert.That(routes.Any(route => route.StartsWith("amplify/", StringComparison.Ordinal)),
                 Is.False);
+            Assert.That(routes.Any(route => route.StartsWith("uma/", StringComparison.Ordinal)),
+                Is.False);
             foreach (string retiredRoute in new[]
                      {
                          "prefab/set-object-reference", "prefab/duplicate",
@@ -5338,6 +5386,12 @@ namespace UnityMCP.Editor.Tests
                 Assert.That(routes, Does.Contain(currentRoute), currentRoute);
             }
             Assert.That(MCPSettingsManager.GetAllCategoryNames(), Does.Not.Contain("amplify"));
+            Assert.That(MCPSettingsManager.GetAllCategoryNames(), Does.Not.Contain("uma"));
+
+            var capabilities = RequireDictionary(MCPCapabilityRegistry.GetCapabilities());
+            var optional = (List<Dictionary<string, object>>)capabilities["optional"];
+            Assert.That(optional.Select(capability => capability["name"].ToString()),
+                Does.Not.Contain("uma"));
         }
 
         [Test]
