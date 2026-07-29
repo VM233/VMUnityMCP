@@ -68,6 +68,8 @@ namespace UnityMCP.Editor.Tests
         private const string TEST_HOST_SCENE_PATH = TEST_FOLDER + "/Test Host Scene.unity";
         private const string RUNTIME_MUTATION_TOOL_NAME = "unity-mcp-tests/set-runtime-state";
         private const string LAZY_READ_TOOL_NAME = "unity-mcp-tests/read-lazy-state";
+        private const string NESTED_SCHEMA_TOOL_NAME = "unity-mcp-tests/validate-nested-schema";
+        private const string INCOMPLETE_FIRST_CLASS_TOOL_NAME = "unity-mcp-tests/incomplete-first-class";
 
         [MCPProjectTool(RUNTIME_MUTATION_TOOL_NAME,
             Description = "Regression fixture for explicit runtime mutation metadata.",
@@ -95,6 +97,29 @@ namespace UnityMCP.Editor.Tests
                 { "success", true },
                 { "receivedKeys", args.Keys.OrderBy(key => key).ToArray() }
             };
+        }
+
+        [MCPProjectTool(NESTED_SCHEMA_TOOL_NAME,
+            Description = "Regression fixture for recursive project-tool schema validation.",
+            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"config\":{\"type\":\"object\",\"description\":\"Nested validation configuration.\",\"properties\":{\"mode\":{\"type\":\"string\",\"description\":\"Validation mode.\",\"enum\":[\"safe\",\"fast\"]},\"values\":{\"type\":\"array\",\"description\":\"One or two integer values.\",\"minItems\":1,\"maxItems\":2,\"items\":{\"type\":\"integer\"}},\"choice\":{\"description\":\"String or integer choice.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}},\"required\":[\"mode\",\"values\"],\"additionalProperties\":false}},\"required\":[\"config\"],\"additionalProperties\":false}",
+            ReadOnly = true)]
+        private static object ValidateNestedSchemaFixture(Dictionary<string, object> args)
+        {
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "received", args }
+            };
+        }
+
+        [MCPProjectTool(INCOMPLETE_FIRST_CLASS_TOOL_NAME,
+            Description = "Regression fixture that must be demoted when its schema metadata is incomplete.",
+            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"values\":{\"type\":\"array\"}},\"additionalProperties\":false}",
+            ReadOnly = true,
+            FirstClass = true)]
+        private static object IncompleteFirstClassFixture(Dictionary<string, object> args)
+        {
+            return new Dictionary<string, object> { { "success", true } };
         }
 
         [SetUp]
@@ -692,6 +717,24 @@ namespace UnityMCP.Editor.Tests
             Assert.That(typeof(MCPBridgeServer).GetField("_mainThreadQueue",
                 BindingFlags.Static | BindingFlags.NonPublic), Is.Null,
                 "A second unbounded main-thread queue must not be reintroduced beside MCPRequestQueue.");
+
+            var queueReadyField = typeof(MCPBridgeServer).GetField("_queueReady",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(queueReadyField, Is.Not.Null);
+
+            var pingMethod = typeof(MCPBridgeServer).GetMethod("BuildPingResponse",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(pingMethod, Is.Not.Null);
+            Assert.That(((Dictionary<string, object>)pingMethod.Invoke(null, null)),
+                Does.ContainKey("queueReady"));
+
+            var queueInfoMethod = typeof(MCPBridgeServer).GetMethod("BuildQueueInfoResponse",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(queueInfoMethod, Is.Not.Null);
+            var queueInfo = (Dictionary<string, object>)queueInfoMethod.Invoke(null, null);
+            Assert.That(queueInfo, Does.ContainKey("queueReady"));
+            if (MCPTestRunnerCommands.IsTestRunActive)
+                Assert.That(queueInfo["busyReason"], Is.EqualTo("test_run"));
         }
 
         [Test]
@@ -1695,43 +1738,33 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void ToolMetadata_ExposesPlayModeAndProfilerRoutesAsFirstClass()
+        public void ToolMetadata_ExposesPlayModeDirectlyAndKeepsProfilerRoutesLazy()
         {
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
+                firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
+                category: "editor"));
             var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-            string[] expectedRoutes =
-            {
-                "editor/play-mode",
-                "profiler/enable",
-                "profiler/stats",
-                "profiler/memory",
-                "profiler/frame-data",
-                "profiler/analyze",
-                "profiler/memory-status",
-                "profiler/memory-breakdown",
-                "profiler/memory-top-assets",
-                "profiler/memory-snapshot",
-                "profiler/memory-snapshot-status",
-            };
-
-            foreach (string route in expectedRoutes)
-            {
-                var tool = tools.Single(item => item["route"].ToString() == route);
-                Assert.That(tool["firstClass"], Is.EqualTo(true), route);
-                Assert.That(tool["inputSchema"], Is.InstanceOf<Dictionary<string, object>>(), route);
-                Assert.That(tool["toolName"], Is.EqualTo("unity_" + route.Replace('/', '_').Replace('-', '_')),
-                    route);
-            }
 
             var playModeTool = tools.Single(item => item["route"].ToString() == "editor/play-mode");
+            Assert.That(playModeTool["firstClass"], Is.EqualTo(true));
+            Assert.That(playModeTool["toolName"], Is.EqualTo("unity_play_mode"));
             var playModeSchema = RequireDictionary(playModeTool["inputSchema"]);
             var playModeProperties = RequireDictionary(playModeSchema["properties"]);
             Assert.That(playModeProperties.Keys, Does.Contain("action"));
             Assert.That(playModeProperties.Keys, Does.Contain("timeoutMs"));
             Assert.That(playModeProperties.Keys, Does.Contain("expectedProjectPath"));
 
-            var snapshotStatusTool = tools.Single(item =>
+            var profilerToolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
+                category: "profiler"));
+            var profilerTools = (List<Dictionary<string, object>>)profilerToolsResult["tools"];
+            Assert.That(profilerTools, Is.Not.Empty);
+            Assert.That(profilerTools.All(tool =>
+                tool["firstClass"].Equals(false) && tool["exposure"].ToString() == "lazy"), Is.True);
+            Assert.That(profilerTools.All(tool =>
+                tool["inputSchema"] is Dictionary<string, object>), Is.True);
+
+            var snapshotStatusTool = profilerTools.Single(item =>
                 item["route"].ToString() == "profiler/memory-snapshot-status");
             Assert.That(snapshotStatusTool["readOnly"], Is.EqualTo(true));
             var snapshotStatusSchema = RequireDictionary(snapshotStatusTool["inputSchema"]);
@@ -2741,10 +2774,11 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void UIToolkitStaticAudits_AreFirstClassReadOnlyLongRunningTools()
+        public void UIToolkitStaticAudits_AreLazyReadOnlyLongRunningTools()
         {
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
+                firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
+                category: "uitoolkit"));
             var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
 
             foreach (string route in new[]
@@ -2754,7 +2788,8 @@ namespace UnityMCP.Editor.Tests
                      })
             {
                 var tool = tools.Single(item => item["route"].ToString() == route);
-                Assert.That(tool["firstClass"], Is.EqualTo(true), route);
+                Assert.That(tool["firstClass"], Is.EqualTo(false), route);
+                Assert.That(tool["exposure"], Is.EqualTo("lazy"), route);
                 Assert.That(tool["readOnly"], Is.EqualTo(true), route);
                 Assert.That(tool["longRunning"], Is.EqualTo(true), route);
                 Assert.That(tool["toolName"],
@@ -3307,6 +3342,82 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ProjectTool_IncompleteFirstClassMetadataIsDemotedButRemainsDiscoverable()
+        {
+            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
+                .Single(tool => tool["toolName"].ToString() == INCOMPLETE_FIRST_CLASS_TOOL_NAME);
+            Assert.That(descriptor["firstClass"], Is.EqualTo(false));
+            Assert.That(descriptor["valid"], Is.EqualTo(true));
+            Assert.That(descriptor["exposureWarning"].ToString(),
+                Does.Contain("needs a description").And.Contain("items schema"));
+
+            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
+            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
+            Assert.That(tools.Any(item =>
+                item["route"].ToString() == "project-tools/call/" + INCOMPLETE_FIRST_CLASS_TOOL_NAME),
+                Is.False);
+
+            var execute = RequireDictionary(MCPProjectToolCommands.Execute(
+                new Dictionary<string, object>
+                {
+                    { "toolName", INCOMPLETE_FIRST_CLASS_TOOL_NAME },
+                    { "args", new Dictionary<string, object>
+                        {
+                            { "values", new List<object> { 1L } }
+                        }
+                    }
+                }));
+            Assert.That(execute["success"], Is.EqualTo(true));
+        }
+
+        [Test]
+        public void ProjectTool_RecursivelyValidatesNestedSchemasAndCombinators()
+        {
+            Dictionary<string, object> Execute(Dictionary<string, object> toolArgs)
+            {
+                return RequireDictionary(MCPProjectToolCommands.Execute(
+                    new Dictionary<string, object>
+                    {
+                        { "toolName", NESTED_SCHEMA_TOOL_NAME },
+                        { "args", toolArgs }
+                    }));
+            }
+
+            var valid = Execute(new Dictionary<string, object>
+            {
+                { "config", new Dictionary<string, object>
+                    {
+                        { "mode", "safe" },
+                        { "values", new List<object> { 1L, 2L } },
+                        { "choice", "value" },
+                    }
+                }
+            });
+            Assert.That(valid["success"], Is.EqualTo(true));
+
+            var invalid = Execute(new Dictionary<string, object>
+            {
+                { "config", new Dictionary<string, object>
+                    {
+                        { "mode", "unsupported" },
+                        { "values", new List<object> { "not-an-integer", 2L, 3L } },
+                        { "choice", true },
+                        { "unknown", true },
+                    }
+                }
+            });
+            Assert.That(invalid["success"], Is.EqualTo(false));
+            Assert.That(invalid["errorCode"], Is.EqualTo("invalid_arguments"));
+            Assert.That(invalid["error"].ToString(),
+                Does.Contain("$.config.mode")
+                    .And.Contain("$.config.values[0]")
+                    .And.Contain("at most 2 items")
+                    .And.Contain("$.config.choice")
+                    .And.Contain("$.config.unknown"));
+        }
+
+        [Test]
         public void ProjectToolDiscovery_SeparatesListGetAndExecuteContracts()
         {
             var listResult = RequireDictionary(MCPProjectToolCommands.List(new Dictionary<string, object>
@@ -3630,6 +3741,97 @@ namespace UnityMCP.Editor.Tests
             Assert.That(restore.Invoke(null, invalidAddComponentArguments), Is.EqualTo(true));
             Assert.That(((MCPRequestQueue.RequestTicket)invalidAddComponentArguments[1]).Status,
                 Is.EqualTo(MCPRequestQueue.RequestStatus.UncertainAfterReload));
+        }
+
+        [Test]
+        public void RequestQueue_DeferredCallbacksIgnoreDuplicateAndLateUpdates()
+        {
+            Action<object> resolveCallback = null;
+            Action<object> progressCallback = null;
+            string agentId = "deferred-callback-" + Guid.NewGuid().ToString("N");
+            var ticket = MCPRequestQueue.SubmitDeferredRequest(
+                agentId,
+                "scene/hierarchy",
+                (resolve, progress) =>
+                {
+                    resolveCallback = resolve;
+                    progressCallback = progress;
+                });
+
+            for (int attempt = 0;
+                 attempt < 100 && ticket.Status == MCPRequestQueue.RequestStatus.Queued;
+                 attempt++)
+            {
+                MCPRequestQueue.ProcessNextRequests(1);
+            }
+
+            Assert.That(ticket.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Executing));
+            Assert.That(resolveCallback, Is.Not.Null);
+            resolveCallback(new Dictionary<string, object> { { "value", "first" } });
+            Assert.That(ticket.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Completed));
+            var firstResult = RequireDictionary(ticket.Result);
+            Assert.That(firstResult["value"], Is.EqualTo("first"));
+
+            resolveCallback(MCPResponse.Error("late failure", "late_failure"));
+            progressCallback(new Dictionary<string, object> { { "phase", "late" } });
+            Assert.That(ticket.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Completed));
+            Assert.That(RequireDictionary(ticket.Result)["value"], Is.EqualTo("first"));
+            Assert.That(ticket.Progress, Is.Null);
+        }
+
+        [Test]
+        public void RequestQueue_StaleMutationTimeoutIsNotAutomaticallyRetryable()
+        {
+            var executingField = typeof(MCPRequestQueue).GetField("_executingTickets",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var completedField = typeof(MCPRequestQueue).GetField("_completedTickets",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var queueLockField = typeof(MCPRequestQueue).GetField("_queueLock",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var cleanup = typeof(MCPRequestQueue).GetMethod("RunCleanup",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(executingField, Is.Not.Null);
+            Assert.That(completedField, Is.Not.Null);
+            Assert.That(queueLockField, Is.Not.Null);
+            Assert.That(cleanup, Is.Not.Null);
+
+            var executing =
+                (Dictionary<long, MCPRequestQueue.RequestTicket>)executingField.GetValue(null);
+            var completed =
+                (Dictionary<long, MCPRequestQueue.RequestTicket>)completedField.GetValue(null);
+            object queueLock = queueLockField.GetValue(null);
+            long ticketId = DateTime.UtcNow.Ticks;
+            var ticket = new MCPRequestQueue.RequestTicket
+            {
+                TicketId = ticketId,
+                AgentId = "timeout-regression",
+                ActionName = "asset/create-folder",
+                Status = MCPRequestQueue.RequestStatus.Executing,
+                SubmittedAt = DateTime.UtcNow.AddSeconds(-10),
+                StartedAt = DateTime.UtcNow.AddSeconds(-5),
+                ExecutionTimeoutSeconds = 1,
+                IsReadOnly = false,
+            };
+
+            try
+            {
+                lock (queueLock)
+                    executing[ticketId] = ticket;
+                Assert.That(cleanup.Invoke(null, null), Is.EqualTo(true));
+                Assert.That(ticket.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Failed));
+                Assert.That(ticket.ErrorCode, Is.EqualTo("stale_execution"));
+                Assert.That(ticket.Retryable, Is.False);
+                Assert.That(ticket.QueueWaitTimeMs, Is.GreaterThanOrEqualTo(4000));
+                Assert.That(ticket.ExecutionTimeMs, Is.GreaterThanOrEqualTo(4000));
+            }
+            finally
+            {
+                lock (queueLock)
+                {
+                    executing.Remove(ticketId);
+                    completed.Remove(ticketId);
+                }
+            }
         }
 
         [Test]
@@ -4024,6 +4226,84 @@ namespace UnityMCP.Editor.Tests
             var inner = new Dictionary<string, object>();
             copy.Invoke(null, new object[] { outer, inner, "expectedProjectPath" });
             Assert.That(inner["expectedProjectPath"], Is.EqualTo(outer["expectedProjectPath"]));
+        }
+
+        [Test]
+        public void BridgeTransport_AllowsOnlyTheDocumentedQueueMethods()
+        {
+            var method = typeof(MCPBridgeServer).GetMethod("IsHttpMethodAllowed",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+
+            bool Allowed(string route, string verb) =>
+                (bool)method.Invoke(null, new object[] { route, verb });
+
+            Assert.That(Allowed("ping", "GET"), Is.True);
+            Assert.That(Allowed("ping", "POST"), Is.False);
+            Assert.That(Allowed("queue/status", "GET"), Is.True);
+            Assert.That(Allowed("queue/status", "POST"), Is.False);
+            Assert.That(Allowed("queue/info", "GET"), Is.True);
+            Assert.That(Allowed("queue/submit", "POST"), Is.True);
+            Assert.That(Allowed("queue/submit", "GET"), Is.False);
+            Assert.That(Allowed("queue/cancel", "POST"), Is.True);
+            Assert.That(Allowed("queue/cancel", "GET"), Is.False);
+        }
+
+        [Test]
+        public void ConsolidatedSceneSearchCombinesFiltersAndPaginatesStably()
+        {
+            string prefix = "__MCP_SEARCH_" + Guid.NewGuid().ToString("N");
+            var first = new GameObject(prefix + "_A");
+            var second = new GameObject(prefix + "_B");
+            first.AddComponent<BoxCollider>();
+            second.AddComponent<BoxCollider>();
+            second.SetActive(false);
+            try
+            {
+                var firstPage = RequireDictionary(MCPSearchCommands.SearchScene(
+                    new Dictionary<string, object>
+                    {
+                        { "name", prefix },
+                        { "componentType", nameof(BoxCollider) },
+                        { "includeInactive", true },
+                        { "offset", 0 },
+                        { "limit", 1 },
+                    }));
+                Assert.That(firstPage["totalFound"], Is.EqualTo(2));
+                Assert.That(firstPage["returned"], Is.EqualTo(1));
+                Assert.That(firstPage["hasMore"], Is.EqualTo(true));
+                var firstResults = (List<Dictionary<string, object>>)firstPage["results"];
+                Assert.That(firstResults.Single()["name"], Is.EqualTo(prefix + "_A"));
+
+                var secondPage = RequireDictionary(MCPSearchCommands.SearchScene(
+                    new Dictionary<string, object>
+                    {
+                        { "name", prefix },
+                        { "componentType", typeof(BoxCollider).FullName },
+                        { "includeInactive", true },
+                        { "offset", 1 },
+                        { "limit", 1 },
+                    }));
+                var secondResults = (List<Dictionary<string, object>>)secondPage["results"];
+                Assert.That(secondResults.Single()["name"], Is.EqualTo(prefix + "_B"));
+                Assert.That(secondPage["hasMore"], Is.EqualTo(false));
+
+                var missingFilter = RequireDictionary(MCPSearchCommands.SearchScene(
+                    new Dictionary<string, object>()));
+                Assert.That(missingFilter["errorCode"], Is.EqualTo("search_filter_required"));
+
+                var unknownTag = RequireDictionary(MCPSearchCommands.SearchScene(
+                    new Dictionary<string, object>
+                    {
+                        { "tag", "__MCP_UNDEFINED_TAG_" + Guid.NewGuid().ToString("N") },
+                    }));
+                Assert.That(unknownTag["errorCode"], Is.EqualTo("tag_not_found"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(first);
+                Object.DestroyImmediate(second);
+            }
         }
 
         [Test]
@@ -5340,6 +5620,66 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ToolMetadata_FirstClassCatalogHasNoDefaultDescriptionsOrSchemaGaps()
+        {
+            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: true,
+                compact: false,
+                includeSchema: true,
+                limit: 200));
+            var issues = (List<Dictionary<string, object>>)result["metadataIssues"];
+
+            Assert.That(issues, Is.Empty,
+                string.Join(Environment.NewLine, issues.Select(MiniJson.Serialize)));
+            var tools = (List<Dictionary<string, object>>)result["tools"];
+            Assert.That(tools.Any(tool => tool["route"].ToString() == "_meta/tools"), Is.False);
+            Assert.That(tools.Any(tool => tool["route"].ToString() == "_meta/capabilities"), Is.False);
+            Assert.That(tools.Any(tool => tool["route"].ToString() == "search/scene"), Is.True);
+            Assert.That(tools.Any(tool => tool["route"].ToString() == "search/by-name"), Is.False);
+            Assert.That(tools.Any(tool => tool["route"].ToString() == "search/by-component"), Is.False);
+            var builtInRoutes = tools
+                .Select(tool => tool["route"].ToString())
+                .Where(route => !route.StartsWith("project-tools/call/", StringComparison.Ordinal))
+                .ToArray();
+            CollectionAssert.AreEquivalent(new[]
+            {
+                "asset/import",
+                "asset/list",
+                "asset/refresh",
+                "build/get-job",
+                "build/start",
+                "compilation/errors",
+                "component/set-property",
+                "editor/play-mode",
+                "queue/info",
+                "search/scene",
+                "scene/hierarchy",
+                "screenshot/game",
+                "packages/list",
+                "packages/update-git",
+                "wait/editor-idle",
+                "scene/instantiate-prefab",
+                "serialized-object/get",
+                "serialized-object/set",
+                "component/set-reference",
+                "prefab-asset/configure-component",
+                "asset/get-refresh-job",
+                "asset/rename",
+                "asset/move",
+                "console/query",
+                "uitoolkit/runtime-query",
+                "uitoolkit/refresh",
+                "uitoolkit/edit-uxml",
+                "uitoolkit/edit-uss",
+                "testing/run-tests",
+                "testing/get-job",
+                "project-tools/list",
+                "project-tools/get",
+                "project-tools/execute",
+            }, builtInRoutes);
+        }
+
+        [Test]
         public void ToolMetadata_UsesOnlyTheCurrentMetadataContract()
         {
             var method = typeof(MCPToolMetadata).GetMethod(nameof(MCPToolMetadata.GetRegisteredTools),
@@ -5433,13 +5773,16 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void ToolMetadata_PrefabAddGameObjectExposesLayer()
+        public void ToolMetadata_LazyPrefabAddGameObjectExposesLayer()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: true, includeSchema: true, limit: 200));
+                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
+                category: "prefab-asset"));
             var tools = (List<Dictionary<string, object>>)result["tools"];
             var tool = tools.Single(item => item["route"].ToString() == "prefab-asset/add-gameobject");
 
+            Assert.That(tool["firstClass"], Is.EqualTo(false));
+            Assert.That(tool["exposure"], Is.EqualTo("lazy"));
             var schema = RequireDictionary(tool["inputSchema"]);
             var properties = RequireDictionary(schema["properties"]);
             Assert.That(properties.Keys, Does.Contain("layer"));
@@ -5449,11 +5792,17 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void ToolMetadata_ExposesImageImportAndTextureImporterToolsAsFirstClass()
+        public void ToolMetadata_ExposesAssetImportDirectlyAndTextureToolsLazily()
         {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: true, includeSchema: true, limit: 200));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
+            var assetResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
+                category: "asset"));
+            var textureResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
+                category: "texture"));
+            var tools = ((List<Dictionary<string, object>>)assetResult["tools"])
+                .Concat((List<Dictionary<string, object>>)textureResult["tools"])
+                .ToList();
             var toolsByRoute = tools.ToDictionary(tool => tool["route"].ToString());
 
             foreach (var expected in new[]
@@ -5465,10 +5814,13 @@ namespace UnityMCP.Editor.Tests
                      })
             {
                 Assert.That(toolsByRoute.ContainsKey(expected.Route), Is.True,
-                    $"{expected.Route} must be exposed as a first-class MCP tool.");
+                    $"{expected.Route} must publish discoverable metadata.");
                 var tool = toolsByRoute[expected.Route];
                 Assert.That(tool["toolName"], Is.EqualTo(expected.ToolName));
-                Assert.That(tool["firstClass"], Is.EqualTo(true));
+                bool shouldBeFirstClass = expected.Route == "asset/import";
+                Assert.That(tool["firstClass"], Is.EqualTo(shouldBeFirstClass));
+                Assert.That(tool["exposure"],
+                    Is.EqualTo(shouldBeFirstClass ? "first-class" : "lazy"));
 
                 var schema = RequireDictionary(tool["inputSchema"]);
                 var properties = RequireDictionary(schema["properties"]);
@@ -5486,7 +5838,8 @@ namespace UnityMCP.Editor.Tests
             Assert.That(assetImportProperties.Keys,
                 Is.EquivalentTo(new[]
                 {
-                    "dryRun", "defaults", "execution", "imports", "expectedProjectPath"
+                    "dryRun", "defaults", "execution", "imports",
+                    "expectedProjectPath", "expectedProjectName"
                 }));
             Assert.That(assetImportProperties.ContainsKey("sourcePath"), Is.False);
             Assert.That(assetImportProperties.ContainsKey("destinationPath"), Is.False);
@@ -5504,15 +5857,17 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void ToolMetadata_ExposesUnityPackageImportAsFirstClass()
+        public void ToolMetadata_ExposesUnityPackageImportLazily()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 300));
+                firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
+                category: "asset"));
             var tools = (List<Dictionary<string, object>>)result["tools"];
             var tool = tools.Single(item => item["route"].ToString() == "asset/import-unitypackage");
 
             Assert.That(tool["toolName"], Is.EqualTo("unity_asset_import_unitypackage"));
-            Assert.That(tool["firstClass"], Is.EqualTo(true));
+            Assert.That(tool["firstClass"], Is.EqualTo(false));
+            Assert.That(tool["exposure"], Is.EqualTo("lazy"));
             Assert.That(tool["mutatesAssets"], Is.EqualTo(true));
             Assert.That(tool["longRunning"], Is.EqualTo(true));
             Assert.That(tool["mayReloadDomain"], Is.EqualTo(true));
@@ -5526,10 +5881,11 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void ToolMetadata_ExposesDocumentedAnimatorEditingToolsAsFirstClass()
+        public void ToolMetadata_ExposesAnimatorEditingToolsLazily()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: true, includeSchema: true, limit: 200));
+                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
+                category: "animation"));
             var tools = (List<Dictionary<string, object>>)result["tools"];
             var toolsByRoute = tools.ToDictionary(tool => tool["route"].ToString());
 
@@ -5542,10 +5898,11 @@ namespace UnityMCP.Editor.Tests
                      })
             {
                 Assert.That(toolsByRoute.ContainsKey(expected.Route), Is.True,
-                    $"{expected.Route} must be exposed as a first-class MCP tool.");
+                    $"{expected.Route} must publish discoverable metadata.");
                 var tool = toolsByRoute[expected.Route];
                 Assert.That(tool["toolName"], Is.EqualTo(expected.ToolName));
-                Assert.That(tool["firstClass"], Is.EqualTo(true));
+                Assert.That(tool["firstClass"], Is.EqualTo(false));
+                Assert.That(tool["exposure"], Is.EqualTo("lazy"));
 
                 var schema = RequireDictionary(tool["inputSchema"]);
                 var properties = RequireDictionary(schema["properties"]);

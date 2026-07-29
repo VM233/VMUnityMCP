@@ -219,8 +219,7 @@ namespace UnityMCP.Editor
                 // Fallback: include inactive objects. FindObjectsByType's default
                 // (without FindObjectsInactive) excludes inactive, so path-based
                 // lookup silently fails for inactive GameObjects. Opt in explicitly.
-                var allObjects = UnityEngine.Object.FindObjectsByType<GameObject>(
-                    FindObjectsInactive.Include, FindObjectsSortMode.None);
+                var allObjects = MCPObjectSearch.Find<GameObject>(includeInactive: true);
                 foreach (var obj in allObjects)
                 {
                     if (obj.name == path || GetHierarchyPath(obj) == path)

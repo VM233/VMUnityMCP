@@ -179,8 +179,8 @@ namespace UnityMCP.Editor
             
             int agentCount = 0;
             int obstacleCount = 0;
-            var agents = UnityEngine.Object.FindObjectsByType<NavMeshAgent>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            var obstacles = UnityEngine.Object.FindObjectsByType<NavMeshObstacle>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var agents = MCPObjectSearch.Find<NavMeshAgent>(includeInactive: true);
+            var obstacles = MCPObjectSearch.Find<NavMeshObstacle>(includeInactive: true);
             agentCount = agents.Length;
             obstacleCount = obstacles.Length;
 

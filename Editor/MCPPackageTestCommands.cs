@@ -287,9 +287,10 @@ namespace UnityMCP.Editor
                 new Dictionary<string, object>
                 {
                     { "jobId", _workflow.TestJobId },
-                    { "includeFailedOnly", true },
-                    { "includeStackTrace", true },
-                    { "limit", 100 },
+                    { "includeDetails", false },
+                    { "includeFailedOnly", false },
+                    { "includeStackTrace", false },
+                    { "failureLimit", 50 },
                     { "_agentId", _workflow.OwnerAgentId ?? "anonymous" },
                 }));
             if (jobResult == null)
@@ -299,7 +300,7 @@ namespace UnityMCP.Editor
             if (status == "running")
                 return;
 
-            _workflow.TestResult = jobResult;
+            _workflow.TestResult = CompactStoredTestResult(jobResult);
             _workflow.TestSucceeded = status == "succeeded";
             if (!_workflow.TestSucceeded)
                 _workflow.Error = GetString(jobResult, "error", "Package tests failed");
@@ -403,6 +404,26 @@ namespace UnityMCP.Editor
             if (workflow.TestResult != null)
                 response["testResult"] = workflow.TestResult;
             return response;
+        }
+
+        private static Dictionary<string, object> CompactStoredTestResult(
+            Dictionary<string, object> jobResult)
+        {
+            if (jobResult == null)
+                return null;
+
+            var compact = new Dictionary<string, object>();
+            foreach (string key in new[]
+                     {
+                         "jobId", "status", "mode", "startedAt", "completedAt",
+                         "totalDuration", "progress", "summary", "error", "errorCode",
+                         "completionRecoveredFromLeafResults",
+                     })
+            {
+                if (jobResult.TryGetValue(key, out object value))
+                    compact[key] = value;
+            }
+            return compact;
         }
 
         private static bool ManifestIsRestored(PackageTestWorkflow workflow)

@@ -62,12 +62,19 @@ namespace UnityMCP.Editor
 
             // Timing
             public DateTime  SubmittedAt   { get; set; }
+            public DateTime? StartedAt     { get; set; }
             public DateTime? CompletedAt   { get; set; }
             public int       QueuePosition { get; set; }
+            public int       ExecutionTimeoutSeconds { get; set; }
 
             public long ExecutionTimeMs =>
-                CompletedAt.HasValue
-                    ? (long)(CompletedAt.Value - SubmittedAt).TotalMilliseconds
+                StartedAt.HasValue && CompletedAt.HasValue
+                    ? (long)(CompletedAt.Value - StartedAt.Value).TotalMilliseconds
+                    : -1;
+
+            public long QueueWaitTimeMs =>
+                StartedAt.HasValue
+                    ? (long)(StartedAt.Value - SubmittedAt).TotalMilliseconds
                     : -1;
         }
 
@@ -112,7 +119,8 @@ namespace UnityMCP.Editor
         private const double CleanupIntervalSeconds   = 30.0;
         private const int CompletedCacheLifetimeSec   = 600;
         private const int TimedOutCacheLifetimeSec    = 300;
-        private const int StaleExecutingLifetimeSec   = 120;
+        private const int DefaultExecutionTimeoutSec  = 120;
+        private const int LongRunningExecutionTimeoutSec = 15 * 60;
         private const string PersistentTicketSnapshotFileName = "request-queue-tickets-v3.json";
         private const int MaxEditorIdleReloadResumes  = 8;
         private const int MaxReadBatchSize            = 5;
@@ -177,24 +185,22 @@ namespace UnityMCP.Editor
                 int agentQueued = _agentQueues.TryGetValue(agentId, out var agentQueue) ? agentQueue.Count : 0;
                 if (totalQueued >= MaxTotalQueuedRequests || agentQueued >= MaxQueuedRequestsPerAgent)
                     return CreateRejectedTicketLocked(agentId, actionName, requestKey, totalQueued, agentQueued);
-            }
 
-            var ticket = new RequestTicket
-            {
-                TicketId    = Interlocked.Increment(ref _nextTicketId),
-                AgentId     = agentId,
-                ActionName  = actionName,
-                Status      = RequestStatus.Queued,
-                SubmittedAt = DateTime.UtcNow,
-                Action      = action,
-                RequestKey = requestKey,
-                PersistentBody = persistentBody,
-                PersistentMethod = persistentMethod,
-                IsReadOnly = readOnly,
-            };
+                var ticket = new RequestTicket
+                {
+                    TicketId    = Interlocked.Increment(ref _nextTicketId),
+                    AgentId     = agentId,
+                    ActionName  = actionName,
+                    Status      = RequestStatus.Queued,
+                    SubmittedAt = DateTime.UtcNow,
+                    Action      = action,
+                    RequestKey = requestKey,
+                    PersistentBody = persistentBody,
+                    PersistentMethod = persistentMethod,
+                    IsReadOnly = readOnly,
+                    ExecutionTimeoutSeconds = GetExecutionTimeoutSeconds(actionName),
+                };
 
-            lock (_queueLock)
-            {
                 // Ensure agent queue exists
                 if (!_agentQueues.ContainsKey(agentId))
                 {
@@ -209,9 +215,8 @@ namespace UnityMCP.Editor
                 EnsureSession(agentId).LogAction(actionName);
                 _sessions[agentId].IncrementQueuedRequest();
                 PersistTicketSnapshotsLocked();
+                return ticket;
             }
-
-            return ticket;
         }
 
         /// <summary>
@@ -320,6 +325,7 @@ namespace UnityMCP.Editor
                     RequestKey = requestKey,
                     ResumeCount = GetInt(persistentArguments, "_resumeCount", 0),
                     IsReadOnly = MCPToolMetadata.IsRouteReadOnly(actionName),
+                    ExecutionTimeoutSeconds = GetExecutionTimeoutSeconds(actionName),
                 };
 
                 if (!_agentQueues.ContainsKey(agentId))
@@ -381,6 +387,7 @@ namespace UnityMCP.Editor
                 foreach (var t in batch)
                 {
                     t.Status = RequestStatus.Executing;
+                    t.StartedAt = DateTime.UtcNow;
                     _executingTickets[t.TicketId] = t;
                 }
                 // Persist Executing before invoking Unity APIs. A domain reload can begin
@@ -403,10 +410,13 @@ namespace UnityMCP.Editor
                     {
                         Action<object> resolve = result =>
                         {
-                            CompleteTicketFromResult(deferredTicket, result);
-
                             lock (_queueLock)
                             {
+                                if (deferredTicket.Status != RequestStatus.Executing ||
+                                    !_executingTickets.ContainsKey(deferredTicket.TicketId))
+                                    return;
+
+                                CompleteTicketFromResult(deferredTicket, result);
                                 _executingTickets.Remove(deferredTicket.TicketId);
                                 _completedTickets[deferredTicket.TicketId] = deferredTicket;
                                 if (_sessions.TryGetValue(deferredTicket.AgentId, out var s))
@@ -419,6 +429,9 @@ namespace UnityMCP.Editor
                         {
                             lock (_queueLock)
                             {
+                                if (deferredTicket.Status != RequestStatus.Executing ||
+                                    !_executingTickets.ContainsKey(deferredTicket.TicketId))
+                                    return;
                                 deferredTicket.Progress = progressValue;
                                 PersistTicketSnapshotsLocked();
                             }
@@ -431,16 +444,18 @@ namespace UnityMCP.Editor
                     }
                     catch (Exception ex)
                     {
-                        FailTicket(deferredTicket, ex.Message, "exception", false,
-                            new Dictionary<string, object> { { "stackTrace", ex.StackTrace } });
-                        Debug.LogError($"[Unity MCP Queue] Deferred ticket {ticket.TicketId} ({ticket.ActionName}) failed: {ex.Message}");
-
                         lock (_queueLock)
                         {
+                            if (deferredTicket.Status != RequestStatus.Executing ||
+                                !_executingTickets.ContainsKey(deferredTicket.TicketId))
+                                continue;
+
+                            FailTicket(deferredTicket, ex.Message, "exception", false);
                             _executingTickets.Remove(deferredTicket.TicketId);
                             _completedTickets[deferredTicket.TicketId] = deferredTicket;
                             PersistTicketSnapshotsLocked();
                         }
+                        Debug.LogException(ex);
                     }
                     continue; // Skip normal completion — callback handles it
                 }
@@ -451,9 +466,8 @@ namespace UnityMCP.Editor
                 }
                 catch (Exception ex)
                 {
-                    FailTicket(ticket, ex.Message, "exception", false,
-                        new Dictionary<string, object> { { "stackTrace", ex.StackTrace } });
-                    Debug.LogError($"[Unity MCP Queue] Ticket {ticket.TicketId} ({ticket.ActionName}) failed: {ex.Message}");
+                    FailTicket(ticket, ex.Message, "exception", false);
+                    Debug.LogException(ex);
                 }
                 ticket.Action      = null; // Free the closure
 
@@ -1043,15 +1057,23 @@ namespace UnityMCP.Editor
                 var staleExecuting = new List<RequestTicket>();
                 foreach (var kvp in _executingTickets)
                 {
-                    double age = (now - kvp.Value.SubmittedAt).TotalSeconds;
-                    if (age > StaleExecutingLifetimeSec)
+                    var ticket = kvp.Value;
+                    DateTime executionStartedAt = ticket.StartedAt ?? now;
+                    int timeoutSeconds = ticket.ExecutionTimeoutSeconds > 0
+                        ? ticket.ExecutionTimeoutSeconds
+                        : GetExecutionTimeoutSeconds(ticket.ActionName);
+                    double age = (now - executionStartedAt).TotalSeconds;
+                    if (age > timeoutSeconds)
                         staleExecuting.Add(kvp.Value);
                 }
                 foreach (var ticket in staleExecuting)
                 {
+                    int timeoutSeconds = ticket.ExecutionTimeoutSeconds > 0
+                        ? ticket.ExecutionTimeoutSeconds
+                        : GetExecutionTimeoutSeconds(ticket.ActionName);
                     FailTicket(ticket,
-                        $"Request exceeded the stale execution limit ({StaleExecutingLifetimeSec}s). Resubmit if the Unity operation did not complete.",
-                        "stale_execution", true);
+                        $"Request exceeded its execution limit ({timeoutSeconds}s). Resubmit only after checking whether the Unity operation completed.",
+                        "stale_execution", ticket.IsReadOnly);
                     _executingTickets.Remove(ticket.TicketId);
                     _completedTickets[ticket.TicketId] = ticket;
                 }
@@ -1135,6 +1157,9 @@ namespace UnityMCP.Editor
                 AgentId = GetString(snapshot, "agentId", "anonymous"),
                 ActionName = actionName,
                 SubmittedAt = submittedAt,
+                StartedAt = TryGetDateTime(snapshot, "startedAt", out var startedAt)
+                    ? startedAt
+                    : (DateTime?)null,
                 CompletedAt = completedAt,
                 QueuePosition = GetInt(snapshot, "queuePosition", 0),
                 ErrorMessage = GetString(snapshot, "errorMessage"),
@@ -1145,6 +1170,8 @@ namespace UnityMCP.Editor
                 ResumeCount = GetInt(snapshot, "resumeCount", 0),
                 Progress = snapshot.TryGetValue("progress", out var progress) ? progress : null,
                 IsReadOnly = true,
+                ExecutionTimeoutSeconds = GetInt(snapshot, "executionTimeoutSeconds",
+                    GetExecutionTimeoutSeconds(actionName)),
             };
 
             if (previousStatus == RequestStatus.Completed || previousStatus == RequestStatus.Failed ||
@@ -1218,6 +1245,7 @@ namespace UnityMCP.Editor
             };
             resumedArguments.Remove("_remainingTimeoutMs");
             ticket.Status = RequestStatus.Queued;
+            ticket.StartedAt = null;
             ticket.CompletedAt = null;
             ticket.Result = null;
             ticket.Progress = null;
@@ -1251,6 +1279,9 @@ namespace UnityMCP.Editor
                 AgentId = GetString(snapshot, "agentId", "anonymous"),
                 ActionName = actionName,
                 SubmittedAt = GetDateTime(snapshot, "submittedAt", DateTime.UtcNow),
+                StartedAt = TryGetDateTime(snapshot, "startedAt", out var startedAt)
+                    ? startedAt
+                    : (DateTime?)null,
                 CompletedAt = TryGetDateTime(snapshot, "completedAt", out var completedAt) ? completedAt : (DateTime?)null,
                 QueuePosition = GetInt(snapshot, "queuePosition", 0),
                 ErrorMessage = GetString(snapshot, "errorMessage"),
@@ -1262,6 +1293,8 @@ namespace UnityMCP.Editor
                 IsReadOnly = GetBool(snapshot, "isReadOnly", MCPToolMetadata.IsRouteReadOnly(actionName)),
                 ResumeCount = GetInt(snapshot, "resumeCount", 0),
                 Progress = snapshot.TryGetValue("progress", out object progress) ? progress : null,
+                ExecutionTimeoutSeconds = GetInt(snapshot, "executionTimeoutSeconds",
+                    GetExecutionTimeoutSeconds(actionName)),
             };
 
             if (previousStatus == RequestStatus.Completed || previousStatus == RequestStatus.Failed ||
@@ -1295,6 +1328,7 @@ namespace UnityMCP.Editor
             }
 
             ticket.Status = RequestStatus.Queued;
+            ticket.StartedAt = null;
             ticket.CompletedAt = null;
             ticket.ErrorMessage = null;
             ticket.ErrorCode = null;
@@ -1418,6 +1452,7 @@ namespace UnityMCP.Editor
                 { "queuePosition", ticket.QueuePosition },
                 { "submittedAt", ticket.SubmittedAt.ToString("O") },
                 { "executionTimeMs", ticket.ExecutionTimeMs },
+                { "executionTimeoutSeconds", ticket.ExecutionTimeoutSeconds },
                 { "errorMessage", ticket.ErrorMessage ?? "" },
                 { "errorCode", ticket.ErrorCode ?? "" },
                 { "retryable", ticket.Retryable },
@@ -1425,6 +1460,8 @@ namespace UnityMCP.Editor
 
             if (ticket.Progress != null)
                 snapshot["progress"] = ticket.Progress;
+            if (ticket.StartedAt.HasValue)
+                snapshot["startedAt"] = ticket.StartedAt.Value.ToString("O");
 
             if (!string.IsNullOrEmpty(ticket.RequestKey))
                 snapshot["requestKey"] = ticket.RequestKey;
@@ -1490,6 +1527,13 @@ namespace UnityMCP.Editor
                    int.TryParse(raw.ToString(), out int value)
                 ? value
                 : defaultValue;
+        }
+
+        private static int GetExecutionTimeoutSeconds(string actionName)
+        {
+            return MCPToolMetadata.RouteIsLongRunning(actionName)
+                ? LongRunningExecutionTimeoutSec
+                : DefaultExecutionTimeoutSec;
         }
 
         private static string GetString(Dictionary<string, object> dictionary, string key,
@@ -1633,22 +1677,26 @@ namespace UnityMCP.Editor
             var dict = new Dictionary<string, object>
             {
                 { "ticketId",        t.TicketId },
-                { "agentId",         t.AgentId },
                 { "actionName",      t.ActionName },
                 { "status",          t.Status.ToString() },
-                { "queuePosition",   t.QueuePosition },
                 { "submittedAt",     t.SubmittedAt.ToString("O") },
-                { "executionTimeMs", t.ExecutionTimeMs },
-                { "errorMessage",    t.ErrorMessage ?? "" },
-                { "errorCode",       t.ErrorCode ?? "" },
-                { "retryable",       t.Retryable },
             };
 
+            if (t.Status == RequestStatus.Queued)
+                dict["queuePosition"] = t.QueuePosition;
+            if (t.StartedAt.HasValue)
+            {
+                dict["startedAt"] = t.StartedAt.Value.ToString("O");
+                dict["queueWaitTimeMs"] = t.QueueWaitTimeMs;
+            }
             if (t.Progress != null)
                 dict["progress"] = t.Progress;
 
             if (t.CompletedAt.HasValue)
+            {
                 dict["completedAt"] = t.CompletedAt.Value.ToString("O");
+                dict["executionTimeMs"] = t.ExecutionTimeMs;
+            }
 
             if (t.Status == RequestStatus.Failed ||
                 t.Status == RequestStatus.TimedOut ||
@@ -1660,7 +1708,11 @@ namespace UnityMCP.Editor
                     : t.ErrorMessage;
                 dict["success"] = false;
                 dict["error"] = message;
-                dict["message"] = message;
+                dict["errorCode"] = string.IsNullOrEmpty(t.ErrorCode)
+                    ? "queue_processing_failed"
+                    : t.ErrorCode;
+                if (t.Retryable)
+                    dict["retryable"] = true;
             }
 
             // Include result for completed tickets

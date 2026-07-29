@@ -2,6 +2,12 @@ using System.Globalization;
 using UnityEngine;
 using UnityEditor;
 
+#if !UNITY_6000_5_OR_NEWER
+// The legacy APIs are the deliberate compatibility path through Unity 6.4.
+// Unity 6.5 turns them into errors, where the EntityId branch below takes over.
+#pragma warning disable 0618
+#endif
+
 namespace UnityMCP.Editor
 {
     /// <summary>
@@ -72,3 +78,7 @@ namespace UnityMCP.Editor
         }
     }
 }
+
+#if !UNITY_6000_5_OR_NEWER
+#pragma warning restore 0618
+#endif

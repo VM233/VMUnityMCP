@@ -632,9 +632,9 @@ namespace UnityMCP.Editor
             }
 
             // 4. Scene complexity
-            var allRenderers = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None);
-            var allLights = UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None);
-            int totalGameObjects = UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsSortMode.None).Length;
+            var allRenderers = MCPObjectSearch.Find<Renderer>();
+            var allLights = MCPObjectSearch.Find<Light>();
+            int totalGameObjects = MCPObjectSearch.Find<Transform>().Length;
 
             result["sceneComplexity"] = new Dictionary<string, object>
             {

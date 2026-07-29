@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -18,6 +19,163 @@ namespace UnityMCP.Editor
         // Default result limit for search commands — prevents oversized responses on large projects
         private const int DefaultSearchLimit = 500;
 
+        /// <summary>
+        /// Search loaded scene GameObjects with one stable, paginated AND-filter API.
+        /// The older by-name/by-component/by-tag/by-layer/by-shader routes remain
+        /// available through lazy discovery for compatibility.
+        /// </summary>
+        public static object SearchScene(Dictionary<string, object> args)
+        {
+            string name = GetString(args, "name");
+            string componentTypeName = GetString(args, "componentType");
+            string tag = GetString(args, "tag");
+            string layerValue = GetString(args, "layer");
+            string shader = GetString(args, "shader");
+            bool useRegex = GetBool(args, "regex", false);
+            bool includeInactive = GetBool(args, "includeInactive", true);
+            int offset = Math.Max(0, GetInt(args, "offset", 0));
+            int limit = Math.Max(1, Math.Min(GetInt(args, "limit", 200), DefaultSearchLimit));
+
+            if (string.IsNullOrWhiteSpace(name) &&
+                string.IsNullOrWhiteSpace(componentTypeName) &&
+                string.IsNullOrWhiteSpace(tag) &&
+                string.IsNullOrWhiteSpace(layerValue) &&
+                string.IsNullOrWhiteSpace(shader))
+            {
+                return MCPResponse.Error(
+                    "At least one of name, componentType, tag, layer, or shader is required.",
+                    "search_filter_required");
+            }
+
+            Regex nameRegex = null;
+            if (!string.IsNullOrWhiteSpace(name) && useRegex)
+            {
+                try
+                {
+                    nameRegex = new Regex(name, RegexOptions.IgnoreCase,
+                        TimeSpan.FromMilliseconds(100));
+                }
+                catch (ArgumentException exception)
+                {
+                    return MCPResponse.Error(exception.Message, "invalid_name_regex");
+                }
+            }
+
+            Type componentType = null;
+            if (!string.IsNullOrWhiteSpace(componentTypeName))
+            {
+                var componentTypes = ResolveComponentTypes(componentTypeName);
+                if (componentTypes.Count == 0)
+                {
+                    return MCPResponse.Error(
+                        $"Component type '{componentTypeName}' was not found.",
+                        "component_type_not_found");
+                }
+                if (componentTypes.Count > 1)
+                {
+                    return MCPResponse.Error(
+                        $"Component type '{componentTypeName}' is ambiguous. Use a full type name.",
+                        "component_type_ambiguous", false, new Dictionary<string, object>
+                        {
+                            { "matches", componentTypes.Select(type => type.FullName).ToList() },
+                        });
+                }
+                componentType = componentTypes[0];
+            }
+
+            if (!string.IsNullOrWhiteSpace(tag) &&
+                !InternalEditorUtility.tags.Contains(tag))
+            {
+                return MCPResponse.Error(
+                    $"Tag '{tag}' is not defined in this project.",
+                    "tag_not_found");
+            }
+
+            int layer = -1;
+            if (!string.IsNullOrWhiteSpace(layerValue))
+            {
+                if (!int.TryParse(layerValue, out layer))
+                    layer = LayerMask.NameToLayer(layerValue);
+                if (layer < 0 || layer > 31)
+                    return MCPResponse.Error("layer must be a valid layer name or an index from 0 to 31.", "invalid_layer");
+            }
+
+            var matches = new List<GameObject>();
+            var allObjects = MCPObjectSearch.Find<GameObject>(includeInactive);
+            foreach (var gameObject in allObjects)
+            {
+                if (!gameObject.scene.IsValid())
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    try
+                    {
+                        bool nameMatches = useRegex
+                            ? nameRegex.IsMatch(gameObject.name)
+                            : gameObject.name.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0;
+                        if (!nameMatches)
+                            continue;
+                    }
+                    catch (RegexMatchTimeoutException)
+                    {
+                        return MCPResponse.Error(
+                            "The name regular expression exceeded the 100 ms match budget.",
+                            "name_regex_timeout");
+                    }
+                }
+
+                if (componentType != null && gameObject.GetComponent(componentType) == null)
+                    continue;
+                if (!string.IsNullOrWhiteSpace(tag) &&
+                    !string.Equals(gameObject.tag, tag, StringComparison.Ordinal))
+                    continue;
+                if (layer >= 0 && gameObject.layer != layer)
+                    continue;
+                if (!string.IsNullOrWhiteSpace(shader) && !UsesShader(gameObject, shader))
+                    continue;
+
+                matches.Add(gameObject);
+            }
+
+            var ordered = matches
+                .Select(gameObject => new
+                {
+                    GameObject = gameObject,
+                    Path = GetGameObjectPath(gameObject),
+                })
+                .OrderBy(item => item.GameObject.scene.name, StringComparer.Ordinal)
+                .ThenBy(item => item.Path, StringComparer.Ordinal)
+                .ThenBy(item => MCPObjectId.Get(item.GameObject), StringComparer.Ordinal)
+                .ToList();
+            var results = ordered
+                .Skip(offset)
+                .Take(limit)
+                .Select(item => new Dictionary<string, object>
+                {
+                    { "name", item.GameObject.name },
+                    { "path", item.Path },
+                    { "instanceId", MCPObjectId.Get(item.GameObject) },
+                    { "active", item.GameObject.activeInHierarchy },
+                    { "tag", item.GameObject.tag },
+                    { "layer", LayerMask.LayerToName(item.GameObject.layer) },
+                    { "layerIndex", item.GameObject.layer },
+                    { "scene", item.GameObject.scene.name },
+                })
+                .ToList();
+            int nextOffset = offset + results.Count;
+
+            return new Dictionary<string, object>
+            {
+                { "totalFound", ordered.Count },
+                { "offset", offset },
+                { "returned", results.Count },
+                { "hasMore", nextOffset < ordered.Count },
+                { "nextOffset", nextOffset < ordered.Count ? (object)nextOffset : null },
+                { "results", results },
+            };
+        }
+
         public static object FindByComponent(Dictionary<string, object> args)
         {
             string typeName = args.ContainsKey("componentType") ? args["componentType"].ToString() : "";
@@ -28,22 +186,13 @@ namespace UnityMCP.Editor
             int limit = args.ContainsKey("limit") ? Convert.ToInt32(args["limit"]) : DefaultSearchLimit;
 
             // Try to find the type
-            Type componentType = null;
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                componentType = assembly.GetType(typeName, false, true);
-                if (componentType != null) break;
-
-                // Try with UnityEngine prefix
-                componentType = assembly.GetType("UnityEngine." + typeName, false, true);
-                if (componentType != null) break;
-            }
+            Type componentType = ResolveComponentType(typeName);
 
             if (componentType == null)
                 return new { error = $"Component type '{typeName}' not found" };
 
             var results = new List<Dictionary<string, object>>();
-            var objects = UnityEngine.Object.FindObjectsByType(componentType, includeInactive ? FindObjectsInactive.Include : FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            var objects = MCPObjectSearch.Find(componentType, includeInactive);
 
             int totalFound = 0;
             foreach (var obj in objects)
@@ -136,7 +285,7 @@ namespace UnityMCP.Editor
             int limit = args.ContainsKey("limit") ? Convert.ToInt32(args["limit"]) : DefaultSearchLimit;
 
             var results = new List<Dictionary<string, object>>();
-            var allObjects = UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var allObjects = MCPObjectSearch.Find<GameObject>(includeInactive: true);
             int totalFound = 0;
             foreach (var go in allObjects)
             {
@@ -184,9 +333,7 @@ namespace UnityMCP.Editor
             int limit = args.ContainsKey("limit") ? Convert.ToInt32(args["limit"]) : DefaultSearchLimit;
 
             var results = new List<Dictionary<string, object>>();
-            var allObjects = UnityEngine.Object.FindObjectsByType<GameObject>(
-                includeInactive ? FindObjectsInactive.Include : FindObjectsInactive.Exclude,
-                FindObjectsSortMode.None);
+            var allObjects = MCPObjectSearch.Find<GameObject>(includeInactive);
 
             int totalFound = 0;
             foreach (var go in allObjects)
@@ -245,7 +392,7 @@ namespace UnityMCP.Editor
             int limit = args.ContainsKey("limit") ? Convert.ToInt32(args["limit"]) : DefaultSearchLimit;
 
             var results = new List<Dictionary<string, object>>();
-            var renderers = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var renderers = MCPObjectSearch.Find<Renderer>(includeInactive: true);
 
             int totalFound = 0;
             foreach (var renderer in renderers)
@@ -299,7 +446,7 @@ namespace UnityMCP.Editor
 
             if (searchScene)
             {
-                var allObjects = UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                var allObjects = MCPObjectSearch.Find<GameObject>(includeInactive: true);
                 foreach (var go in allObjects)
                 {
                     if (totalFound >= limit) break;
@@ -448,6 +595,61 @@ namespace UnityMCP.Editor
                 parent = parent.parent;
             }
             return path;
+        }
+
+        private static Type ResolveComponentType(string typeName)
+        {
+            return ResolveComponentTypes(typeName).FirstOrDefault();
+        }
+
+        private static List<Type> ResolveComponentTypes(string typeName)
+        {
+            if (string.IsNullOrWhiteSpace(typeName))
+                return new List<Type>();
+
+            string normalized = typeName.Trim();
+            bool isFullName = normalized.IndexOf('.') >= 0;
+            return TypeCache.GetTypesDerivedFrom<Component>()
+                .Concat(new[] { typeof(Component) })
+                .Where(type => isFullName
+                    ? string.Equals(type.FullName, normalized, StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(type.Name, normalized, StringComparison.OrdinalIgnoreCase))
+                .Distinct()
+                .OrderBy(type => type.FullName, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private static bool UsesShader(GameObject gameObject, string shaderName)
+        {
+            var renderer = gameObject.GetComponent<Renderer>();
+            if (renderer == null)
+                return false;
+
+            return renderer.sharedMaterials.Any(material =>
+                material != null &&
+                material.shader != null &&
+                material.shader.name.IndexOf(shaderName, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static string GetString(Dictionary<string, object> args, string key)
+        {
+            return args.TryGetValue(key, out var value) && value != null ? value.ToString() : "";
+        }
+
+        private static bool GetBool(Dictionary<string, object> args, string key, bool defaultValue)
+        {
+            if (!args.TryGetValue(key, out var value) || value == null)
+                return defaultValue;
+            if (value is bool boolValue)
+                return boolValue;
+            return bool.TryParse(value.ToString(), out bool parsed) ? parsed : defaultValue;
+        }
+
+        private static int GetInt(Dictionary<string, object> args, string key, int defaultValue)
+        {
+            if (!args.TryGetValue(key, out var value) || value == null)
+                return defaultValue;
+            return int.TryParse(value.ToString(), out int result) ? result : defaultValue;
         }
     }
 }

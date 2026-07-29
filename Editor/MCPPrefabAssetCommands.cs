@@ -516,7 +516,10 @@ namespace UnityMCP.Editor
                 }
                 catch (Exception ex)
                 {
-                    complete(new { error = $"Failed while waiting for component type: {ex.Message}", stackTrace = ex.StackTrace });
+                    Debug.LogException(ex);
+                    complete(MCPResponse.Error(
+                        $"Failed while waiting for component type: {ex.Message}",
+                        "component_type_wait_failed"));
                 }
             };
 
@@ -780,7 +783,8 @@ namespace UnityMCP.Editor
             }
             catch (Exception ex)
             {
-                return new { error = $"Failed to move component: {ex.Message}", stackTrace = ex.StackTrace };
+                Debug.LogException(ex);
+                return MCPResponse.Error($"Failed to move component: {ex.Message}", "move_component_failed");
             }
             finally
             {
@@ -2081,7 +2085,10 @@ namespace UnityMCP.Editor
             }
             catch (Exception ex)
             {
-                return new { error = $"Failed to edit prefab transaction: {ex.Message}", stackTrace = ex.StackTrace };
+                Debug.LogException(ex);
+                return MCPResponse.Error(
+                    $"Failed to edit prefab transaction: {ex.Message}",
+                    "transaction_edit_failed");
             }
             finally
             {
@@ -2305,7 +2312,10 @@ namespace UnityMCP.Editor
                 }
                 catch (Exception ex)
                 {
-                    complete(new { error = $"Failed while waiting for component types: {ex.Message}", stackTrace = ex.StackTrace });
+                    Debug.LogException(ex);
+                    complete(MCPResponse.Error(
+                        $"Failed while waiting for component types: {ex.Message}",
+                        "component_types_wait_failed"));
                 }
             };
 
@@ -2556,10 +2566,11 @@ namespace UnityMCP.Editor
                 }
                 catch (Exception ex)
                 {
+                    Debug.LogException(ex);
                     int elapsedMs = (int)((EditorApplication.timeSinceStartup - state.StartedAt) * 1000d);
                     complete(BuildBatchEditFailure(state, args,
                         $"Failed to edit prefab transaction: {ex.Message}", "transaction_edit_exception",
-                        false, elapsedMs, state.NextOperationIndex, null, ex.StackTrace));
+                        false, elapsedMs, state.NextOperationIndex));
                 }
             };
 
@@ -2592,7 +2603,7 @@ namespace UnityMCP.Editor
 
         private static Dictionary<string, object> BuildBatchEditFailure(BatchEditDeferredState state,
             Dictionary<string, object> args, string error, string errorCode, bool retryable, int elapsedMs,
-            int failedOperationIndex, Dictionary<string, object> failedOperation = null, string stackTrace = null)
+            int failedOperationIndex, Dictionary<string, object> failedOperation = null)
         {
             var saveAttemptedWithoutSuccess = state.SaveAttempted && state.Saved == false;
             var result = new Dictionary<string, object>
@@ -2621,8 +2632,6 @@ namespace UnityMCP.Editor
 
             if (failedOperation != null)
                 result["failedOperation"] = failedOperation;
-            if (string.IsNullOrEmpty(stackTrace) == false)
-                result["stackTrace"] = stackTrace;
 
             return result;
         }
@@ -2701,7 +2710,10 @@ namespace UnityMCP.Editor
                 }
                 catch (Exception ex)
                 {
-                    complete(new { error = $"Failed while waiting for asset refresh: {ex.Message}", stackTrace = ex.StackTrace });
+                    Debug.LogException(ex);
+                    complete(MCPResponse.Error(
+                        $"Failed while waiting for asset refresh: {ex.Message}",
+                        "asset_refresh_wait_failed"));
                 }
             };
 

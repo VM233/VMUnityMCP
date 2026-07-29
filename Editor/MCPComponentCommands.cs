@@ -253,7 +253,7 @@ namespace UnityMCP.Editor
                 if (refGo == null)
                 {
                     // Fallback: search by name in all objects
-                    var allObjects = UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
+                    var allObjects = MCPObjectSearch.Find<GameObject>();
                     foreach (var obj in allObjects)
                     {
                         if (obj.name == gameObjectRef)
@@ -522,7 +522,7 @@ namespace UnityMCP.Editor
             var sceneObjects = new List<Dictionary<string, object>>();
             if (typeof(Component).IsAssignableFrom(expectedType))
             {
-                var found = UnityEngine.Object.FindObjectsByType(expectedType, FindObjectsSortMode.None);
+                var found = MCPObjectSearch.Find(expectedType);
                 foreach (var obj in found)
                 {
                     var comp = obj as Component;
@@ -539,7 +539,7 @@ namespace UnityMCP.Editor
             }
             else if (typeof(GameObject).IsAssignableFrom(expectedType))
             {
-                var found = UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
+                var found = MCPObjectSearch.Find<GameObject>();
                 foreach (var obj in found)
                 {
                     sceneObjects.Add(new Dictionary<string, object>

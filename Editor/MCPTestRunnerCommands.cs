@@ -19,6 +19,7 @@ namespace UnityMCP.Editor
 
         private static readonly Dictionary<string, TestJob> _jobs = new Dictionary<string, TestJob>();
         private static string _currentJobId;
+        private static volatile bool _isTestRunActive;
         private static TestRunnerApi _testRunnerApi;
         private static MCPTestCallbacks _callbacks;
 
@@ -36,6 +37,9 @@ namespace UnityMCP.Editor
         {
             // Restore state after domain reload
             RestoreFromSessionState();
+            SetTestRunActive(_currentJobId != null &&
+                             _jobs.TryGetValue(_currentJobId, out var restoredJob) &&
+                             restoredJob.Status == TestJobStatus.Running);
 
             // Re-register callbacks if a test job is in progress
             // (handles domain reload during PlayMode tests if guard failed)
@@ -74,6 +78,7 @@ namespace UnityMCP.Editor
                     existing.Error = "Force-cleared by user";
                     existing.CompletedAt = DateTime.UtcNow;
                     _currentJobId = null;
+                    SetTestRunActive(false);
                     SaveToSessionState();
                     return new Dictionary<string, object>
                     {
@@ -157,6 +162,7 @@ namespace UnityMCP.Editor
 
             _jobs[job.JobId] = job;
             _currentJobId = job.JobId;
+            SetTestRunActive(true);
 
             // Clean up old jobs
             CleanupExpiredJobs();
@@ -187,7 +193,22 @@ namespace UnityMCP.Editor
             EnsureCallbacksRegistered();
 
             var executionSettings = new ExecutionSettings(filter);
-            _testRunnerApi.Execute(executionSettings);
+            try
+            {
+                _testRunnerApi.Execute(executionSettings);
+            }
+            catch (Exception ex)
+            {
+                job.Status = TestJobStatus.Failed;
+                job.Error = ex.GetBaseException().Message;
+                job.ErrorCode = "test_start_failed";
+                job.CompletedAt = DateTime.UtcNow;
+                _currentJobId = null;
+                SetTestRunActive(false);
+                SaveToSessionState();
+                return MCPResponse.Error(job.Error, job.ErrorCode, false,
+                    new Dictionary<string, object> { { "jobId", job.JobId } });
+            }
 
             Debug.Log($"[MCP TestRunner] Started test job {job.JobId} (mode={testMode})");
 
@@ -204,6 +225,14 @@ namespace UnityMCP.Editor
         /// Get the status/results of a test job.
         /// Route: testing/get-job
         /// </summary>
+        internal static bool IsTestRunActive => _isTestRunActive;
+
+        private static void SetTestRunActive(bool active)
+        {
+            _isTestRunActive = active;
+            MCPBridgeServer.SetBusyReason(active ? "test_run" : null);
+        }
+
         public static object GetTestJob(Dictionary<string, object> args)
         {
             string jobId = args.ContainsKey("jobId") ? args["jobId"].ToString() : null;
@@ -456,7 +485,10 @@ namespace UnityMCP.Editor
                 RestorePlayModeOptions();
 
             if (_currentJobId == job.JobId)
+            {
                 _currentJobId = null;
+                SetTestRunActive(false);
+            }
             SaveToSessionState();
         }
 
@@ -735,7 +767,10 @@ namespace UnityMCP.Editor
                             job.Error = "Job became stale after domain reload";
                             job.CompletedAt = DateTime.UtcNow;
                             if (_currentJobId == job.JobId)
+                            {
                                 _currentJobId = null;
+                                SetTestRunActive(false);
+                            }
                         }
                     }
 

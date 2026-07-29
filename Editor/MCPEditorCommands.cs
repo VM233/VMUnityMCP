@@ -789,11 +789,11 @@ namespace UnityMCP.Editor
             }
             catch (TargetInvocationException ex)
             {
-                return new { error = ex.InnerException?.Message ?? ex.Message, stackTrace = ex.InnerException?.StackTrace ?? ex.StackTrace };
+                return BuildExecuteCodeError(ex.InnerException ?? ex, args);
             }
             catch (Exception ex)
             {
-                return new { error = ex.Message, stackTrace = ex.StackTrace };
+                return BuildExecuteCodeError(ex, args);
             }
         }
 
@@ -1399,6 +1399,27 @@ namespace UnityMCP.Editor
             return int.TryParse(args[key].ToString(), out int value) ? value : defaultValue;
         }
 
+        internal static Dictionary<string, object> BuildExecuteCodeError(
+            Exception exception,
+            Dictionary<string, object> args)
+        {
+            Debug.LogException(exception);
+            Dictionary<string, object> extra = null;
+            if (args != null &&
+                args.TryGetValue("includeStackTrace", out object includeStackTrace) &&
+                includeStackTrace != null &&
+                bool.TryParse(includeStackTrace.ToString(), out bool include) &&
+                include)
+            {
+                extra = new Dictionary<string, object>
+                {
+                    { "stackTrace", exception.StackTrace ?? "" },
+                };
+            }
+
+            return MCPResponse.Error(exception.Message, "execute_code_exception", false, extra);
+        }
+
         private static bool TryGetUtcDateTime(Dictionary<string, object> args, string key, out DateTime value)
         {
             value = default;
@@ -1440,14 +1461,11 @@ namespace UnityMCP.Editor
             }
             catch (TargetInvocationException ex)
             {
-                var cause = ex.InnerException ?? ex;
-                return MCPResponse.Error(cause.Message, "execute_code_exception", false,
-                    new Dictionary<string, object> { { "stackTrace", cause.StackTrace ?? "" } });
+                return MCPEditorCommands.BuildExecuteCodeError(ex.InnerException ?? ex, args);
             }
             catch (Exception ex)
             {
-                return MCPResponse.Error(ex.Message, "execute_code_exception", false,
-                    new Dictionary<string, object> { { "stackTrace", ex.StackTrace ?? "" } });
+                return MCPEditorCommands.BuildExecuteCodeError(ex, args);
             }
         }
     }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using UnityEngine;
 
 namespace UnityMCP.Editor
 {
@@ -35,11 +36,13 @@ namespace UnityMCP.Editor
             catch (TargetInvocationException exception)
             {
                 var cause = exception.InnerException ?? exception;
-                return new { success = false, error = cause.Message, stackTrace = cause.StackTrace };
+                Debug.LogException(cause);
+                return MCPResponse.Error(cause.Message, "localization_command_failed");
             }
             catch (Exception exception)
             {
-                return new { success = false, error = exception.Message, stackTrace = exception.StackTrace };
+                Debug.LogException(exception);
+                return MCPResponse.Error(exception.Message, "localization_bridge_failed");
             }
         }
 
@@ -78,11 +81,13 @@ namespace UnityMCP.Editor
             catch (TargetInvocationException exception)
             {
                 var cause = exception.InnerException ?? exception;
-                resolve(new { success = false, error = cause.Message, stackTrace = cause.StackTrace });
+                Debug.LogException(cause);
+                resolve(MCPResponse.Error(cause.Message, "localization_command_failed"));
             }
             catch (Exception exception)
             {
-                resolve(new { success = false, error = exception.Message, stackTrace = exception.StackTrace });
+                Debug.LogException(exception);
+                resolve(MCPResponse.Error(exception.Message, "localization_bridge_failed"));
             }
         }
 

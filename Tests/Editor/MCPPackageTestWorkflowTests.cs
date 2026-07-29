@@ -326,5 +326,51 @@ namespace UnityMCP.Editor.Tests
             Assert.That(jobType.GetField("Error")?.GetValue(job)?.ToString(),
                 Does.Contain("No tests matched"));
         }
+
+        [Test]
+        public void StoredPackageTestResult_OmitsDetailedRowsAndStackTraces()
+        {
+            MethodInfo compact = typeof(MCPPackageTestCommands).GetMethod(
+                "CompactStoredTestResult", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(compact, Is.Not.Null);
+            var input = new Dictionary<string, object>
+            {
+                { "jobId", "job-1" },
+                { "status", "failed" },
+                { "summary", new Dictionary<string, object> { { "failed", 1 } } },
+                { "progress", new Dictionary<string, object>
+                    {
+                        { "failuresSoFar", new List<object>
+                            {
+                                new Dictionary<string, object>
+                                {
+                                    { "name", "BrokenTest" },
+                                    { "message", "Expected true" },
+                                },
+                            }
+                        },
+                    }
+                },
+                { "tests", new List<object>
+                    {
+                        new Dictionary<string, object>
+                        {
+                            { "name", "BrokenTest" },
+                            { "stackTrace", "internal stack" },
+                        },
+                    }
+                },
+                { "resultOffset", 0 },
+            };
+
+            var result = (Dictionary<string, object>)compact.Invoke(null, new object[] { input });
+
+            Assert.That(result["jobId"], Is.EqualTo("job-1"));
+            Assert.That(result, Does.ContainKey("summary"));
+            Assert.That(result, Does.ContainKey("progress"));
+            Assert.That(result, Does.Not.ContainKey("tests"));
+            Assert.That(result, Does.Not.ContainKey("resultOffset"));
+            Assert.That(MiniJson.Serialize(result), Does.Not.Contain("stackTrace"));
+        }
     }
 }

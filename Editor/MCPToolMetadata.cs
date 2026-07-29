@@ -78,6 +78,22 @@ namespace UnityMCP.Editor
                 };
             }
 
+            public ToolProfile Clone()
+            {
+                return new ToolProfile
+                {
+                    Exposure = Exposure,
+                    Preferred = Preferred,
+                    ReadOnly = ReadOnly,
+                    MutatesAssets = MutatesAssets,
+                    MutatesRuntime = MutatesRuntime,
+                    Dangerous = Dangerous,
+                    LongRunning = LongRunning,
+                    MayReloadDomain = MayReloadDomain,
+                    RequiresPlayMode = RequiresPlayMode,
+                };
+            }
+
             public Dictionary<string, object> ToAnnotations()
             {
                 var annotations = new Dictionary<string, object>();
@@ -92,6 +108,48 @@ namespace UnityMCP.Editor
             }
         }
 
+        private static readonly HashSet<string> FirstClassRouteAllowlist =
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                // Canonical metadata for server-core tools. These replace same-named
+                // fallbacks without increasing the public tool count.
+                "asset/import",
+                "asset/list",
+                "asset/refresh",
+                "build/get-job",
+                "build/start",
+                "compilation/errors",
+                "component/set-property",
+                "editor/play-mode",
+                "queue/info",
+                "search/scene",
+                "scene/hierarchy",
+                "screenshot/game",
+
+                // Small release-managed surface for common structured workflows.
+                "packages/list",
+                "packages/update-git",
+                "wait/editor-idle",
+                "scene/instantiate-prefab",
+                "serialized-object/get",
+                "serialized-object/set",
+                "component/set-reference",
+                "prefab-asset/configure-component",
+                "asset/get-refresh-job",
+                "asset/rename",
+                "asset/move",
+                "console/query",
+                "uitoolkit/runtime-query",
+                "uitoolkit/refresh",
+                "uitoolkit/edit-uxml",
+                "uitoolkit/edit-uss",
+                "testing/run-tests",
+                "testing/get-job",
+                "project-tools/list",
+                "project-tools/get",
+                "project-tools/execute",
+            };
+
         private static readonly Dictionary<string, ToolProfile> ToolProfiles = BuildToolProfiles();
 
         private static Dictionary<string, ToolProfile> BuildToolProfiles()
@@ -105,6 +163,8 @@ namespace UnityMCP.Editor
                 "context/*",
                 "queue/info",
                 "queue/status",
+                "search/scene",
+                "compilation/errors",
                 "asset/list",
                 "scene/hierarchy",
                 "serialized-object/get",
@@ -214,6 +274,7 @@ namespace UnityMCP.Editor
                 "localization/set-selected-locale",
                 "component/set-property",
                 "component/set-reference",
+                "scene/instantiate-prefab",
                 "profiler/enable");
 
             AddProfile(profiles, ToolProfile.FirstClass(mutatesRuntime: true, longRunning: true,
@@ -243,6 +304,16 @@ namespace UnityMCP.Editor
                     dangerous: true),
                 "project-tools/execute");
 
+            foreach (var pair in profiles)
+            {
+                if (string.Equals(pair.Value.Exposure, ExposureFirstClass, StringComparison.Ordinal) &&
+                    !FirstClassRouteAllowlist.Contains(pair.Key))
+                {
+                    pair.Value.Exposure = ExposureLazy;
+                    pair.Value.Preferred = false;
+                }
+            }
+
             return profiles;
         }
 
@@ -250,7 +321,7 @@ namespace UnityMCP.Editor
             params string[] routes)
         {
             foreach (string route in routes)
-                profiles[route] = profile;
+                profiles[route] = profile.Clone();
         }
 
         private static string ExtractCategory(string path)
@@ -512,6 +583,12 @@ namespace UnityMCP.Editor
                     "Expected Unity project root path. The request is rejected before mutation if it reaches another project.");
                 properties[bindingProperty.Key] = bindingProperty.Value;
             }
+            if (!properties.ContainsKey("expectedProjectName"))
+            {
+                KeyValuePair<string, object> bindingProperty = Prop("expectedProjectName", "string",
+                    "Optional expected Unity project name used with expectedProjectPath as an additional target-binding check.");
+                properties[bindingProperty.Key] = bindingProperty.Value;
+            }
             schema["properties"] = properties;
             return schema;
         }
@@ -577,6 +654,13 @@ namespace UnityMCP.Editor
             return GetToolProfile(route).MayReloadDomain;
         }
 
+        internal static bool RouteIsLongRunning(string route)
+        {
+            if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
+                return GetBool(projectTool, "longRunning", false);
+            return GetToolProfile(route).LongRunning;
+        }
+
         private static List<Dictionary<string, object>> BuildMetadataIssues(List<Dictionary<string, object>> tools)
         {
             var issues = new List<Dictionary<string, object>>();
@@ -597,7 +681,8 @@ namespace UnityMCP.Editor
                     });
                 }
 
-                if (description.StartsWith("Execute Unity MCP route ", StringComparison.Ordinal))
+                if (description.StartsWith("Execute Unity MCP route ", StringComparison.Ordinal) ||
+                    description.StartsWith("Lazy Unity route: ", StringComparison.Ordinal))
                 {
                     issues.Add(new Dictionary<string, object>
                     {
@@ -605,13 +690,95 @@ namespace UnityMCP.Editor
                         { "issue", "default_description" },
                     });
                 }
+
+                if (tool.TryGetValue("inputSchema", out var schemaObj) &&
+                    schemaObj is Dictionary<string, object> schema)
+                {
+                    CollectSchemaIssues(route, schema, "$", false, issues);
+                }
             }
 
             return issues;
         }
 
+        private static void CollectSchemaIssues(
+            string route,
+            Dictionary<string, object> schema,
+            string path,
+            bool isProperty,
+            List<Dictionary<string, object>> issues)
+        {
+            string type = schema.TryGetValue("type", out var typeObj) ? typeObj?.ToString() : "";
+            if (isProperty &&
+                (!schema.TryGetValue("description", out var descriptionObj) ||
+                 string.IsNullOrWhiteSpace(descriptionObj?.ToString())))
+            {
+                issues.Add(new Dictionary<string, object>
+                {
+                    { "route", route },
+                    { "issue", "property_without_description" },
+                    { "path", path },
+                });
+            }
+
+            if (string.Equals(type, "array", StringComparison.Ordinal) &&
+                !schema.ContainsKey("items"))
+            {
+                issues.Add(new Dictionary<string, object>
+                {
+                    { "route", route },
+                    { "issue", "array_without_items" },
+                    { "path", path },
+                });
+            }
+
+            if (schema.TryGetValue("properties", out var propertiesObj) &&
+                propertiesObj is Dictionary<string, object> properties)
+            {
+                foreach (var property in properties)
+                {
+                    if (property.Value is Dictionary<string, object> propertySchema)
+                        CollectSchemaIssues(route, propertySchema, path + "." + property.Key, true, issues);
+                }
+            }
+
+            if (schema.TryGetValue("items", out var itemsObj) &&
+                itemsObj is Dictionary<string, object> itemsSchema)
+            {
+                CollectSchemaIssues(route, itemsSchema, path + "[]", false, issues);
+            }
+
+            foreach (string keyword in new[] { "allOf", "anyOf", "oneOf" })
+            {
+                if (!schema.TryGetValue(keyword, out var variantsObj) ||
+                    !(variantsObj is IEnumerable<object> variants))
+                {
+                    continue;
+                }
+
+                int index = 0;
+                foreach (object variant in variants)
+                {
+                    if (variant is Dictionary<string, object> variantSchema)
+                        CollectSchemaIssues(route, variantSchema, path + "." + keyword + "[" + index + "]", false, issues);
+                    index++;
+                }
+            }
+        }
+
         private static string RouteToToolName(string route)
         {
+            switch (route)
+            {
+                case "build/start":
+                    return "unity_build";
+                case "compilation/errors":
+                    return "unity_get_compilation_errors";
+                case "editor/play-mode":
+                    return "unity_play_mode";
+                case "queue/status":
+                    return "unity_queue_ticket_status";
+            }
             return "unity_" + route.Replace("/", "_").Replace("-", "_");
         }
 
@@ -680,6 +847,16 @@ namespace UnityMCP.Editor
         {
             switch (route)
             {
+                case "_meta/tools":
+                    return "List the Unity bridge tool catalog. This internal discovery route is not exposed as a normal first-class tool.";
+                case "asset/list":
+                    return "List assets below a Unity project folder with bounded pagination and an optional type filter.";
+                case "compilation/errors":
+                    return "Read tracked Unity compilation errors and warnings with bounded pagination and a separate obsolete-API warning summary.";
+                case "packages/info":
+                    return "Read detailed Unity Package Manager metadata for one installed package.";
+                case "packages/list":
+                    return "List installed Unity packages with bounded pagination.";
                 case "packages/update-git":
                     return "Update a Git-based Unity package and return the resolved packages-lock hash.";
                 case "packages/status":
@@ -697,7 +874,7 @@ namespace UnityMCP.Editor
                 case "testing/run-tests":
                     return "Start a Unity Test Runner job and return a job ID for polling.";
                 case "testing/get-job":
-                    return "Poll a Unity Test Runner job, including progress, failures, and optional result details.";
+                    return "Poll a Unity Test Runner job, including progress, failures, and optional result details. EditMode tests can delay main-thread queue polling while they execute.";
                 case "testing/run-package-tests":
                     return "Run tests from a Git package by temporarily enabling package testables, surviving domain reloads, and restoring manifest.json exactly.";
                 case "testing/get-package-job":
@@ -976,6 +1153,8 @@ namespace UnityMCP.Editor
                     return "Read one owned queue ticket and its terminal result.";
                 case "queue/cancel":
                     return "Cancel one owned queued request; executing Unity work is not preempted.";
+                case "search/scene":
+                    return "Search loaded scene GameObjects with composable name, component, tag, layer, and shader filters plus stable pagination.";
                 case "_meta/capabilities":
                     return "List core and optional Unity MCP capabilities detected in this project.";
                 default:
@@ -995,6 +1174,17 @@ namespace UnityMCP.Editor
                         Prop("recursive", "boolean", "Include descendants. Defaults to true."),
                         Prop("offset", "number", "Result offset."),
                         Prop("limit", "number", "Maximum assets. Defaults to 100; capped at 500.")));
+                case "search/scene":
+                    return Schema(Props(
+                        Prop("name", "string", "Optional case-insensitive GameObject name substring or regular expression."),
+                        Prop("regex", "boolean", "Interpret name as a regular expression with a bounded match timeout. Defaults to false."),
+                        Prop("componentType", "string", "Optional Component type name or full name that must exist on the GameObject."),
+                        Prop("tag", "string", "Optional exact Unity Tag."),
+                        Prop("layer", "string", "Optional Unity Layer name or numeric index."),
+                        Prop("shader", "string", "Optional case-insensitive shader-name substring used by a Renderer on the GameObject."),
+                        Prop("includeInactive", "boolean", "Include inactive GameObjects. Defaults to true."),
+                        Prop("offset", "number", "Stable result offset. Defaults to 0."),
+                        Prop("limit", "number", "Maximum results. Defaults to 200; capped at 500.")));
                 case "_meta/capabilities":
                 case "queue/info":
                     return Schema(Props());
@@ -1010,7 +1200,7 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("sourcePath", "string", "Single source asset path."),
                         Prop("targetPath", "string", "Single target asset path."),
-                        Prop("copies", "array", "Optional batch of sourcePath/targetPath objects."),
+                        ArrayProp("copies", "object", "Optional batch of sourcePath/targetPath objects."),
                         Prop("overwrite", "boolean", "Replace existing targets with rollback snapshots."),
                         Prop("dryRun", "boolean", "Preflight without copying.")));
                 case "asset/dependencies":
@@ -1018,28 +1208,28 @@ namespace UnityMCP.Editor
                         Prop("path", "string", "Asset whose references should be inspected."),
                         Prop("direction", "string", "outgoing, incoming, or both. Defaults to both."),
                         Prop("recursive", "boolean", "Use recursive dependency resolution. Defaults to true."),
-                        Prop("searchRoots", "array", "Folders scanned for incoming references. Defaults to Assets."),
+                        ArrayProp("searchRoots", "string", "Folders scanned for incoming references. Defaults to Assets."),
                         Prop("offset", "number", "Result offset."),
                         Prop("limit", "number", "Maximum results. Defaults to 100; capped at 500.")), "path");
                 case "asset/transaction":
                     return Schema(Props(
-                        Prop("operations", "array", "Ordered ensure-folder, copy, move, delete, or serialized-set operations."),
-                        Prop("requiredAssets", "array", "Assets or folders that must exist after execution."),
-                        Prop("referenceChecks", "array", "Postconditions containing assetPath and requiredDependencies."),
+                        ArrayProp("operations", "object", "Ordered ensure-folder, copy, move, delete, or serialized-set operations."),
+                        ArrayProp("requiredAssets", "string", "Assets or folders that must exist after execution."),
+                        ArrayProp("referenceChecks", "object", "Postconditions containing assetPath and requiredDependencies."),
                         Prop("dryRun", "boolean", "Preflight all operations without mutation.")), "operations");
                 case "uitoolkit/edit-uxml":
                     return Schema(Props(
                         Prop("assetPath", "string", "UXML asset path below Assets/."),
-                        Prop("operations", "array", "Ordered structural UXML edit operations."),
+                        ArrayProp("operations", "object", "Ordered structural UXML edit operations."),
                         Prop("dryRun", "boolean", "Return the edit result without writing.")), "assetPath", "operations");
                 case "uitoolkit/edit-uss":
                     return Schema(Props(
                         Prop("assetPath", "string", "USS asset path below Assets/."),
-                        Prop("operations", "array", "Ordered selector/declaration edit operations."),
+                        ArrayProp("operations", "object", "Ordered selector/declaration edit operations."),
                         Prop("dryRun", "boolean", "Return the edit result without writing.")), "assetPath", "operations");
                 case "uitoolkit/authoring-transaction":
                     return Schema(Props(
-                        Prop("edits", "array", "Ordered edit objects with kind, assetPath, and operations."),
+                        ArrayProp("edits", "object", "Ordered edit objects with kind, assetPath, and operations."),
                         Prop("dryRun", "boolean", "Validate all edits without writing.")), "edits");
                 case "packages/add":
                     return Schema(Props(
@@ -1093,7 +1283,7 @@ namespace UnityMCP.Editor
                         Prop("name", "string", "Table Collection name."),
                         Prop("type", "string", "Collection type: string or asset."),
                         Prop("assetDirectory", "string", "Existing or new directory under Assets."),
-                        Prop("locales", "array", "Optional Locale codes. Defaults to every registered Locale."),
+                        ArrayProp("locales", "string", "Optional Locale codes. Defaults to every registered Locale."),
                         Prop("group", "string", "Optional Localization window group."),
                         Prop("preload", "boolean", "Optional preload flag for all created tables.")
                     ), "name", "type", "assetDirectory");
@@ -1211,7 +1401,7 @@ namespace UnityMCP.Editor
                     ));
                 case "asset/export-unitypackage":
                     return Schema(Props(
-                        Prop("assetPaths", "array", "Unity asset paths to export, e.g. Assets/MyFolder or Assets/MyPrefab.prefab."),
+                        ArrayProp("assetPaths", "string", "Unity asset paths to export, e.g. Assets/MyFolder or Assets/MyPrefab.prefab."),
                         Prop("outputPath", "string", "Absolute path or project-root-relative path for the .unitypackage output."),
                         Prop("includeDependencies", "boolean", "Include asset dependencies. Defaults to true."),
                         Prop("recurse", "boolean", "Recursively export folder contents. Defaults to true."),
@@ -1231,10 +1421,11 @@ namespace UnityMCP.Editor
                 case "editor/execute-code":
                     return Schema(Props(
                         Prop("code", "string", "C# method body to execute. Return a value to serialize it."),
-                        Prop("usings", "array", "Additional namespace imports for this call. Recurring imports can be configured in Project Settings > Unity MCP > Execute Code. UnityEngine.UIElements is included by default."),
+                        ArrayProp("usings", "string", "Additional namespace imports for this call. Recurring imports can be configured in Project Settings > Unity MCP > Execute Code. UnityEngine.UIElements is included by default."),
                         Prop("maxResultItems", "number", "Maximum serialized collection/object entries across the result. Defaults to 200; capped at 2000."),
                         Prop("maxResultDepth", "number", "Maximum serialized result depth. Defaults to 8; capped at 16."),
-                        Prop("maxResultStringLength", "number", "Maximum characters per returned string. Defaults to 20000; capped at 200000.")
+                        Prop("maxResultStringLength", "number", "Maximum characters per returned string. Defaults to 20000; capped at 200000."),
+                        Prop("includeStackTrace", "boolean", "Include a full managed stack trace when executed code throws. Defaults to false.")
                     ), "code");
                 case "profiler/enable":
                     return Schema(Props(
@@ -1293,10 +1484,10 @@ namespace UnityMCP.Editor
                 case "testing/run-tests":
                     return Schema(Props(
                         Prop("mode", "string", "Test mode: EditMode or PlayMode. Defaults to EditMode."),
-                        Prop("testNames", "array", "Optional exact test full names."),
-                        Prop("categories", "array", "Optional test categories."),
-                        Prop("assemblies", "array", "Optional test assembly names."),
-                        Prop("groupNames", "array", "Optional Unity Test Runner group names."),
+                        ArrayProp("testNames", "string", "Optional exact test full names."),
+                        ArrayProp("categories", "string", "Optional test categories."),
+                        ArrayProp("assemblies", "string", "Optional test assembly names."),
+                        ArrayProp("groupNames", "string", "Optional Unity Test Runner group names."),
                         Prop("clearStuck", "boolean", "Force-clear a previously stuck job before starting. Defaults to false.")
                     ));
                 case "testing/get-job":
@@ -1313,10 +1504,10 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("packageName", "string", "Git package name. Defaults to com.vm233.unity-mcp."),
                         Prop("mode", "string", "Test mode: EditMode or PlayMode. Defaults to EditMode."),
-                        Prop("assemblies", "array", "Test assembly names. Defaults to the Unity MCP regression assembly for the Unity MCP package."),
-                        Prop("testNames", "array", "Optional exact test full names."),
-                        Prop("categories", "array", "Optional test categories."),
-                        Prop("groupNames", "array", "Optional Unity Test Runner group names.")
+                        ArrayProp("assemblies", "string", "Test assembly names. Defaults to the Unity MCP regression assembly for the Unity MCP package."),
+                        ArrayProp("testNames", "string", "Optional exact test full names."),
+                        ArrayProp("categories", "string", "Optional test categories."),
+                        ArrayProp("groupNames", "string", "Optional Unity Test Runner group names.")
                     ));
                 case "testing/get-package-job":
                     return Schema(Props(
@@ -1406,8 +1597,8 @@ namespace UnityMCP.Editor
                         Prop("prefabFileDiffContextLines", "number", "Context lines around prefab YAML changes. Defaults to 2."),
                         Prop("prefabFileDiffMaxLines", "number", "Maximum diff lines returned. Defaults to 200."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary."),
-                        Prop("prefabFileDiffIgnoreContains", "array", "Optional substrings used to hide noisy diff lines."),
-                        Prop("prefabFileDiffIgnoreYamlProperties", "array", "Optional YAML property names used to hide noisy diff lines.")
+                        ArrayProp("prefabFileDiffIgnoreContains", "string", "Optional substrings used to hide noisy diff lines."),
+                        ArrayProp("prefabFileDiffIgnoreYamlProperties", "string", "Optional YAML property names used to hide noisy diff lines.")
                     ), "assetPath", "componentType");
                 case "prefab-asset/configure-component":
                     return PrefabAssetConfigureComponentSchema();
@@ -1513,7 +1704,7 @@ namespace UnityMCP.Editor
                     return AssetImportSchema();
                 case "asset/refresh":
                     return Schema(Props(
-                        Prop("assetPaths", "array", "Optional Unity asset paths to import. When supplied, only these paths are imported, with known dependencies before dependents. Omit to run a full synchronous AssetDatabase refresh and reconcile all external changes."),
+                        ArrayProp("assetPaths", "string", "Optional Unity asset paths to import. When supplied, only these paths are imported, with known dependencies before dependents. Omit to run a full synchronous AssetDatabase refresh and reconcile all external changes."),
                         Prop("forceUpdate", "boolean", "Use ImportAssetOptions.ForceUpdate for full refreshes and non-compilation targeted assets. Compilation assets are always imported without ForceUpdate to avoid broad dependency reimports. Defaults to false."),
                         Prop("saveAssets", "boolean", "Call AssetDatabase.SaveAssets after refresh/import. Defaults to false."),
                         Prop("clearStuck", "boolean", "Replace a non-terminal refresh job left behind by an interrupted editor session. Defaults to false.")
@@ -1599,7 +1790,7 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("controllerPath", "string", "AnimatorController asset path."),
                         Prop("layerIndex", "number", "Layer index. Defaults to 0."),
-                        Prop("stateNames", "array", "State names to connect pairwise."),
+                        ArrayProp("stateNames", "string", "State names to connect pairwise."),
                         Prop("skipExisting", "boolean", "Skip existing transitions. Defaults to true."),
                         Prop("replaceExisting", "boolean", "Remove existing matching transitions before creating new ones."),
                         Prop("hasExitTime", "boolean", "Transition has exit time applied to created transitions."),
@@ -1607,18 +1798,26 @@ namespace UnityMCP.Editor
                         Prop("duration", "number", "Transition duration applied to created transitions."),
                         Prop("offset", "number", "Transition offset applied to created transitions."),
                         Prop("hasFixedDuration", "boolean", "Fixed duration flag applied to created transitions."),
-                        Prop("conditions", "array", "Conditions applied to every created transition.")
+                        ArrayProp("conditions", "object", "Conditions applied to every created transition.")
                     ), "controllerPath", "stateNames");
                 case "animation/validate-controller":
                     return Schema(Props(
                         Prop("controllerPath", "string", "AnimatorController asset path."),
                         Prop("layerIndex", "number", "Layer index. Defaults to 0."),
-                        Prop("requiredParameters", "array", "Strings or objects with name/parameterName and optional type/parameterType."),
-                        Prop("requiredStates", "array", "State names that must exist."),
+                        ArrayProp("requiredParameters", new Dictionary<string, object>
+                        {
+                            { "anyOf", new List<object>
+                                {
+                                    new Dictionary<string, object> { { "type", "string" } },
+                                    new Dictionary<string, object> { { "type", "object" } },
+                                }
+                            },
+                        }, "Strings or objects with name/parameterName and optional type/parameterType."),
+                        ArrayProp("requiredStates", "string", "State names that must exist."),
                         Prop("requireMotion", "boolean", "Require every state in the layer to have a motion."),
-                        Prop("requiredTransitions", "array", "Objects with source/sourceState, destination/destinationState, and optional conditionParameter."),
+                        ArrayProp("requiredTransitions", "object", "Objects with source/sourceState, destination/destinationState, and optional conditionParameter."),
                         Prop("requireFullMesh", "boolean", "Require all stateNames to have pairwise transitions."),
-                        Prop("stateNames", "array", "States used by full mesh validation. Defaults to all layer states.")
+                        ArrayProp("stateNames", "string", "States used by full mesh validation. Defaults to all layer states.")
                     ), "controllerPath");
                 case "project-tools/list":
                     return Schema(Props(
@@ -1635,10 +1834,10 @@ namespace UnityMCP.Editor
                     ), "toolName");
                 case "uitoolkit/audit-uss-styles":
                     return Schema(Props(
-                        Prop("paths", "array", "Optional Assets-relative USS files. Omit to audit every USS file in the effective roots."),
-                        Prop("roots", "array", "Assets-relative roots used to index USS and UXML files. Defaults to the project audit settings, then Assets."),
-                        Prop("runtimeSourceRoots", "array", "Assets-relative roots scanned for UI Toolkit runtime class API references. Defaults to the project audit settings, then Assets."),
-                        Prop("excludePaths", "array", "Assets-relative files or folders excluded from indexing."),
+                        ArrayProp("paths", "string", "Optional Assets-relative USS files. Omit to audit every USS file in the effective roots."),
+                        ArrayProp("roots", "string", "Assets-relative roots used to index USS and UXML files. Defaults to the project audit settings, then Assets."),
+                        ArrayProp("runtimeSourceRoots", "string", "Assets-relative roots scanned for UI Toolkit runtime class API references. Defaults to the project audit settings, then Assets."),
+                        ArrayProp("excludePaths", "string", "Assets-relative files or folders excluded from indexing."),
                         Prop("useProjectSettings", "boolean", "Use ProjectSettings/UnityMCPUIToolkitAudit.json as the default scope. Defaults to true."),
                         Prop("pixelGridEnabled", "boolean", "Override the project pixel-grid audit switch. The project/default value is used when omitted."),
                         Prop("pixelGridStep", "number", "Override the positive pixel-grid step, such as 3 or 4."),
@@ -1649,10 +1848,10 @@ namespace UnityMCP.Editor
                     ));
                 case "uitoolkit/audit-uxml-layout":
                     return Schema(Props(
-                        Prop("paths", "array", "Optional Assets-relative UXML files. Omit to audit every UXML file in the effective roots."),
-                        Prop("roots", "array", "Assets-relative roots used to index UXML and USS files. Defaults to the project audit settings, then Assets."),
-                        Prop("runtimeSourceRoots", "array", "Assets-relative roots scanned for runtime UI element-name references. Defaults to the project audit settings, then Assets."),
-                        Prop("excludePaths", "array", "Assets-relative files or folders excluded from indexing."),
+                        ArrayProp("paths", "string", "Optional Assets-relative UXML files. Omit to audit every UXML file in the effective roots."),
+                        ArrayProp("roots", "string", "Assets-relative roots used to index UXML and USS files. Defaults to the project audit settings, then Assets."),
+                        ArrayProp("runtimeSourceRoots", "string", "Assets-relative roots scanned for runtime UI element-name references. Defaults to the project audit settings, then Assets."),
+                        ArrayProp("excludePaths", "string", "Assets-relative files or folders excluded from indexing."),
                         Prop("useProjectSettings", "boolean", "Use ProjectSettings/UnityMCPUIToolkitAudit.json as the default scope. Defaults to true."),
                         Prop("pixelGridEnabled", "boolean", "Override the project pixel-grid audit switch. The project/default value is used when omitted."),
                         Prop("pixelGridStep", "number", "Override the positive pixel-grid step, such as 3 or 4."),
@@ -1694,9 +1893,9 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("uxmlPath", "string", "UXML asset path, e.g. Assets/UI/HUD.uxml."),
                         Prop("ussPath", "string", "Optional USS asset path. UXML Style src entries are also auto-resolved."),
-                        Prop("ussPaths", "array", "Optional USS asset paths. UXML Style src entries are also auto-resolved."),
+                        ArrayProp("ussPaths", "string", "Optional USS asset paths. UXML Style src entries are also auto-resolved."),
                         Prop("name", "string", "VisualElement.name exact match."),
-                        Prop("names", "array", "VisualElement.name values to validate."),
+                        ArrayProp("names", "string", "VisualElement.name values to validate."),
                         Prop("className", "string", "USS class exact match."),
                         Prop("typeName", "string", "Expected or filtered VisualElement type name."),
                         Prop("maxResults", "number", "Total result budget for elements and name matches. Defaults to 100."),
@@ -1718,7 +1917,7 @@ namespace UnityMCP.Editor
                     return RuntimeUIDocumentSchema(Props(
                         Prop("path", "string", "Element tree path from runtime-tree, e.g. root/0/1."),
                         Prop("visualElementPath", "string", "Slash-separated VisualElementPath names, e.g. MainMap/RightControls."),
-                        Prop("visualElementNames", "array", "VisualElementPath names array."),
+                        ArrayProp("visualElementNames", "string", "VisualElementPath names array."),
                         Prop("name", "string", "VisualElement.name exact match."),
                         Prop("className", "string", "USS class name exact match."),
                         Prop("typeName", "string", "VisualElement type name contains match."),
@@ -1730,7 +1929,7 @@ namespace UnityMCP.Editor
                     return RuntimeUIDocumentSchema(Props(
                         Prop("path", "string", "Element tree path from runtime-tree, e.g. root/0/1."),
                         Prop("visualElementPath", "string", "Slash-separated VisualElementPath names."),
-                        Prop("visualElementNames", "array", "VisualElementPath names array."),
+                        ArrayProp("visualElementNames", "string", "VisualElementPath names array."),
                         Prop("name", "string", "VisualElement.name exact match if path is omitted."),
                         Prop("className", "string", "USS class name exact match if path is omitted."),
                         Prop("typeName", "string", "VisualElement type name contains match if path is omitted."),
@@ -1738,16 +1937,16 @@ namespace UnityMCP.Editor
                     ));
                 case "uitoolkit/diagnose-runtime":
                     return RuntimeUIDocumentSchema(Props(
-                        Prop("queries", "array", "Optional list of element queries. Each accepts path, visualElementPath, name, className, typeName, text, and pixelScale."),
+                        ArrayProp("queries", "object", "Optional list of element queries. Each accepts path, visualElementPath, name, className, typeName, text, and pixelScale."),
                         Prop("path", "string", "Element tree path if queries is omitted."),
                         Prop("visualElementPath", "string", "Slash-separated VisualElementPath names if queries is omitted."),
-                        Prop("visualElementNames", "array", "VisualElementPath names array if queries is omitted."),
+                        ArrayProp("visualElementNames", "string", "VisualElementPath names array if queries is omitted."),
                         Prop("name", "string", "VisualElement.name exact match if queries is omitted."),
                         Prop("pixelScale", "number", "Pixel grid scale used for pixel diagnostics. Defaults to 1.")
                     ));
                 case "uitoolkit/visual-check":
                     return RuntimeUIDocumentSchema(Props(
-                        Prop("checks", "array", "Visual checks. Supported type values: pixel-grid, background-scale, size."),
+                        ArrayProp("checks", "object", "Visual checks. Supported type values: pixel-grid, background-scale, size."),
                         Prop("path", "string", "Element tree path if checks is omitted."),
                         Prop("visualElementPath", "string", "Slash-separated VisualElementPath names if checks is omitted."),
                         Prop("pixelScale", "number", "Pixel grid scale. Defaults to 1."),
@@ -1762,7 +1961,7 @@ namespace UnityMCP.Editor
                         Prop("window", "string", "EditorWindow type/title. Runtime defaults to Game when capture uses it later."),
                         Prop("path", "string", "Element tree path, e.g. root/0/1."),
                         Prop("visualElementPath", "string", "Slash-separated VisualElementPath names."),
-                        Prop("visualElementNames", "array", "VisualElementPath names array."),
+                        ArrayProp("visualElementNames", "string", "VisualElementPath names array."),
                         Prop("name", "string", "VisualElement.name exact match if path is omitted."),
                         Prop("className", "string", "USS class name exact match if path is omitted."),
                         Prop("typeName", "string", "VisualElement type name contains match if path is omitted."),
@@ -1776,7 +1975,7 @@ namespace UnityMCP.Editor
                         Prop("window", "string", "EditorWindow type/title to capture. Runtime defaults to Game, editor defaults to the focused/matched window."),
                         Prop("path", "string", "Element tree path, e.g. root/0/1."),
                         Prop("visualElementPath", "string", "Slash-separated VisualElementPath names."),
-                        Prop("visualElementNames", "array", "VisualElementPath names array."),
+                        ArrayProp("visualElementNames", "string", "VisualElementPath names array."),
                         Prop("name", "string", "VisualElement.name exact match if path is omitted."),
                         Prop("className", "string", "USS class name exact match if path is omitted."),
                         Prop("typeName", "string", "VisualElement type name contains match if path is omitted."),
@@ -1814,19 +2013,19 @@ namespace UnityMCP.Editor
                         Prop("typeName", "string", "VisualElement type name contains match if path is omitted."),
                         Prop("maxDepth", "number", "Descendant depth to inspect. Defaults to 4."),
                         Prop("includeAll", "boolean", "Return all descendants, not only generated-looking children. Defaults to false."),
-                        Prop("forbiddenClassContains", "array", "Class substrings that should produce warnings when found."),
-                        Prop("forbiddenTypeContains", "array", "Type-name substrings that should produce warnings when found.")
+                        ArrayProp("forbiddenClassContains", "string", "Class substrings that should produce warnings when found."),
+                        ArrayProp("forbiddenTypeContains", "string", "Type-name substrings that should produce warnings when found.")
                     ));
                 case "uitoolkit/resource-audit":
                     return RuntimeUIDocumentSchema(Props(
                         Prop("runtime", "boolean", "Audit runtime UIDocument elements when true; otherwise audit EditorWindow UI Toolkit elements. Defaults to false."),
                         Prop("window", "string", "EditorWindow type/title for editor audits."),
-                        Prop("queries", "array", "Optional list of element queries. Each accepts path, visualElementPath, name, className, typeName, text, expectedBackgroundContains, forbiddenBackgroundContains, requireBackground."),
+                        ArrayProp("queries", "object", "Optional list of element queries. Each accepts path, visualElementPath, name, className, typeName, text, expectedBackgroundContains, forbiddenBackgroundContains, requireBackground."),
                         Prop("path", "string", "Element tree path if queries is omitted."),
                         Prop("visualElementPath", "string", "Slash-separated VisualElementPath names if queries is omitted."),
                         Prop("name", "string", "VisualElement.name exact match if queries is omitted."),
                         Prop("expectedBackgroundContains", "string", "Expected substring in resolved background asset path or name."),
-                        Prop("forbiddenBackgroundContains", "array", "Substrings that must not appear in the resolved background asset path or name."),
+                        ArrayProp("forbiddenBackgroundContains", "string", "Substrings that must not appear in the resolved background asset path or name."),
                         Prop("requireBackground", "boolean", "Warn if the target has no resolved background image."),
                         Prop("warnHighlighted", "boolean", "Warn when a target appears to use a highlighted asset. Defaults to true."),
                         Prop("maxDepth", "number", "Descendant depth to scan for background resources. Defaults to 3.")
@@ -1835,7 +2034,7 @@ namespace UnityMCP.Editor
                     return RuntimeUIDocumentSchema(Props(
                         Prop("path", "string", "Optional element tree path from runtime-tree."),
                         Prop("visualElementPath", "string", "Optional slash-separated VisualElementPath names."),
-                        Prop("visualElementNames", "array", "Optional VisualElementPath names array.")
+                        ArrayProp("visualElementNames", "string", "Optional VisualElementPath names array.")
                     ));
                 case "uitoolkit/refresh":
                     return Schema(Props(
@@ -1859,7 +2058,7 @@ namespace UnityMCP.Editor
                     ));
                 case "uitoolkit/assert-layout":
                     return RuntimeUIDocumentSchema(Props(
-                        Prop("assertions", "array", "Layout assertions. Supported types: edge-touch, same-edge, same-center, inside, size.")
+                        ArrayProp("assertions", "object", "Layout assertions. Supported types: edge-touch, same-edge, same-center, inside, size.")
                     ), "assertions");
                 case "screenshot/game":
                     return Schema(Props(
@@ -1923,7 +2122,7 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("sourcePath", "string", "Image path to annotate."),
                         Prop("outputPath", "string", "Output PNG path. Defaults next to source with _annotated suffix."),
-                        Prop("rects", "array", "Rectangles to draw. Each has x, y, width, height, optional color and thickness."),
+                        ArrayProp("rects", "object", "Rectangles to draw. Each has x, y, width, height, optional color and thickness."),
                         Prop("originTopLeft", "boolean", "Treat rect x/y as top-left image coordinates. Defaults to true."),
                         Prop("color", "string", "Default HTML color, e.g. #ff00ffff."),
                         Prop("thickness", "number", "Default border thickness in pixels. Defaults to 2.")
@@ -1945,7 +2144,7 @@ namespace UnityMCP.Editor
                 case "sprite/pixel-check":
                     return Schema(Props(
                         Prop("assetPath", "string", "Texture/Sprite asset path."),
-                        Prop("assetPaths", "array", "Texture/Sprite asset paths."),
+                        ArrayProp("assetPaths", "string", "Texture/Sprite asset paths."),
                         Prop("folderPath", "string", "Folder to scan recursively for Texture2D assets."),
                         Prop("dimensionsMultipleOf", "number", "Optional divisor required for texture width/height."),
                         Prop("expectedScale", "number", "Optional UI scale used to check source dimensions after scaling."),
@@ -1976,7 +2175,7 @@ namespace UnityMCP.Editor
                         Prop("texturePath", "string", "Sprite sheet texture asset path."),
                         Prop("bindingPath", "string", "Animation binding path to SpriteRenderer. Empty means the animated object itself."),
                         Prop("frameRate", "number", "Animation frame rate. Defaults to the clip frame rate or 12."),
-                        Prop("spriteNames", "array", "Optional exact sprite names to use."),
+                        ArrayProp("spriteNames", "string", "Optional exact sprite names to use."),
                         Prop("loopTime", "boolean", "Whether the clip loops. Defaults to the current clip setting.")
                     ), "clipPath", "texturePath");
                 case "sprite/replace-slice-update-clip":
@@ -2031,9 +2230,9 @@ namespace UnityMCP.Editor
                 case "texture/find-duplicates":
                     return Schema(Props(
                         Prop("folder", "string", "Single search folder under Assets/. Defaults to Assets."),
-                        Prop("folders", "array", "Additional search folders under Assets/. Results are de-duplicated across folders."),
+                        ArrayProp("folders", "string", "Additional search folders under Assets/. Results are de-duplicated across folders."),
                         Prop("mode", "string", "Comparison mode: decodedPixels (default) or fileBytes."),
-                        Prop("extensions", "array", "Optional file extensions such as png, jpg, or jpeg. decodedPixels supports PNG/JPEG."),
+                        ArrayProp("extensions", "string", "Optional file extensions such as png, jpg, or jpeg. decodedPixels supports PNG/JPEG."),
                         Prop("maxAssets", "number", "Maximum assets to fingerprint. Defaults to 10000; capped at 50000."),
                         Prop("maxGroups", "number", "Maximum duplicate groups returned. Defaults to 100; capped at 2000.")
                     ));
@@ -2052,7 +2251,7 @@ namespace UnityMCP.Editor
                 case "texture/check-import-settings":
                     return Schema(Props(
                         Prop("assetPath", "string", "Texture asset path to check."),
-                        Prop("assetPaths", "array", "Texture asset paths to check."),
+                        ArrayProp("assetPaths", "string", "Texture asset paths to check."),
                         Prop("folderPath", "string", "Folder to scan recursively for Texture2D assets."),
                         Prop("referencePath", "string", "Optional texture asset whose importer settings are treated as expected."),
                         Prop("preset", "string", "Optional high-level preset to check. Supported: pixel-sprite."),
@@ -2062,7 +2261,7 @@ namespace UnityMCP.Editor
                 case "texture/check-ui-import-settings":
                     return Schema(Props(
                         Prop("assetPath", "string", "Texture asset path to check."),
-                        Prop("assetPaths", "array", "Texture asset paths to check."),
+                        ArrayProp("assetPaths", "string", "Texture asset paths to check."),
                         Prop("folderPath", "string", "Folder to scan recursively for Texture2D assets."),
                         Prop("referencePath", "string", "Optional texture asset whose importer settings are treated as expected."),
                         Prop("includeMatching", "boolean", "Include passing comparisons in the returned comparisons list. Defaults to false."),
@@ -2077,7 +2276,7 @@ namespace UnityMCP.Editor
                         Prop("target", "string", "BuildTarget. Defaults to StandaloneWindows64."),
                         Prop("outputPath", "string", "Player output executable path."),
                         Prop("developmentBuild", "boolean", "Build with Development flag."),
-                        Prop("scenes", "array", "Optional scene paths. Defaults to enabled Build Settings scenes."),
+                        ArrayProp("scenes", "string", "Optional scene paths. Defaults to enabled Build Settings scenes."),
                         Prop("overwrite", "boolean", "Delete existing exe and Data folder before build. Defaults to true."),
                         Prop("run", "boolean", "Launch the built executable after a successful build. Defaults to true."),
                         Prop("runSeconds", "number", "Seconds to let the executable run before sampling/termination. Defaults to 5."),
@@ -2118,7 +2317,9 @@ namespace UnityMCP.Editor
             if (includeContinueOnError)
                 properties["continueOnError"] = Prop("continueOnError", "boolean",
                     "Continue processing later operations after one fails. Defaults to false.").Value;
-            return Schema(properties);
+            var schema = Schema(properties);
+            schema["description"] = "Optional batching, frame-budget, timeout, and failure-continuation settings for this operation.";
+            return schema;
         }
 
         private static Dictionary<string, object> ComponentSetReferenceSchema()
@@ -2244,8 +2445,8 @@ namespace UnityMCP.Editor
                 Prop("prefabFileDiffContextLines", "number", "Context lines around prefab YAML changes. Defaults to 2."),
                 Prop("prefabFileDiffMaxLines", "number", "Maximum diff lines returned. Defaults to 200."),
                 Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary."),
-                Prop("prefabFileDiffIgnoreContains", "array", "Optional substrings used to hide noisy diff lines."),
-                Prop("prefabFileDiffIgnoreYamlProperties", "array", "Optional YAML property names used to hide noisy diff lines.")
+                ArrayProp("prefabFileDiffIgnoreContains", "string", "Optional substrings used to hide noisy diff lines."),
+                ArrayProp("prefabFileDiffIgnoreYamlProperties", "string", "Optional YAML property names used to hide noisy diff lines.")
             );
             properties["execution"] = ExecutionSchema(includeContinueOnError: false);
 
@@ -2261,6 +2462,7 @@ namespace UnityMCP.Editor
                                 { "type", new Dictionary<string, object>
                                     {
                                         { "type", "string" },
+                                        { "description", "Prefab edit operation kind. The remaining fields are interpreted by the selected operation." },
                                         { "enum", new List<object>
                                             {
                                                 "addComponent", "configureComponent", "setProperty", "setReference", "addGameObject",
@@ -2445,6 +2647,30 @@ namespace UnityMCP.Editor
             {
                 { "type", type },
                 { "description", description },
+            });
+        }
+
+        private static KeyValuePair<string, object> ArrayProp(
+            string name,
+            string itemType,
+            string description)
+        {
+            return ArrayProp(name, new Dictionary<string, object>
+            {
+                { "type", itemType },
+            }, description);
+        }
+
+        private static KeyValuePair<string, object> ArrayProp(
+            string name,
+            Dictionary<string, object> itemSchema,
+            string description)
+        {
+            return new KeyValuePair<string, object>(name, new Dictionary<string, object>
+            {
+                { "type", "array" },
+                { "description", description },
+                { "items", itemSchema },
             });
         }
 

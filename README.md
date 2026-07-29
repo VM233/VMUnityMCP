@@ -153,7 +153,7 @@ public static class ProjectMcpTools
 }
 ```
 
-Project tools opt into first-class concrete exposure with `FirstClass = true`, using their declared schema:
+Project tools may opt into first-class concrete exposure from the Editor bridge with `FirstClass = true`, using a fully described schema:
 
 ```json
 {
@@ -163,7 +163,8 @@ Project tools opt into first-class concrete exposure with `FirstClass = true`, u
     "type": "object",
     "properties": {
       "id": {
-        "type": "string"
+        "type": "string",
+        "description": "Property identifier to add."
       }
     },
     "required": ["id"]
@@ -171,7 +172,7 @@ Project tools opt into first-class concrete exposure with `FirstClass = true`, u
 }
 ```
 
-Declare the behavior explicitly: use exactly one of `ReadOnly = true`, `MutatesAssets = true`, or `MutatesRuntime = true`. A first-class project tool must declare one of these operation kinds. Tools without `FirstClass = true` stay out of the default tool surface and use the same three-stage discovery contract as the rest of the project catalog.
+Declare the behavior explicitly: use exactly one of `ReadOnly = true`, `MutatesAssets = true`, or `MutatesRuntime = true`. A first-class project tool must declare one of these operation kinds, a non-empty tool description, descriptions for every input property, and `items` schemas for arrays. Incomplete metadata is demoted safely to the three-stage catalog and returned with an `exposureWarning`. Tools without `FirstClass = true` stay out of the Editor bridge's first-class surface and use the same three-stage discovery contract as the rest of the project catalog. The companion Node MCP server intentionally keeps all project-defined tools behind list/get/execute so switching between open Unity projects cannot leak one project's concrete tools into another project's session.
 
 First list compact summaries:
 
@@ -210,7 +211,7 @@ Finally execute it:
 - Configure namespaces used by every `editor/execute-code` call under **Project Settings > Unity MCP > Execute Code**. Keep one namespace per line; the `usings` request field remains available for one-off imports.
 - Successful wire responses omit the redundant inner `success=true`. Project-tool success envelopes are unwrapped, exact collection counts and completed-pagination aliases are omitted, and false truncation flags are absent. A partial page keeps only its collection, total, and `nextOffset`.
 - Wire-only Unity values use compact scalar forms such as `position: "(1,2)"`, `rect: "(1,2)-(4,5),size:(3,3)"`, `bounds: "(0,0,0)-(2,4,6),size:(2,4,6)"`, `color: "rgba(1,0.5,0,1)"`, and `margin: "LTRB(1,2,3,4)"`. Equivalent dictionary shapes, execute-code values, complete reflected `Rect` aliases, and dimension pairs inside larger results are compacted centrally; internally queued command data remains structured.
-- The repeated transport identity is `mcpInstance: "Project@port"`. Detailed paths and process metadata remain available from the instance routes; wrong-project errors keep the actual path, name, and port.
+- Normal command replies do not repeat instance identity. Use the instance routes when project/port details are needed; wrong-project errors still keep the actual path, name, and port.
 - Error payloads keep `success=false`, `error`, `errorCode`, and `retryable`; an identical `message` alias is omitted.
 - Compilation diagnostics return `isCompiling`, `counts.errors`, `counts.warnings`, `entries`, and the independently surfaced `deprecatedWarnings`. Totals appear only when an entry list was actually truncated.
 - Queue tickets keep atomic status snapshots through Unity domain reloads. Queued work and interrupted reads resume with the same ticket; transport wait timeouts never overwrite the persisted business state. `prefab-asset/add-component` also persists its pre-refresh/mutation phase and reconciles the prefab before resuming. Other interrupted mutations return `UncertainAfterReload` and require target reconciliation before a new request. Stable idempotency keys prevent retry submissions from duplicating work.

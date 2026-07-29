@@ -76,6 +76,9 @@ namespace UnityMCP.Editor
         internal const int MaxRequestsPerEditorUpdate = 1;
         internal const double PostReloadProcessingDelaySeconds = 0.5;
         private static double _requestProcessingNotBefore;
+        private static volatile bool _queueReady;
+        private static volatile string _busyReason;
+        private const int MaxRequestBodyBytes = 2 * 1024 * 1024;
 
         // ─── Manual-port restart retry (unity-mcp-server issue #10) ───
         // Right after a domain reload the configured manual port can be briefly
@@ -141,6 +144,7 @@ namespace UnityMCP.Editor
 
         private static void OnBeforeAssemblyReload()
         {
+            _queueReady = false;
             if (_isRunning)
             {
                 // Persist that we were running, so we restart after reload
@@ -159,12 +163,21 @@ namespace UnityMCP.Editor
         /// <summary>Whether the server is currently running.</summary>
         public static bool IsRunning => _isRunning;
 
+        internal static void SetBusyReason(string reason)
+        {
+            _busyReason = string.IsNullOrWhiteSpace(reason) ? null : reason;
+        }
+
         public static void Start()
         {
             if (_isRunning) return;
 
             // Batch-mode subprocesses (AssetImportWorker, etc.) must never start the server.
             if (Application.isBatchMode) return;
+
+            _queueReady = false;
+            _requestProcessingNotBefore =
+                EditorApplication.timeSinceStartup + PostReloadProcessingDelaySeconds;
 
             // Ensure console log capture is active before anything else
             MCPConsoleCommands.EnsureListening();
@@ -270,6 +283,7 @@ namespace UnityMCP.Editor
 
         public static void Stop(bool unregisterInstance = true)
         {
+            _queueReady = false;
             _isRunning = false;
 
             // Cancel any pending manual-port restart retry.
@@ -304,17 +318,22 @@ namespace UnityMCP.Editor
             }
 
             double now = EditorApplication.timeSinceStartup;
-            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+            if (!_isRunning || EditorApplication.isCompiling || EditorApplication.isUpdating)
             {
+                _queueReady = false;
                 _requestProcessingNotBefore = now + PostReloadProcessingDelaySeconds;
                 return;
             }
 
             if (now < _requestProcessingNotBefore)
+            {
+                _queueReady = false;
                 return;
+            }
 
             // Limit main-thread MCP work to one request per Editor update. Backlogged
             // clients are still served fairly by MCPRequestQueue across later frames.
+            _queueReady = true;
             MCPRequestQueue.ProcessNextRequests(MaxRequestsPerEditorUpdate);
         }
 
@@ -352,16 +371,54 @@ namespace UnityMCP.Editor
                 string path = request.Url.AbsolutePath.TrimStart('/');
                 if (!path.StartsWith("api/"))
                 {
-                    SendJson(response, 404, new { error = "Not found" });
+                    SendJson(response, 404, MCPResponse.Error("Not found.", "not_found"));
                     return;
                 }
 
                 string apiPath = path.Substring(4); // Remove "api/"
+                string origin = request.Headers["Origin"];
+                if (!string.IsNullOrEmpty(origin))
+                {
+                    SendJson(response, 403, MCPResponse.Error(
+                        "Browser-originated requests are not accepted by the Unity MCP bridge.",
+                        "forbidden_origin"));
+                    return;
+                }
+
+                if (!IsHttpMethodAllowed(apiPath, request.HttpMethod))
+                {
+                    SendJson(response, 405, MCPResponse.Error(
+                        $"HTTP {request.HttpMethod} is not allowed for '{apiPath}'.",
+                        "method_not_allowed"));
+                    return;
+                }
+
+                if (request.ContentLength64 > MaxRequestBodyBytes)
+                {
+                    SendJson(response, 413, MCPResponse.Error(
+                        "Request body exceeded the Unity MCP bridge limit.",
+                        "request_too_large", false, new Dictionary<string, object>
+                        {
+                            { "actualBytes", request.ContentLength64 },
+                            { "limitBytes", MaxRequestBodyBytes },
+                        }));
+                    return;
+                }
+
                 string body = "";
                 if (request.HasEntityBody)
                 {
-                    using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
-                        body = reader.ReadToEnd();
+                    if (!TryReadRequestBody(request, out body, out int bodyBytes))
+                    {
+                        SendJson(response, 413, MCPResponse.Error(
+                            "Request body exceeded the Unity MCP bridge limit.",
+                            "request_too_large", false, new Dictionary<string, object>
+                            {
+                                { "actualBytes", bodyBytes },
+                                { "limitBytes", MaxRequestBodyBytes },
+                            }));
+                        return;
+                    }
                 }
 
                 string agentId = request.Headers["X-Agent-Id"] ?? "anonymous";
@@ -391,6 +448,18 @@ namespace UnityMCP.Editor
                 // ═══ Queue endpoints (async, non-blocking) ═══
                 if (apiPath == "queue/submit")
                 {
+                    if (!_queueReady)
+                    {
+                        SendJson(response, 503, MCPResponse.Error(
+                            "Unity Editor is still compiling, importing, or warming up its main-thread queue. Retry this submission.",
+                            "editor_warming_up",
+                            true,
+                            new Dictionary<string, object>
+                            {
+                                { "queueReady", false },
+                            }));
+                        return;
+                    }
                     HandleQueueSubmit(response, agentId, body);
                     return;
                 }
@@ -406,7 +475,7 @@ namespace UnityMCP.Editor
                 }
                 if (apiPath == "queue/info")
                 {
-                    SendJson(response, 200, MCPRequestQueue.GetQueueInfo());
+                    SendJson(response, 200, BuildQueueInfoResponse());
                     return;
                 }
 
@@ -414,9 +483,68 @@ namespace UnityMCP.Editor
                     "Direct command endpoints are not supported. Submit commands through queue/submit.",
                     "queue_submit_required"));
             }
+            catch (FormatException ex)
+            {
+                SendJson(response, 400, MCPResponse.Error(ex.Message, "invalid_json"));
+            }
             catch (Exception ex)
             {
-                SendJson(response, 500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                Debug.LogException(ex);
+                SendJson(response, 500, MCPResponse.Error(ex.Message, "bridge_internal_error"));
+            }
+        }
+
+        private static bool TryReadRequestBody(
+            HttpListenerRequest request,
+            out string body,
+            out int bodyBytes)
+        {
+            body = "";
+            bodyBytes = 0;
+            var builder = new StringBuilder();
+            var buffer = new char[8192];
+            using (var reader = new StreamReader(
+                       request.InputStream,
+                       request.ContentEncoding,
+                       true,
+                       buffer.Length,
+                       leaveOpen: true))
+            {
+                int charactersRead;
+                while ((charactersRead = reader.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    bodyBytes += Encoding.UTF8.GetByteCount(buffer, 0, charactersRead);
+                    if (bodyBytes > MaxRequestBodyBytes ||
+                        builder.Length + charactersRead > MaxRequestBodyBytes)
+                    {
+                        return false;
+                    }
+                    builder.Append(buffer, 0, charactersRead);
+                }
+            }
+
+            body = builder.ToString();
+            return true;
+        }
+
+        private static bool IsHttpMethodAllowed(string apiPath, string method)
+        {
+            if (string.IsNullOrEmpty(apiPath) || string.IsNullOrEmpty(method))
+                return false;
+
+            switch (apiPath)
+            {
+                case "ping":
+                case "queue/status":
+                case "queue/info":
+                    return string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase);
+                case "queue/submit":
+                case "queue/cancel":
+                    return string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase);
+                default:
+                    // Unknown/direct command paths still reach the normal structured
+                    // queue_submit_required response instead of being mislabeled as 405.
+                    return true;
             }
         }
 
@@ -432,7 +560,9 @@ namespace UnityMCP.Editor
 
                 if (string.IsNullOrEmpty(apiPath))
                 {
-                    SendJson(response, 400, new { error = "Missing 'apiPath' in request body" });
+                    SendJson(response, 400, MCPResponse.Error(
+                        "apiPath is required in the request body.",
+                        "invalid_arguments"));
                     return;
                 }
 
@@ -447,12 +577,11 @@ namespace UnityMCP.Editor
                     return;
                 }
 
-                // Override agentId if provided in the body
-                if (args.ContainsKey("agentId") && !string.IsNullOrEmpty(args["agentId"]?.ToString()))
-                    agentId = args["agentId"].ToString();
                 innerArgs["_agentId"] = agentId;
                 innerBody = MiniJson.Serialize(innerArgs);
-                string requestId = GetArgumentString(args, "requestId");
+                string requestId = GetArgumentString(args, "_requestId");
+                if (string.IsNullOrEmpty(requestId))
+                    requestId = GetArgumentString(args, "requestId");
                 if (string.IsNullOrEmpty(requestId))
                     requestId = GetArgumentString(innerArgs, "requestId");
                 if (!string.IsNullOrEmpty(requestId))
@@ -492,9 +621,15 @@ namespace UnityMCP.Editor
                     { "reused",        reused },
                 });
             }
+            catch (FormatException ex)
+            {
+                SendJson(response, 400, MCPResponse.Error(ex.Message, "invalid_json"));
+            }
             catch (Exception ex)
             {
-                SendJson(response, 500, new { error = $"Queue submit failed: {ex.Message}" });
+                Debug.LogException(ex);
+                SendJson(response, 500, MCPResponse.Error(
+                    $"Queue submit failed: {ex.Message}", "queue_submit_failed"));
             }
         }
 
@@ -508,14 +643,18 @@ namespace UnityMCP.Editor
                 ticketIdStr = GetArgumentString(args, "ticketId");
             if (string.IsNullOrEmpty(ticketIdStr) || !long.TryParse(ticketIdStr, out long ticketId))
             {
-                SendJson(response, 400, new { error = "Missing or invalid 'ticketId' query parameter" });
+                SendJson(response, 400, MCPResponse.Error(
+                    "ticketId must be supplied as a valid integer query parameter.",
+                    "invalid_arguments"));
                 return;
             }
 
             var status = MCPRequestQueue.GetTicketStatus(ticketId, agentId, true);
             if (status == null)
             {
-                SendJson(response, 404, new { error = $"Ticket {ticketId} not found or expired" });
+                SendJson(response, 404, MCPResponse.Error(
+                    $"Ticket {ticketId} was not found or has expired.",
+                    "ticket_not_found"));
                 return;
             }
 
@@ -547,11 +686,13 @@ namespace UnityMCP.Editor
         {
             string route = GetArgumentString(args, "route");
             if (string.IsNullOrEmpty(route))
-                return new { error = "route is required" };
+                return MCPResponse.Error("route is required.", "invalid_arguments");
 
             route = route.Trim('/');
             if (route == "advanced/execute")
-                return new { error = "advanced/execute cannot call itself" };
+                return MCPResponse.Error(
+                    "advanced/execute cannot call itself.",
+                    "recursive_advanced_route");
 
             string nestedMethod = GetArgumentString(args, "method");
             if (string.IsNullOrEmpty(nestedMethod))
@@ -573,14 +714,16 @@ namespace UnityMCP.Editor
             string route = GetArgumentString(args, "route");
             if (string.IsNullOrEmpty(route))
             {
-                resolve(new { error = "route is required" });
+                resolve(MCPResponse.Error("route is required.", "invalid_arguments"));
                 return;
             }
 
             route = route.Trim('/');
             if (route == "advanced/execute")
             {
-                resolve(new { error = "advanced/execute cannot call itself" });
+                resolve(MCPResponse.Error(
+                    "advanced/execute cannot call itself.",
+                    "recursive_advanced_route"));
                 return;
             }
 
@@ -1244,6 +1387,8 @@ namespace UnityMCP.Editor
                 }
 
                 // ─── Search ───
+                case "search/scene":
+                    return MCPSearchCommands.SearchScene(ParseJson(body));
                 case "search/by-component":
                     return MCPSearchCommands.FindByComponent(ParseJson(body));
                 case "search/by-tag":
@@ -1650,7 +1795,23 @@ namespace UnityMCP.Editor
         {
             var response = MCPInstanceRegistry.GetCurrentInstanceInfo();
             response["status"] = "ok";
+            AddQueueAvailability(response);
             return response;
+        }
+
+        private static Dictionary<string, object> BuildQueueInfoResponse()
+        {
+            var response = MCPRequestQueue.GetQueueInfo();
+            AddQueueAvailability(response);
+            return response;
+        }
+
+        private static void AddQueueAvailability(Dictionary<string, object> response)
+        {
+            response["queueReady"] = _queueReady;
+            string busyReason = _busyReason;
+            if (!string.IsNullOrEmpty(busyReason))
+                response["busyReason"] = busyReason;
         }
 
         private static Dictionary<string, object> ParseJson(string json)
@@ -1658,8 +1819,10 @@ namespace UnityMCP.Editor
             if (string.IsNullOrEmpty(json))
                 return new Dictionary<string, object>();
 
-            return MiniJson.Deserialize(json) as Dictionary<string, object>
-                ?? new Dictionary<string, object>();
+            var parsed = MiniJson.Deserialize(json) as Dictionary<string, object>;
+            if (parsed == null)
+                throw new FormatException("Request body must be a JSON object.");
+            return parsed;
         }
 
         // Response size limits (bytes) — prevents oversized payloads from crashing the MCP stdio pipe
@@ -1674,7 +1837,6 @@ namespace UnityMCP.Editor
             if (statusCode >= 400 || MCPResponse.TryGetError(data, out _, out _, out _))
                 data = MCPResponse.NormalizeError(data, statusCode == 408 ? "timeout" : "error", statusCode == 408);
             data = MCPResponse.CompactForTransport(data);
-            data = AttachInstanceContext(data);
             string json = MiniJson.Serialize(data);
             byte[] buffer = Encoding.UTF8.GetBytes(json);
 
@@ -1684,12 +1846,12 @@ namespace UnityMCP.Editor
                 Debug.LogWarning($"[AB-UMCP] Response too large ({buffer.Length / (1024 * 1024)}MB), replacing with error. Use pagination parameters.");
                 var errorData = MCPResponse.Error(
                     "Response exceeded size limit. Use pagination parameters (maxNodes, limit, maxResults) to request smaller chunks.",
-                    "response_too_large", true, new Dictionary<string, object>
+                    "response_too_large", false, new Dictionary<string, object>
                     {
-                        { "size", buffer.Length },
-                        { "limit", ResponseHardLimitBytes },
+                        { "actualBytes", buffer.Length },
+                        { "limitBytes", ResponseHardLimitBytes },
                     });
-                data = AttachInstanceContext(MCPResponse.CompactForTransport(errorData));
+                data = MCPResponse.CompactForTransport(errorData);
                 json = MiniJson.Serialize(data);
                 buffer = Encoding.UTF8.GetBytes(json);
                 response.StatusCode = 413; // Payload Too Large
@@ -1723,19 +1885,6 @@ namespace UnityMCP.Editor
                 return;
             }
             handler(ParseJson(body), resolve, progress);
-        }
-
-        private static object AttachInstanceContext(object data)
-        {
-            var dictionary = data as Dictionary<string, object>;
-            if (dictionary == null)
-                return data;
-
-            if (dictionary.ContainsKey("mcpInstance") == false)
-                dictionary["mcpInstance"] = MCPCompactValueFormatter.FormatInstance(
-                    MCPInstanceRegistry.CurrentProjectName, ActivePort);
-
-            return dictionary;
         }
 
         private static string GetProjectPath()

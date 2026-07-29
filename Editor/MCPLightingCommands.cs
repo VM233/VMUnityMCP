@@ -13,7 +13,7 @@ namespace UnityMCP.Editor
     {
         public static object GetLightingInfo(Dictionary<string, object> args)
         {
-            var lights = UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None);
+            var lights = MCPObjectSearch.Find<Light>();
             var lightList = new List<Dictionary<string, object>>();
             foreach (var light in lights)
             {

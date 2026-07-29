@@ -2,6 +2,17 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.1.0] - 2026-07-30
+
+- Bound the default first-class catalog to a release-managed set of common routes; keep specialized and compatibility routes available through lazy discovery.
+- Add one paginated `search/scene` route that combines name, component, tag, layer, and shader filters while retaining legacy search routes lazily.
+- Add recursive project-tool argument validation and demote incomplete first-class project metadata to the three-stage catalog instead of publishing ambiguous schemas.
+- Harden the local HTTP bridge with method/origin checks, bounded request bodies, concise structured errors, atomic queue admission, execution-aware timeouts, and late-callback rejection.
+- Distinguish listener liveness from main-thread queue readiness, reject warm-up submissions with a retryable structured response, and report active test-run contention without invoking Unity APIs from listener threads.
+- Remove repeated instance metadata and unsolicited stack traces from normal replies, and improve schema descriptions and array item contracts.
+- Keep package-test status compact by default while preserving opt-in detailed test results through the dedicated test job query.
+- Preserve the declared Unity 2021.3.18 minimum by avoiding later-only object lookup helpers.
+
 ## [5.0.0] - 2026-07-30
 
 - Remove the complete UMA integration, including command handlers, routes, optional capability detection, category settings, self-tests, assembly references, and Unity assets.

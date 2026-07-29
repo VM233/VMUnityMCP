@@ -715,7 +715,7 @@ namespace UnityMCP.Editor
             }
             else
             {
-                allLights = UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None);
+                allLights = MCPObjectSearch.Find<Light>();
             }
 
             var lights = new List<Dictionary<string, object>>();

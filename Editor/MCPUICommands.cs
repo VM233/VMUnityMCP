@@ -39,7 +39,7 @@ namespace UnityMCP.Editor
             canvasGo.AddComponent<GraphicRaycaster>();
 
             // Ensure EventSystem exists
-            if (UnityEngine.Object.FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
+            if (MCPObjectSearch.Find<UnityEngine.EventSystems.EventSystem>().Length == 0)
             {
                 var esGo = new GameObject("EventSystem");
                 esGo.AddComponent<UnityEngine.EventSystems.EventSystem>();
@@ -77,7 +77,7 @@ namespace UnityMCP.Editor
             }
             if (parentTransform == null)
             {
-                var canvas = UnityEngine.Object.FindFirstObjectByType<Canvas>();
+                var canvas = MCPObjectSearch.Find<Canvas>().FirstOrDefault();
                 if (canvas == null)
                     return new { error = "No Canvas found. Create a canvas first." };
                 parentTransform = canvas.transform;
@@ -150,7 +150,7 @@ namespace UnityMCP.Editor
 
         public static object GetUIInfo(Dictionary<string, object> args)
         {
-            var canvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var canvases = MCPObjectSearch.Find<Canvas>(includeInactive: true);
             var canvasInfos = new List<Dictionary<string, object>>();
 
             foreach (var canvas in canvases)
@@ -166,9 +166,9 @@ namespace UnityMCP.Editor
                 });
             }
 
-            int totalTexts = UnityEngine.Object.FindObjectsByType<Text>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
-            int totalImages = UnityEngine.Object.FindObjectsByType<Image>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
-            int totalButtons = UnityEngine.Object.FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+            int totalTexts = MCPObjectSearch.Find<Text>(includeInactive: true).Length;
+            int totalImages = MCPObjectSearch.Find<Image>(includeInactive: true).Length;
+            int totalButtons = MCPObjectSearch.Find<Button>(includeInactive: true).Length;
 
             return new Dictionary<string, object>
             {

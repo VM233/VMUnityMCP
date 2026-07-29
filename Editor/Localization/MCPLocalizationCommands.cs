@@ -58,11 +58,13 @@ namespace UnityMCP.Editor.Localization
             }
             catch (Exception exception)
             {
+                Debug.LogException(exception);
                 return new Dictionary<string, object>
                 {
                     { "success", false },
                     { "error", exception.Message },
-                    { "stackTrace", exception.StackTrace },
+                    { "errorCode", "localization_command_failed" },
+                    { "retryable", false },
                 };
             }
         }

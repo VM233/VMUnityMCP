@@ -260,6 +260,7 @@ namespace UnityMCP.Editor
             "search/by-shader",
             "search/by-tag",
             "search/missing-references",
+            "search/scene",
             "search/scene-stats",
             "selection/focus-scene-view",
             "selection/get",
