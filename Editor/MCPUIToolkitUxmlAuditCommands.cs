@@ -98,6 +98,10 @@ namespace UnityMCP.Editor
             "uxml-layout-audit: allow-inert-text-grow";
         internal const string SINGLE_CHILD_CENTERING_WRAPPER_SUPPRESSION_MARKER =
             "uxml-layout-audit: allow-single-child-centering-wrapper";
+        internal const string UNCONSUMED_ELEMENT_NAME_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-unconsumed-element-name";
+        internal const string FIXED_FLEX_PARTITION_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-fixed-flex-partition";
 
         private const float CENTER_EPSILON = 0.01f;
 
@@ -134,6 +138,16 @@ namespace UnityMCP.Editor
                 @"^\s*uxml-layout-audit:\s*allow-single-child-centering-wrapper\s+(?<reason>.+?)\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
+        private static readonly Regex unconsumedElementNameSuppressionRegex =
+            new Regex(
+                @"^\s*uxml-layout-audit:\s*allow-unconsumed-element-name\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex fixedFlexPartitionSuppressionRegex =
+            new Regex(
+                @"^\s*uxml-layout-audit:\s*allow-fixed-flex-partition\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
         private static readonly Regex ussCommentRegex =
             new Regex(@"/\*.*?\*/", RegexOptions.Compiled | RegexOptions.Singleline);
 
@@ -148,6 +162,18 @@ namespace UnityMCP.Editor
         private static readonly Regex idTokenRegex =
             new Regex(@"(?<![A-Za-z0-9_-])#(?<token>[A-Za-z_][A-Za-z0-9_-]*)",
                 RegexOptions.Compiled);
+
+        private static readonly Regex quotedNameReferenceRegex =
+            new Regex(@"[""'](?<token>[^""'\r\n]+)[""']",
+                RegexOptions.Compiled);
+
+        private static readonly Regex yamlListNameReferenceRegex =
+            new Regex(@"^\s*-\s*(?<token>[^#\r\n]+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.Multiline);
+
+        private static readonly Regex yamlScalarNameReferenceRegex =
+            new Regex(@"^\s*[A-Za-z_][A-Za-z0-9_]*:\s*(?<token>[^#\r\n]+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.Multiline);
 
         private static readonly Dictionary<string, IReadOnlyList<string>>
             implicitElementClassesByType =
@@ -207,6 +233,8 @@ namespace UnityMCP.Editor
                 .ToList();
             var targetPaths = requestedPathList.Count == 0 ? allUxmlPaths : requested;
             var layoutContracts = BuildLayoutContractIndex(report, options, allUxmlPaths);
+            var elementNameReferences = BuildElementNameReferenceIndex(
+                report, options, allUxmlPaths);
 
             report.ScannedUxmlCount = targetPaths.Count;
             report.IndexedUxmlCount = allUxmlPaths.Count;
@@ -217,7 +245,7 @@ namespace UnityMCP.Editor
                 {
                     AuditText(path,
                         File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(path)),
-                        layoutContracts, report,
+                        layoutContracts, elementNameReferences, report,
                         includeSuppressed);
                 }
                 catch (Exception exception)
@@ -561,6 +589,69 @@ namespace UnityMCP.Editor
                 suppressedCenteringWrapper.SuppressedCount == 1 &&
                 suppressedCenteringWrapper.Issues.Single().Suppressed);
 
+            var unconsumedNameIndex = new UxmlElementNameReferenceIndex(true);
+            const string unconsumedName =
+                "<ui:VisualElement name=\"LayoutOnlyName\"><ui:Label/></ui:VisualElement>";
+            var unconsumedElementName = AuditFixture(unconsumedName,
+                elementNameReferences: unconsumedNameIndex);
+            AddSelfTestCase(cases, "unconsumed authored element name warns",
+                unconsumedElementName.WarningCount == 1 &&
+                unconsumedElementName.Issues.Single().Kind ==
+                "unconsumed-element-name");
+
+            var consumedNameIndex = new UxmlElementNameReferenceIndex(true);
+            consumedNameIndex.AddDefinition("QueriedElement");
+            consumedNameIndex.AddReference("QueriedElement");
+            var consumedElementName = AuditFixture(
+                unconsumedName.Replace("LayoutOnlyName", "QueriedElement"),
+                elementNameReferences: consumedNameIndex);
+            AddSelfTestCase(cases, "referenced authored element name passes",
+                consumedElementName.WarningCount == 0);
+
+            var suppressedElementName = AuditFixture(
+                $"<!-- {UNCONSUMED_ELEMENT_NAME_SUPPRESSION_MARKER} " +
+                "external native integration looks up this element -->" +
+                unconsumedName, includeSuppressed: true,
+                elementNameReferences: unconsumedNameIndex);
+            AddSelfTestCase(cases, "reasoned element-name suppression is retained",
+                suppressedElementName.WarningCount == 0 &&
+                suppressedElementName.SuppressedCount == 1 &&
+                suppressedElementName.Issues.Single().Suppressed);
+
+            const string fixedFlexPartition =
+                "<ui:VisualElement name=\"Panel\" style=\"height: 489px;\">" +
+                "<ui:VisualElement name=\"Header\" style=\"height: 63px; flex-shrink: 0;\"/>" +
+                "<ui:VisualElement name=\"Body\" style=\"height: 426px; flex-shrink: 0;\">" +
+                "<ui:Label/></ui:VisualElement></ui:VisualElement>";
+            var fixedPartition = AuditFixture(fixedFlexPartition);
+            AddSelfTestCase(cases, "fully fixed flex partition warns",
+                fixedPartition.WarningCount == 1 &&
+                fixedPartition.Issues.Single().Kind == "fixed-flex-partition" &&
+                fixedPartition.Issues.Single().Axis == "vertical" &&
+                fixedPartition.Issues.Single().FixedProperties
+                    .SequenceEqual(new[] { "height", "flex-shrink" }));
+
+            var flexibleRemainder = AuditFixture(
+                fixedFlexPartition.Replace(
+                    "height: 426px; flex-shrink: 0;",
+                    "flex-grow: 1;"));
+            AddSelfTestCase(cases, "fixed header with flexible remainder passes",
+                flexibleRemainder.WarningCount == 0);
+
+            var incompletePartition = AuditFixture(
+                fixedFlexPartition.Replace("height: 426px;", "height: 420px;"));
+            AddSelfTestCase(cases, "fixed children that do not partition parent pass",
+                incompletePartition.WarningCount == 0);
+
+            var suppressedFixedPartition = AuditFixture(
+                $"<!-- {FIXED_FLEX_PARTITION_SUPPRESSION_MARKER} " +
+                "external native surface requires exact child extents -->" +
+                fixedFlexPartition, includeSuppressed: true);
+            AddSelfTestCase(cases, "reasoned fixed-partition suppression is retained",
+                suppressedFixedPartition.WarningCount == 0 &&
+                suppressedFixedPartition.SuppressedCount == 1 &&
+                suppressedFixedPartition.Issues.Single().Suppressed);
+
             return new Dictionary<string, object>
             {
                 { "passed", cases.All(testCase => (bool)testCase["passed"]) },
@@ -571,7 +662,8 @@ namespace UnityMCP.Editor
         private static MCPUxmlLayoutAuditReport AuditFixture(string element,
             string parentStyle = "width: 807px; height: 492px;", bool includeSuppressed = false,
             UxmlLayoutContractIndex layoutContracts = null,
-            UxmlInlineStyleContractIndex inlineStyleContracts = null)
+            UxmlInlineStyleContractIndex inlineStyleContracts = null,
+            UxmlElementNameReferenceIndex elementNameReferences = null)
         {
             var text =
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
@@ -583,7 +675,9 @@ namespace UnityMCP.Editor
                 IndexedUxmlCount = 1
             };
             AuditText("Assets/__UxmlLayoutAuditSelfTest.uxml", text,
-                layoutContracts ?? new UxmlLayoutContractIndex(), report, includeSuppressed,
+                layoutContracts ?? new UxmlLayoutContractIndex(),
+                elementNameReferences ?? UxmlElementNameReferenceIndex.Disabled,
+                report, includeSuppressed,
                 inlineStyleContracts);
             report.SortIssues();
             return report;
@@ -591,6 +685,7 @@ namespace UnityMCP.Editor
 
         private static void AuditText(string assetPath, string text,
             UxmlLayoutContractIndex layoutContracts,
+            UxmlElementNameReferenceIndex elementNameReferences,
             MCPUxmlLayoutAuditReport report, bool includeSuppressed,
             UxmlInlineStyleContractIndex inlineStyleContracts = null)
         {
@@ -611,6 +706,10 @@ namespace UnityMCP.Editor
                 layoutContracts, report, includeSuppressed);
             AuditSingleChildCenteringWrapper(assetPath, document, inlineStyleContracts,
                 layoutContracts, report, includeSuppressed);
+            AuditUnconsumedElementNames(assetPath, document, elementNameReferences,
+                report, includeSuppressed);
+            AuditFixedFlexPartitions(assetPath, document, inlineStyleContracts,
+                report, includeSuppressed);
             AuditRepeatedInlineLayoutVariants(assetPath, document, layoutContracts, report,
                 includeSuppressed);
         }
@@ -730,6 +829,179 @@ namespace UnityMCP.Editor
             }
 
             return false;
+        }
+
+        private static UxmlElementNameReferenceIndex BuildElementNameReferenceIndex(
+            MCPUxmlLayoutAuditReport report, MCPUIToolkitAuditOptions options,
+            IEnumerable<string> uxmlPaths)
+        {
+            var index = new UxmlElementNameReferenceIndex(true);
+            var paths = (uxmlPaths ?? Enumerable.Empty<string>()).ToList();
+
+            foreach (var path in paths)
+            {
+                try
+                {
+                    var document = XDocument.Parse(
+                        File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(path)),
+                        LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
+                    foreach (var element in document.Descendants()
+                                 .Where(IsAuditableNamedElement))
+                    {
+                        index.AddDefinition(AttributeValue(element, "name"));
+                    }
+                }
+                catch (Exception exception)
+                {
+                    report.Errors.Add(
+                        $"Failed to index UXML element-name definitions in '{path}': " +
+                        exception.Message);
+                }
+            }
+
+            if (index.DefinitionCount == 0)
+            {
+                return index;
+            }
+
+            foreach (var path in MCPUIToolkitAuditUtility.FindAssetFiles(".uss", options))
+            {
+                try
+                {
+                    IndexStylesheetNameReferences(
+                        File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(path)), index);
+                }
+                catch (Exception exception)
+                {
+                    report.Errors.Add(
+                        $"Failed to index USS element-name references in '{path}': " +
+                        exception.Message);
+                }
+            }
+
+            foreach (var path in paths)
+            {
+                try
+                {
+                    var document = XDocument.Parse(
+                        File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(path)),
+                        LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
+                    IndexUxmlNameReferences(document, index);
+                }
+                catch (Exception exception)
+                {
+                    report.Errors.Add(
+                        $"Failed to index UXML element-name references in '{path}': " +
+                        exception.Message);
+                }
+            }
+
+            foreach (var path in MCPUIToolkitAuditUtility.FindRuntimeSourceFiles(options))
+            {
+                try
+                {
+                    IndexTextNameReferences(
+                        File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(path)),
+                        index, includeYamlScalars: false);
+                    report.IndexedRuntimeSourceCount++;
+                }
+                catch (Exception exception)
+                {
+                    report.Errors.Add(
+                        $"Failed to index runtime element-name references in '{path}': " +
+                        exception.Message);
+                }
+            }
+
+            foreach (var extension in new[] { ".prefab", ".asset", ".unity" })
+            {
+                foreach (var path in MCPUIToolkitAuditUtility.FindAssetFiles(extension, options))
+                {
+                    try
+                    {
+                        IndexTextNameReferences(
+                            File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(path)),
+                            index, includeYamlScalars: true);
+                        report.IndexedSerializedAssetCount++;
+                    }
+                    catch (Exception exception)
+                    {
+                        report.Errors.Add(
+                            $"Failed to index serialized element-name references in '{path}': " +
+                            exception.Message);
+                    }
+                }
+            }
+
+            return index;
+        }
+
+        private static void IndexStylesheetNameReferences(string text,
+            UxmlElementNameReferenceIndex index)
+        {
+            var sanitized = ussCommentRegex.Replace(text ?? "", "");
+            foreach (Match rule in ussRuleRegex.Matches(sanitized))
+            {
+                foreach (Match match in idTokenRegex.Matches(
+                             rule.Groups["selector"].Value))
+                {
+                    index.AddReference(match.Groups["token"].Value);
+                }
+            }
+        }
+
+        private static void IndexUxmlNameReferences(XDocument document,
+            UxmlElementNameReferenceIndex index)
+        {
+            foreach (var element in document.Descendants())
+            {
+                foreach (var attribute in element.Attributes())
+                {
+                    if (string.Equals(attribute.Name.LocalName, "name",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    index.AddReference(attribute.Value);
+                }
+            }
+        }
+
+        private static void IndexTextNameReferences(string text,
+            UxmlElementNameReferenceIndex index, bool includeYamlScalars)
+        {
+            foreach (Match match in quotedNameReferenceRegex.Matches(text ?? ""))
+            {
+                index.AddReference(match.Groups["token"].Value);
+            }
+
+            if (includeYamlScalars == false)
+            {
+                return;
+            }
+
+            foreach (Match match in yamlListNameReferenceRegex.Matches(text ?? "")
+                         .Cast<Match>()
+                         .Concat(yamlScalarNameReferenceRegex.Matches(text ?? "")
+                             .Cast<Match>()))
+            {
+                index.AddReference(
+                    match.Groups["token"].Value.Trim().Trim('"', '\''));
+            }
+        }
+
+        private static bool IsAuditableNamedElement(XElement element)
+        {
+            if (element == null ||
+                string.Equals(element.Name.LocalName, "UXML",
+                    StringComparison.OrdinalIgnoreCase) ||
+                element.AncestorsAndSelf().Any(IsUxmlMetadataElement))
+            {
+                return false;
+            }
+
+            return string.IsNullOrWhiteSpace(AttributeValue(element, "name")) == false;
         }
 
         private static UxmlLayoutContractIndex BuildLayoutContractIndex(
@@ -1412,6 +1684,229 @@ namespace UnityMCP.Editor
                 };
                 report.Record(issue, includeSuppressed);
             }
+        }
+
+        private static void AuditUnconsumedElementNames(string assetPath,
+            XDocument document, UxmlElementNameReferenceIndex elementNameReferences,
+            MCPUxmlLayoutAuditReport report, bool includeSuppressed)
+        {
+            if (elementNameReferences == null || elementNameReferences.Enabled == false)
+            {
+                return;
+            }
+
+            foreach (var element in document.Descendants().Where(IsAuditableNamedElement))
+            {
+                var name = AttributeValue(element, "name");
+                if (elementNameReferences.IsReferenced(name))
+                {
+                    continue;
+                }
+
+                var suppressionReason = GetSuppressionReason(element,
+                    unconsumedElementNameSuppressionRegex);
+                var issue = new MCPUxmlLayoutAuditIssue
+                {
+                    AssetPath = assetPath,
+                    Line = GetLineNumber(element),
+                    Element = $"#{name}",
+                    ElementName = name,
+                    Kind = "unconsumed-element-name",
+                    FixedProperties = new List<string> { "name" },
+                    InlineDeclarations = new Dictionary<string, string>(
+                        StringComparer.OrdinalIgnoreCase)
+                    {
+                        { "name", name }
+                    },
+                    Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                    SuppressionReason = suppressionReason,
+                    Message =
+                        $"Authored element #{name} declares a name with no USS ID selector, " +
+                        "AttributeOverrides target, serialized asset reference, or runtime string " +
+                        "lookup in the configured audit scope. Remove the unconsumed name; hierarchy " +
+                        "and reusable classes should carry structure that has no lookup consumer."
+                };
+                report.Record(issue, includeSuppressed);
+            }
+        }
+
+        private static void AuditFixedFlexPartitions(string assetPath,
+            XDocument document, UxmlInlineStyleContractIndex inlineStyleContracts,
+            MCPUxmlLayoutAuditReport report, bool includeSuppressed)
+        {
+            foreach (var parent in document.Descendants())
+            {
+                if (IsUxmlMetadataElement(parent))
+                {
+                    continue;
+                }
+
+                var parentStyle = ResolveAuthoredStyle(parent, inlineStyleContracts);
+                var flexDirection = StyleValue(parentStyle, "flex-direction");
+                if (string.IsNullOrWhiteSpace(flexDirection))
+                {
+                    flexDirection = "column";
+                }
+
+                var horizontal = flexDirection == "row" ||
+                                 flexDirection == "row-reverse";
+                var vertical = flexDirection == "column" ||
+                               flexDirection == "column-reverse";
+                if ((horizontal == false && vertical == false) ||
+                    HasNonZeroPartitionSpacing(parentStyle, horizontal) ||
+                    (parentStyle.TryGetValue("flex-wrap", out var flexWrap) &&
+                     string.Equals(flexWrap.Trim(), "nowrap",
+                         StringComparison.OrdinalIgnoreCase) == false) ||
+                    (parentStyle.TryGetValue("justify-content", out var justification) &&
+                     string.Equals(justification.Trim(), "flex-start",
+                         StringComparison.OrdinalIgnoreCase) == false))
+                {
+                    continue;
+                }
+
+                var mainSizeProperty = horizontal ? "width" : "height";
+                if (TryGetPixelLength(parentStyle, mainSizeProperty,
+                        out var parentSize) == false ||
+                    parentSize <= 0)
+                {
+                    continue;
+                }
+
+                var children = GetVisualContentChildren(parent);
+                if (children.Count != 2)
+                {
+                    continue;
+                }
+
+                var childStyles = new List<Dictionary<string, string>>();
+                var partitionSize = 0f;
+                var validPartition = true;
+                foreach (var child in children)
+                {
+                    var childStyle = ResolveAuthoredStyle(child, inlineStyleContracts);
+                    var position = StyleValue(childStyle, "position");
+                    if (position == "absolute" ||
+                        StyleValue(childStyle, "display") == "none" ||
+                        TryGetPixelLength(childStyle, mainSizeProperty,
+                            out var childSize) == false ||
+                        childSize < 0 ||
+                        HasPositiveFlexGrow(childStyle) ||
+                        HasExplicitZeroFlexShrink(childStyle) == false ||
+                        HasNonZeroMainAxisMargins(childStyle, horizontal))
+                    {
+                        validPartition = false;
+                        break;
+                    }
+
+                    childStyles.Add(childStyle);
+                    partitionSize += childSize;
+                }
+
+                if (validPartition == false ||
+                    Math.Abs(partitionSize - parentSize) > CENTER_EPSILON)
+                {
+                    continue;
+                }
+
+                var remainder = children[children.Count - 1];
+                var remainderStyle = childStyles[childStyles.Count - 1];
+                var remainderName = AttributeValue(remainder, "name");
+                var remainderLabel = string.IsNullOrWhiteSpace(remainderName)
+                    ? $"<{remainder.Name.LocalName}>"
+                    : $"#{remainderName}";
+                var parentName = AttributeValue(parent, "name");
+                var parentLabel = string.IsNullOrWhiteSpace(parentName)
+                    ? $"<{parent.Name.LocalName}>"
+                    : $"#{parentName}";
+                var suppressionReason = GetSuppressionReason(parent,
+                    fixedFlexPartitionSuppressionRegex);
+                if (string.IsNullOrWhiteSpace(suppressionReason))
+                {
+                    suppressionReason = GetSuppressionReason(remainder,
+                        fixedFlexPartitionSuppressionRegex);
+                }
+
+                var axis = horizontal ? "horizontal" : "vertical";
+                var issue = new MCPUxmlLayoutAuditIssue
+                {
+                    AssetPath = assetPath,
+                    Line = GetLineNumber(parent),
+                    Element = parentLabel,
+                    ElementName = parentName,
+                    Kind = "fixed-flex-partition",
+                    Axis = axis,
+                    FixedProperties = new List<string>
+                    {
+                        mainSizeProperty,
+                        "flex-shrink"
+                    },
+                    InlineDeclarations = new Dictionary<string, string>(
+                        StringComparer.OrdinalIgnoreCase)
+                    {
+                        { mainSizeProperty, remainderStyle[mainSizeProperty] },
+                        { "flex-shrink", remainderStyle["flex-shrink"] }
+                    },
+                    Size = parentSize,
+                    Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                    SuppressionReason = suppressionReason,
+                    Message =
+                        $"Fixed {FormatPixels(parentSize)} {parentLabel} is fully partitioned " +
+                        $"along its {axis} flex axis by {children.Count} in-flow children whose " +
+                        $"{mainSizeProperty} values sum to the parent size, while every child " +
+                        "also repeats flex-shrink: 0. Keep the fixed chrome size, remove " +
+                        $"{mainSizeProperty} and flex-shrink from one remainder region such as " +
+                        $"{remainderLabel}, set that region to flex-grow: 1, and let the parent " +
+                        "own the total size."
+                };
+                report.Record(issue, includeSuppressed);
+            }
+        }
+
+        private static bool HasExplicitZeroFlexShrink(
+            IReadOnlyDictionary<string, string> style)
+        {
+            return style.TryGetValue("flex-shrink", out var value) &&
+                   float.TryParse(value, NumberStyles.Float,
+                       CultureInfo.InvariantCulture, out var shrink) &&
+                   float.IsNaN(shrink) == false &&
+                   float.IsInfinity(shrink) == false &&
+                   Math.Abs(shrink) <= CENTER_EPSILON;
+        }
+
+        private static bool HasNonZeroPartitionSpacing(
+            IReadOnlyDictionary<string, string> style, bool horizontal)
+        {
+            var properties = horizontal
+                ? new[]
+                {
+                    "padding-left", "padding-right", "border-left-width",
+                    "border-right-width", "column-gap"
+                }
+                : new[]
+                {
+                    "padding-top", "padding-bottom", "border-top-width",
+                    "border-bottom-width", "row-gap"
+                };
+            return properties.Any(property =>
+                       style.TryGetValue(property, out var value) &&
+                       IsZeroBoxValue(value) == false) ||
+                   style.TryGetValue("padding", out var padding) &&
+                   IsZeroBoxValue(padding) == false ||
+                   style.TryGetValue("gap", out var gap) &&
+                   IsZeroBoxValue(gap) == false;
+        }
+
+        private static bool HasNonZeroMainAxisMargins(
+            IReadOnlyDictionary<string, string> style, bool horizontal)
+        {
+            var properties = horizontal
+                ? new[] { "margin-left", "margin-right" }
+                : new[] { "margin-top", "margin-bottom" };
+            return properties.Any(property =>
+                       style.TryGetValue(property, out var value) &&
+                       IsZeroBoxValue(value) == false) ||
+                   style.TryGetValue("margin", out var margin) &&
+                   IsZeroBoxValue(margin) == false;
         }
 
         private static bool HasUnexpectedCenteringWrapperStyle(
@@ -2204,6 +2699,55 @@ namespace UnityMCP.Editor
             }
         }
 
+        private sealed class UxmlElementNameReferenceIndex
+        {
+            public static readonly UxmlElementNameReferenceIndex Disabled =
+                new UxmlElementNameReferenceIndex(false);
+
+            private readonly HashSet<string> definitions =
+                new HashSet<string>(StringComparer.Ordinal);
+            private readonly HashSet<string> references =
+                new HashSet<string>(StringComparer.Ordinal);
+
+            public readonly bool Enabled;
+
+            public int DefinitionCount => definitions.Count;
+
+            public UxmlElementNameReferenceIndex(bool enabled)
+            {
+                Enabled = enabled;
+            }
+
+            public void AddDefinition(string name)
+            {
+                if (Enabled && string.IsNullOrWhiteSpace(name) == false)
+                {
+                    definitions.Add(name.Trim());
+                }
+            }
+
+            public void AddReference(string name)
+            {
+                if (Enabled == false || string.IsNullOrWhiteSpace(name))
+                {
+                    return;
+                }
+
+                var normalized = name.Trim();
+                if (definitions.Contains(normalized))
+                {
+                    references.Add(normalized);
+                }
+            }
+
+            public bool IsReferenced(string name)
+            {
+                return Enabled &&
+                       string.IsNullOrWhiteSpace(name) == false &&
+                       references.Contains(name.Trim());
+            }
+        }
+
         private sealed class UxmlLayoutContractIndex
         {
             public readonly HashSet<string> BoxClasses =
@@ -2277,6 +2821,8 @@ namespace UnityMCP.Editor
         public int ScannedUxmlCount;
         public int IndexedUxmlCount;
         public int IndexedStyleSheetCount;
+        public int IndexedRuntimeSourceCount;
+        public int IndexedSerializedAssetCount;
 
         public MCPUxmlLayoutAuditReport(int maxIssues)
         {
@@ -2336,6 +2882,8 @@ namespace UnityMCP.Editor
                 { "scannedUxmlFiles", ScannedUxmlCount },
                 { "indexedUxmlFiles", IndexedUxmlCount },
                 { "indexedStyleSheets", IndexedStyleSheetCount },
+                { "indexedRuntimeSourceFiles", IndexedRuntimeSourceCount },
+                { "indexedSerializedAssetFiles", IndexedSerializedAssetCount },
                 { "warningCount", WarningCount },
                 { "suppressedCount", SuppressedCount },
                 { "truncated", truncated },
@@ -2350,7 +2898,9 @@ namespace UnityMCP.Editor
                         $"<!-- {MCPUxmlLayoutAuditor.REDUNDANT_INLINE_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_STRETCH_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_GROW_SUPPRESSION_MARKER} <reason> -->",
-                        $"<!-- {MCPUxmlLayoutAuditor.SINGLE_CHILD_CENTERING_WRAPPER_SUPPRESSION_MARKER} <reason> -->"
+                        $"<!-- {MCPUxmlLayoutAuditor.SINGLE_CHILD_CENTERING_WRAPPER_SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.UNCONSUMED_ELEMENT_NAME_SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.FIXED_FLEX_PARTITION_SUPPRESSION_MARKER} <reason> -->"
                     }
                 }
             };
@@ -2428,11 +2978,20 @@ namespace UnityMCP.Editor
                      string.Equals(Kind, "visually-inert-text-grow",
                          StringComparison.Ordinal) ||
                      string.Equals(Kind, "single-child-centering-wrapper",
+                         StringComparison.Ordinal) ||
+                     string.Equals(Kind, "unconsumed-element-name",
+                         StringComparison.Ordinal) ||
+                     string.Equals(Kind, "fixed-flex-partition",
                          StringComparison.Ordinal))
             {
                 result["inlineDeclarations"] =
                     new Dictionary<string, string>(InlineDeclarations,
                         StringComparer.OrdinalIgnoreCase);
+                if (string.Equals(Kind, "fixed-flex-partition",
+                        StringComparison.Ordinal))
+                {
+                    result["size"] = Size;
+                }
             }
 
             return result;

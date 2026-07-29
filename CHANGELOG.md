@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.45] - 2026-07-29
+
+- Extend the UXML layout audit to report authored element names with no indexed lookup consumer.
+- Report fixed-size flex parents whose fixed, non-shrinking children exactly partition the same axis instead of leaving one flexible remainder region.
+
 ## [3.3.44] - 2026-07-29
 
 - Pause resumable editor-idle timeout budgets across planned Unity domain reloads and recover legacy expired snapshots with a fresh active-time budget.

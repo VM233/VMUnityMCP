@@ -2089,6 +2089,7 @@ namespace UnityMCP.Editor.Tests
             File.WriteAllText(GetAbsolutePath(uxmlPath),
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
                 "<ui:VisualElement style=\"width: 200px; height: 100px;\">" +
+                "<!-- uxml-layout-audit: allow-unconsumed-element-name assertion anchor -->" +
                 "<ui:VisualElement name=\"ManualCenter\" class=\"single\" " +
                 "style=\"position: absolute; left: 50px; width: 100px; height: 20px; " +
                 "flex-direction: row; justify-content: center;\"><ui:Label/></ui:VisualElement>" +
@@ -2138,9 +2139,9 @@ namespace UnityMCP.Editor.Tests
             File.WriteAllText(GetAbsolutePath(uxmlPath),
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
                 "<ui:VisualElement class=\"stage-label stage-label-above\"/>" +
-                "<ui:VisualElement name=\"Stage2Label\" class=\"stage-label\" " +
+                "<ui:VisualElement class=\"stage-label\" " +
                 "style=\"top: 57px; background-image: url(&quot;Stage2.png&quot;);\"/>" +
-                "<ui:VisualElement name=\"Stage3Label\" class=\"stage-label\" " +
+                "<ui:VisualElement class=\"stage-label\" " +
                 "style=\"background-image: url(&quot;Stage3.png&quot;); top: 57px;\"/>" +
                 "</ui:UXML>");
             File.WriteAllText(GetAbsolutePath(ussPath),
@@ -2182,8 +2183,9 @@ namespace UnityMCP.Editor.Tests
             File.WriteAllText(GetAbsolutePath(uxmlPath),
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
                 "<Style src=\"Redundant Inline Default.uss\"/>" +
+                "<!-- uxml-layout-audit: allow-unconsumed-element-name assertion anchor -->" +
                 "<ui:TextField name=\"Redundant\" style=\"overflow: visible;\"/>" +
-                "<ui:TextField name=\"Override\" style=\"overflow: hidden;\"/>" +
+                "<ui:TextField style=\"overflow: hidden;\"/>" +
                 "</ui:UXML>");
             File.WriteAllText(GetAbsolutePath(ussPath),
                 ".unity-base-field { overflow: visible; }\n");
@@ -2225,18 +2227,19 @@ namespace UnityMCP.Editor.Tests
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
                 "<Style src=\"Inert Centered Label Stretch.uss\"/>" +
                 "<ui:VisualElement style=\"align-items: center;\">" +
+                "<!-- uxml-layout-audit: allow-unconsumed-element-name assertion anchor -->" +
                 "<ui:Label name=\"Inert\" style=\"align-self: stretch; " +
                 "margin-left: 18px; margin-right: 18px; " +
                 "-unity-text-align: middle-center;\"/>" +
-                "<ui:Label name=\"Asymmetric\" style=\"align-self: stretch; " +
+                "<ui:Label style=\"align-self: stretch; " +
                 "margin-left: 18px; margin-right: 21px; " +
                 "-unity-text-align: middle-center;\"/>" +
-                "<ui:Label name=\"LeftAligned\" style=\"align-self: stretch; " +
+                "<ui:Label style=\"align-self: stretch; " +
                 "-unity-text-align: middle-left;\"/>" +
-                "<ui:Label name=\"VisualBox\" style=\"align-self: stretch; " +
+                "<ui:Label style=\"align-self: stretch; " +
                 "background-color: rgb(1, 2, 3); " +
                 "-unity-text-align: middle-center;\"/>" +
-                "<ui:Label name=\"FixedWidth\" style=\"align-self: stretch; " +
+                "<ui:Label style=\"align-self: stretch; " +
                 "width: 120px; -unity-text-align: middle-center;\"/>" +
                 "</ui:VisualElement>" +
                 "</ui:UXML>");
@@ -2278,25 +2281,26 @@ namespace UnityMCP.Editor.Tests
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
                 "<Style src=\"Inert Centered Label Grow.uss\"/>" +
                 "<ui:VisualElement style=\"justify-content: center;\">" +
+                "<!-- uxml-layout-audit: allow-unconsumed-element-name assertion anchor -->" +
                 "<ui:Label name=\"Inert\" style=\"flex-grow: 1; " +
                 "margin-bottom: 3px; -unity-text-align: middle-center;\"/>" +
                 "</ui:VisualElement>" +
                 "<ui:VisualElement style=\"justify-content: center;\">" +
-                "<ui:Label name=\"HasSibling\" style=\"flex-grow: 1; " +
+                "<ui:Label style=\"flex-grow: 1; " +
                 "-unity-text-align: middle-center;\"/>" +
                 "<ui:Label text=\"Sibling\"/>" +
                 "</ui:VisualElement>" +
                 "<ui:VisualElement style=\"justify-content: flex-start;\">" +
-                "<ui:Label name=\"ParentStarts\" style=\"flex-grow: 1; " +
+                "<ui:Label style=\"flex-grow: 1; " +
                 "-unity-text-align: middle-center;\"/>" +
                 "</ui:VisualElement>" +
                 "<ui:VisualElement style=\"justify-content: center;\">" +
-                "<ui:Label name=\"VisualBox\" style=\"flex-grow: 1; " +
+                "<ui:Label style=\"flex-grow: 1; " +
                 "background-color: rgb(1, 2, 3); " +
                 "-unity-text-align: middle-center;\"/>" +
                 "</ui:VisualElement>" +
                 "<ui:VisualElement style=\"justify-content: center;\">" +
-                "<ui:Label name=\"FixedHeight\" style=\"flex-grow: 1; " +
+                "<ui:Label style=\"flex-grow: 1; " +
                 "height: 24px; -unity-text-align: middle-center;\"/>" +
                 "</ui:VisualElement>" +
                 "</ui:UXML>");
@@ -2336,19 +2340,20 @@ namespace UnityMCP.Editor.Tests
             File.WriteAllText(GetAbsolutePath(uxmlPath),
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
                 "<ui:VisualElement style=\"width: 807px; height: 492px;\">" +
+                "<!-- uxml-layout-audit: allow-unconsumed-element-name assertion anchor -->" +
                 "<ui:VisualElement name=\"Redundant\" picking-mode=\"Ignore\" " +
                 "style=\"position: absolute; left: 0; top: -6px; right: 0; " +
                 "height: 54px; align-items: center;\">" +
-                "<ui:VisualElement name=\"Header\" style=\"width: 228px; height: 54px; " +
+                "<ui:VisualElement style=\"width: 228px; height: 54px; " +
                 "background-image: url(&quot;Header.png&quot;);\"/>" +
                 "</ui:VisualElement>" +
-                "<ui:VisualElement name=\"Asymmetric\" picking-mode=\"Ignore\" " +
+                "<ui:VisualElement picking-mode=\"Ignore\" " +
                 "style=\"position: absolute; left: 0; top: 60px; right: 12px; " +
                 "height: 54px; align-items: center;\">" +
                 "<ui:VisualElement style=\"width: 228px; height: 54px; " +
                 "background-image: url(&quot;Header.png&quot;);\"/>" +
                 "</ui:VisualElement>" +
-                "<ui:VisualElement name=\"Visible\" picking-mode=\"Ignore\" " +
+                "<ui:VisualElement picking-mode=\"Ignore\" " +
                 "style=\"position: absolute; left: 0; top: 120px; right: 0; " +
                 "height: 54px; align-items: center; background-color: white;\">" +
                 "<ui:VisualElement style=\"width: 228px; height: 54px; " +
@@ -2386,6 +2391,87 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUxmlAudit_ReportsOnlyUnconsumedElementNames()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Element Name Consumers.uxml";
+            const string ussPath = TEST_FOLDER + "/Element Name Consumers.uss";
+            const string runtimePath = TEST_FOLDER + "/ElementNameConsumer.cs";
+            const string serializedPath = TEST_FOLDER + "/Element Name Consumer.asset";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<Style src=\"Element Name Consumers.uss\"/>" +
+                "<ui:VisualElement name=\"Unused\"/>" +
+                "<ui:VisualElement name=\"Styled\"/>" +
+                "<ui:VisualElement name=\"RuntimeQueried\"/>" +
+                "<ui:VisualElement name=\"SerializedPath\"/>" +
+                "<ui:VisualElement name=\"OverrideTarget\"/>" +
+                "<AttributeOverrides element-name=\"OverrideTarget\"/>" +
+                "</ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                "#Styled { color: white; }\n");
+            File.WriteAllText(GetAbsolutePath(runtimePath),
+                "internal static class ElementNameConsumer { " +
+                "private const string Name = \"RuntimeQueried\"; }\n");
+            File.WriteAllText(GetAbsolutePath(serializedPath),
+                "names:\n  - SerializedPath\n");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { uxmlPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "runtimeSourceRoots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            var issue = issues.Single();
+            Assert.That(issue["kind"], Is.EqualTo("unconsumed-element-name"));
+            Assert.That(issue["element"], Is.EqualTo("#Unused"));
+            Assert.That(result["indexedRuntimeSourceFiles"], Is.EqualTo(1));
+            Assert.That(result["indexedSerializedAssetFiles"], Is.EqualTo(1));
+        }
+
+        [Test]
+        public void UIToolkitUxmlAudit_ReportsFullyFixedFlexPartition()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Fixed Flex Partition.uxml";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<ui:VisualElement style=\"height: 489px;\">" +
+                "<ui:VisualElement style=\"height: 63px; flex-shrink: 0;\"/>" +
+                "<ui:VisualElement style=\"height: 426px; flex-shrink: 0;\"/>" +
+                "</ui:VisualElement>" +
+                "<ui:VisualElement style=\"height: 489px;\">" +
+                "<ui:VisualElement style=\"height: 63px;\"/>" +
+                "<ui:VisualElement style=\"flex-grow: 1;\"/>" +
+                "</ui:VisualElement>" +
+                "</ui:UXML>");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { uxmlPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "runtimeSourceRoots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            var issue = issues.Single();
+            Assert.That(issue["kind"], Is.EqualTo("fixed-flex-partition"));
+            Assert.That(issue["axis"], Is.EqualTo("vertical"));
+            Assert.That((List<string>)issue["fixedProperties"],
+                Is.EqualTo(new[] { "height", "flex-shrink" }));
+        }
+
+        [Test]
         public void UIToolkitStaticAudits_AreFirstClassReadOnlyLongRunningTools()
         {
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
@@ -2410,8 +2496,9 @@ namespace UnityMCP.Editor.Tests
                 Assert.That(properties.Keys,
                     Is.SupersetOf(new[]
                     {
-                        "paths", "roots", "excludePaths", "useProjectSettings",
-                        "includeSuppressed", "runSelfTests", "maxIssues",
+                        "paths", "roots", "runtimeSourceRoots", "excludePaths",
+                        "useProjectSettings", "includeSuppressed", "runSelfTests",
+                        "maxIssues",
                     }), route);
             }
         }

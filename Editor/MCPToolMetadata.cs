@@ -898,7 +898,7 @@ namespace UnityMCP.Editor
                 case "uitoolkit/audit-uss-styles":
                     return "Audit USS selectors that serve exactly one authored UXML element without a pseudo-state, shared, generated, runtime-class, or other reusable contract.";
                 case "uitoolkit/audit-uxml-layout":
-                    return "Audit authored UXML for layout-only manually centered containers, removable single-child centering wrappers, visually inert centered-label stretching or growth, repeated inline layout variants, and inline declarations already owned by loaded USS defaults.";
+                    return "Audit authored UXML for unconsumed element names, fully fixed flex partitions, layout-only manually centered containers, removable single-child centering wrappers, visually inert centered-label stretching or growth, repeated inline layout variants, and inline declarations already owned by loaded USS defaults.";
                 case "uitoolkit/windows":
                     return "List open Unity Editor windows with UI Toolkit root metadata.";
                 case "uitoolkit/tree":
@@ -1718,6 +1718,7 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("paths", "array", "Optional Assets-relative UXML files. Omit to audit every UXML file in the effective roots."),
                         Prop("roots", "array", "Assets-relative roots used to index UXML and USS files. Defaults to the project audit settings, then Assets."),
+                        Prop("runtimeSourceRoots", "array", "Assets-relative roots scanned for runtime UI element-name references. Defaults to the project audit settings, then Assets."),
                         Prop("excludePaths", "array", "Assets-relative files or folders excluded from indexing."),
                         Prop("useProjectSettings", "boolean", "Use ProjectSettings/UnityMCPUIToolkitAudit.json as the default scope. Defaults to true."),
                         Prop("includeSuppressed", "boolean", "Include findings with a reasoned uxml-layout-audit suppression comment. Defaults to false."),
