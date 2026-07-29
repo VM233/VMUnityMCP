@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.48] - 2026-07-29
+
+- Add an opt-in, project-configurable pixel-grid audit for structural offsets, margin/gap spacing, and padding in USS declarations and UXML inline styles.
+- Allow each pixel-art project to choose its own positive grid step, while keeping the check disabled by default and supporting reasoned optical or seam-correction suppressions.
+
 ## [3.3.47] - 2026-07-29
 
 - Extend the USS static audit to report declarations that repeat the same winning value already supplied by the common `PanelSettings` theme or another stylesheet loaded by the authored UXML.

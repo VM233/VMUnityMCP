@@ -2197,6 +2197,66 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitStaticAudits_ApplyConfiguredPixelGridToUssAndInlineUxml()
+        {
+            const string uxmlPath = TEST_FOLDER + "/Pixel Grid.uxml";
+            const string ussPath = TEST_FOLDER + "/Pixel Grid.uss";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<ui:VisualElement class=\"pixel-grid\" " +
+                "style=\"left: 12px; margin-right: 6px; width: 7px;\"/>" +
+                "<ui:VisualElement class=\"pixel-grid\"/>" +
+                "</ui:UXML>");
+            File.WriteAllText(GetAbsolutePath(ussPath),
+                ".pixel-grid { margin-left: 8px; padding-top: 6px; width: 7px; }\n");
+
+            var common = new Dictionary<string, object>
+            {
+                { "roots", new[] { TEST_FOLDER } },
+                { "runtimeSourceRoots", new[] { TEST_FOLDER } },
+                { "useProjectSettings", false },
+                { "pixelGridEnabled", true },
+                { "pixelGridStep", 4 }
+            };
+            var ussResult = RequireDictionary(
+                MCPUIToolkitUssAuditCommands.AuditUssStyles(
+                    new Dictionary<string, object>(common)
+                    {
+                        { "paths", new[] { ussPath } }
+                    }));
+            Assert.That(ussResult["success"], Is.EqualTo(true));
+            Assert.That(ussResult["warningCount"], Is.EqualTo(1));
+            var ussIssue =
+                ((List<Dictionary<string, object>>)ussResult["issues"]).Single();
+            Assert.That(ussIssue["kind"], Is.EqualTo("off-grid-pixel-declarations"));
+            Assert.That(ussIssue["gridStep"], Is.EqualTo(4));
+            Assert.That(
+                ((Dictionary<string, string>)ussIssue["offGridDeclarations"]).Keys,
+                Is.EquivalentTo(new[] { "padding-top" }));
+
+            var uxmlResult = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>(common)
+                    {
+                        { "paths", new[] { uxmlPath } }
+                    }));
+            Assert.That(uxmlResult["success"], Is.EqualTo(true));
+            Assert.That(uxmlResult["warningCount"], Is.EqualTo(1));
+            var uxmlIssue =
+                ((List<Dictionary<string, object>>)uxmlResult["issues"]).Single();
+            Assert.That(uxmlIssue["kind"], Is.EqualTo("off-grid-pixel-declarations"));
+            Assert.That(uxmlIssue["gridStep"], Is.EqualTo(4));
+            Assert.That(
+                ((Dictionary<string, string>)uxmlIssue["inlineDeclarations"]).Keys,
+                Is.EquivalentTo(new[] { "margin-right" }));
+
+            var scope = RequireDictionary(uxmlResult["scope"]);
+            var pixelGrid = RequireDictionary(scope["pixelGrid"]);
+            Assert.That(pixelGrid["enabled"], Is.EqualTo(true));
+            Assert.That(pixelGrid["step"], Is.EqualTo(4));
+        }
+
+        [Test]
         public void UIToolkitUssAudit_ReportsDeclarationAlreadyOwnedByPanelTheme()
         {
             const string uxmlPath = TEST_FOLDER + "/Theme Duplicate.uxml";
@@ -2630,7 +2690,7 @@ namespace UnityMCP.Editor.Tests
                     {
                         "paths", "roots", "runtimeSourceRoots", "excludePaths",
                         "useProjectSettings", "includeSuppressed", "runSelfTests",
-                        "maxIssues",
+                        "pixelGridEnabled", "pixelGridStep", "maxIssues",
                     }), route);
             }
         }

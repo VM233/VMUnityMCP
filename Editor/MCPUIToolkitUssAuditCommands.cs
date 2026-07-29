@@ -88,6 +88,8 @@ namespace UnityMCP.Editor
         internal const string SUPPRESSION_MARKER = "uss-audit: allow-single-use";
         internal const string REDUNDANT_DECLARATION_SUPPRESSION_MARKER =
             "uss-audit: allow-redundant-declaration";
+        internal const string PIXEL_GRID_SUPPRESSION_MARKER =
+            "uss-audit: allow-off-grid-pixels";
 
         private static readonly Regex commentRegex =
             new Regex(@"/\*.*?\*/", RegexOptions.Compiled | RegexOptions.Singleline);
@@ -98,6 +100,10 @@ namespace UnityMCP.Editor
 
         private static readonly Regex redundantDeclarationSuppressionRegex =
             new Regex(@"/\*\s*uss-audit:\s*allow-redundant-declaration\s+(?<reason>.+?)\*/\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex pixelGridSuppressionRegex =
+            new Regex(@"/\*\s*uss-audit:\s*allow-off-grid-pixels\s+(?<reason>.+?)\*/\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private static readonly Regex importRegex =
@@ -207,6 +213,7 @@ namespace UnityMCP.Editor
                     continue;
                 }
 
+                AuditPixelGridDeclarations(rules, options, report, includeSuppressed);
                 AuditRules(rules, usageIndex, report, includeSuppressed);
                 AuditRedundantDeclarations(rules, usageIndex, cascadeIndex, report,
                     includeSuppressed);
@@ -297,6 +304,23 @@ namespace UnityMCP.Editor
                 duplicateReport, true);
             duplicateReport.SortIssues();
 
+            var pixelGridRules = ParseStyleSheet(path,
+                ".grid-pass { left: -6px; margin-right: 9px; padding: 3px 6px; }\n" +
+                ".grid-fail { top: 4px; padding: 3px 7px; }\n" +
+                ".grid-non-pixel { left: 50%; font-size: 7px; }\n" +
+                "/* uss-audit: allow-off-grid-pixels fixture documents optical alignment */\n" +
+                ".grid-suppressed { margin-left: 1px; }\n");
+            var pixelGridOptions = MCPUIToolkitAuditOptions.FromArguments(
+                new Dictionary<string, object>
+                {
+                    { "useProjectSettings", false },
+                    { "pixelGridEnabled", true },
+                    { "pixelGridStep", 3 }
+                });
+            var pixelGridReport = new MCPUssStyleAuditReport(100);
+            AuditPixelGridDeclarations(pixelGridRules, pixelGridOptions, pixelGridReport, true);
+            pixelGridReport.SortIssues();
+
             var activeTokens = report.Issues.Where(issue => issue.Suppressed == false)
                 .Select(issue => issue.Token).OrderBy(token => token, StringComparer.Ordinal).ToArray();
             var suppressedTokens = report.Issues.Where(issue => issue.Suppressed)
@@ -307,6 +331,16 @@ namespace UnityMCP.Editor
                 .OrderBy(selector => selector, StringComparer.Ordinal)
                 .ToArray();
             var suppressedRedundantSelectors = duplicateReport.Issues
+                .Where(issue => issue.Suppressed)
+                .Select(issue => issue.Selector)
+                .OrderBy(selector => selector, StringComparer.Ordinal)
+                .ToArray();
+            var activePixelGridSelectors = pixelGridReport.Issues
+                .Where(issue => issue.Suppressed == false)
+                .Select(issue => issue.Selector)
+                .OrderBy(selector => selector, StringComparer.Ordinal)
+                .ToArray();
+            var suppressedPixelGridSelectors = pixelGridReport.Issues
                 .Where(issue => issue.Suppressed)
                 .Select(issue => issue.Selector)
                 .OrderBy(selector => selector, StringComparer.Ordinal)
@@ -339,6 +373,14 @@ namespace UnityMCP.Editor
                 activeRedundantSelectors.Contains(".different") == false);
             AddSelfTestCase(cases, "reasoned redundant-declaration suppression is retained",
                 suppressedRedundantSelectors.SequenceEqual(new[] { ".suppressed-duplicate" }));
+            AddSelfTestCase(cases, "only off-grid structural declarations warn",
+                activePixelGridSelectors.SequenceEqual(new[] { ".grid-fail" }));
+            AddSelfTestCase(cases, "off-grid shorthand values are retained",
+                pixelGridReport.Issues.Single(issue => issue.Suppressed == false)
+                    .OffGridDeclarations.Keys.OrderBy(value => value, StringComparer.Ordinal)
+                    .SequenceEqual(new[] { "padding", "top" }));
+            AddSelfTestCase(cases, "reasoned pixel-grid suppression is retained",
+                suppressedPixelGridSelectors.SequenceEqual(new[] { ".grid-suppressed" }));
 
             return new Dictionary<string, object>
             {
@@ -347,7 +389,9 @@ namespace UnityMCP.Editor
                 { "activeTokens", activeTokens },
                 { "suppressedTokens", suppressedTokens },
                 { "activeRedundantSelectors", activeRedundantSelectors },
-                { "suppressedRedundantSelectors", suppressedRedundantSelectors }
+                { "suppressedRedundantSelectors", suppressedRedundantSelectors },
+                { "activePixelGridSelectors", activePixelGridSelectors },
+                { "suppressedPixelGridSelectors", suppressedPixelGridSelectors }
             };
         }
 
@@ -1024,6 +1068,47 @@ namespace UnityMCP.Editor
             }
         }
 
+        private static void AuditPixelGridDeclarations(IEnumerable<UssRule> rules,
+            MCPUIToolkitAuditOptions options, MCPUssStyleAuditReport report,
+            bool includeSuppressed)
+        {
+            if (options.PixelGridEnabled == false)
+                return;
+
+            foreach (var rule in rules)
+            {
+                var offGridDeclarations =
+                    MCPUIToolkitPixelGridAuditUtility.FindOffGridDeclarations(
+                        rule.Declarations, options.PixelGridStep);
+                if (offGridDeclarations.Count == 0)
+                    continue;
+
+                var orderedProperties = offGridDeclarations.Keys
+                    .OrderBy(property => property, StringComparer.Ordinal)
+                    .ToList();
+                var selector = string.Join(", ", rule.Selectors);
+                var suppressionReason = rule.PixelGridSuppressionReason;
+                var issue = new MCPUssStyleAuditIssue
+                {
+                    AssetPath = rule.AssetPath,
+                    Line = rule.Line,
+                    Selector = selector,
+                    Token = string.Join(", ", orderedProperties),
+                    Kind = "off-grid-pixel-declarations",
+                    GridStep = options.PixelGridStep,
+                    OffGridDeclarations = offGridDeclarations,
+                    Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                    SuppressionReason = suppressionReason,
+                    Message =
+                        $"Selector '{selector}' has structural offset, spacing, or padding " +
+                        $"declarations outside the configured {options.PixelGridStep}px grid: " +
+                        $"{string.Join(", ", orderedProperties)}. Align them to the project grid " +
+                        "or add a reasoned suppression for a measured optical or seam correction."
+                };
+                report.Record(issue, includeSuppressed);
+            }
+        }
+
         private static void AuditRelationalSelectorContracts(IReadOnlyList<UssRule> rules,
             UssUsageIndex usageIndex, MCPUssStyleAuditReport report, bool includeSuppressed)
         {
@@ -1203,6 +1288,8 @@ namespace UnityMCP.Editor
                     var suppression = suppressionRegex.Match(suppressionContext);
                     var redundantSuppression =
                         redundantDeclarationSuppressionRegex.Match(suppressionContext);
+                    var pixelGridSuppression =
+                        pixelGridSuppressionRegex.Match(suppressionContext);
                     rules.Add(new UssRule
                     {
                         AssetPath = assetPath,
@@ -1216,6 +1303,10 @@ namespace UnityMCP.Editor
                         RedundantDeclarationSuppressionReason =
                             redundantSuppression.Success
                                 ? redundantSuppression.Groups["reason"].Value.Trim()
+                                : "",
+                        PixelGridSuppressionReason =
+                            pixelGridSuppression.Success
+                                ? pixelGridSuppression.Groups["reason"].Value.Trim()
                                 : ""
                     });
                 }
@@ -1430,6 +1521,7 @@ namespace UnityMCP.Editor
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             public string SuppressionReason;
             public string RedundantDeclarationSuppressionReason;
+            public string PixelGridSuppressionReason;
         }
 
         private sealed class UssSimpleSelector
@@ -1828,7 +1920,9 @@ namespace UnityMCP.Editor
                     $"/* {MCPUssStyleAuditor.SUPPRESSION_MARKER} <reason> */" },
                 { "redundantDeclarationSuppressionSyntax",
                     $"/* {MCPUssStyleAuditor.REDUNDANT_DECLARATION_SUPPRESSION_MARKER} " +
-                    "<reason> */" }
+                    "<reason> */" },
+                { "pixelGridSuppressionSyntax",
+                    $"/* {MCPUssStyleAuditor.PIXEL_GRID_SUPPRESSION_MARKER} <reason> */" }
             };
         }
     }
@@ -1842,6 +1936,9 @@ namespace UnityMCP.Editor
         public string Kind;
         public string Property;
         public string Value;
+        public int GridStep;
+        public Dictionary<string, string> OffGridDeclarations =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public int AuthoredUsageCount;
         public int RuntimeReferenceCount;
         public List<Dictionary<string, object>> UsageLocations =
@@ -1873,6 +1970,14 @@ namespace UnityMCP.Editor
                 result["property"] = Property;
                 result["value"] = Value ?? "";
                 result["stylesheetRules"] = StylesheetRules;
+            }
+            else if (string.Equals(Kind, "off-grid-pixel-declarations",
+                         StringComparison.Ordinal))
+            {
+                result["gridStep"] = GridStep;
+                result["offGridDeclarations"] =
+                    new Dictionary<string, string>(OffGridDeclarations,
+                        StringComparer.OrdinalIgnoreCase);
             }
 
             return result;

@@ -20,6 +20,8 @@ namespace UnityMCP.Editor
         internal string Error = "";
         internal bool AutomaticUssSingleUseStyles;
         internal bool AutomaticUxmlLayoutContracts;
+        internal bool PixelGridEnabled;
+        internal int PixelGridStep = 3;
         internal readonly List<string> AssetRoots = new List<string> { "Assets" };
         internal readonly List<string> RuntimeSourceRoots = new List<string> { "Assets" };
         internal readonly List<string> ExcludePaths = new List<string>();
@@ -45,6 +47,14 @@ namespace UnityMCP.Editor
                 settings.AutomaticUxmlLayoutContracts =
                     MCPUIToolkitAuditUtility.GetBool(automatic, "uxmlLayoutContracts", false);
 
+                Dictionary<string, object> pixelGrid = GetDictionary(values, "pixelGrid");
+                settings.PixelGridEnabled =
+                    MCPUIToolkitAuditUtility.GetBool(pixelGrid, "enabled", false);
+                settings.PixelGridStep =
+                    MCPUIToolkitAuditUtility.GetInt(pixelGrid, "step", 3);
+                if (settings.PixelGridStep <= 0)
+                    throw new InvalidDataException("pixelGrid.step must be a positive integer.");
+
                 ReplaceListWhenPresent(values, "assetRoots", settings.AssetRoots);
                 ReplaceListWhenPresent(values, "runtimeSourceRoots", settings.RuntimeSourceRoots);
                 ReplaceListWhenPresent(values, "excludePaths", settings.ExcludePaths);
@@ -63,6 +73,7 @@ namespace UnityMCP.Editor
                 settings.Error = exception.Message;
                 settings.AutomaticUssSingleUseStyles = false;
                 settings.AutomaticUxmlLayoutContracts = false;
+                settings.PixelGridEnabled = false;
             }
 
             return settings;
@@ -419,13 +430,18 @@ namespace UnityMCP.Editor
         internal readonly List<string> AssetRoots;
         internal readonly List<string> RuntimeSourceRoots;
         internal readonly List<string> ExcludePaths;
+        internal readonly bool PixelGridEnabled;
+        internal readonly int PixelGridStep;
 
         private MCPUIToolkitAuditOptions(IEnumerable<string> assetRoots,
-            IEnumerable<string> runtimeSourceRoots, IEnumerable<string> excludePaths)
+            IEnumerable<string> runtimeSourceRoots, IEnumerable<string> excludePaths,
+            bool pixelGridEnabled, int pixelGridStep)
         {
             AssetRoots = NormalizeRoots(assetRoots, "Assets");
             RuntimeSourceRoots = NormalizeRoots(runtimeSourceRoots, "Assets");
             ExcludePaths = NormalizeRoots(excludePaths, null);
+            PixelGridEnabled = pixelGridEnabled;
+            PixelGridStep = Math.Max(1, pixelGridStep);
         }
 
         internal static MCPUIToolkitAuditOptions FromArguments(Dictionary<string, object> args)
@@ -446,8 +462,16 @@ namespace UnityMCP.Editor
             IEnumerable<string> excludePaths = args.ContainsKey("excludePaths")
                 ? MCPUIToolkitAuditUtility.GetStringList(args, "excludePaths")
                 : settings.ExcludePaths;
+            bool pixelGridEnabled = args.ContainsKey("pixelGridEnabled")
+                ? MCPUIToolkitAuditUtility.GetBool(args, "pixelGridEnabled")
+                : settings.PixelGridEnabled;
+            int pixelGridStep = args.ContainsKey("pixelGridStep")
+                ? MCPUIToolkitAuditUtility.GetInt(args, "pixelGridStep",
+                    settings.PixelGridStep)
+                : settings.PixelGridStep;
 
-            return new MCPUIToolkitAuditOptions(assetRoots, runtimeRoots, excludePaths);
+            return new MCPUIToolkitAuditOptions(assetRoots, runtimeRoots, excludePaths,
+                pixelGridEnabled, pixelGridStep);
         }
 
         internal static MCPUIToolkitAuditOptions FromProjectSettings(
@@ -455,7 +479,8 @@ namespace UnityMCP.Editor
         {
             settings = settings ?? MCPUIToolkitAuditProjectSettings.Load();
             return new MCPUIToolkitAuditOptions(settings.AssetRoots,
-                settings.RuntimeSourceRoots, settings.ExcludePaths);
+                settings.RuntimeSourceRoots, settings.ExcludePaths,
+                settings.PixelGridEnabled, settings.PixelGridStep);
         }
 
         internal bool Includes(string assetPath)
@@ -478,7 +503,15 @@ namespace UnityMCP.Editor
             {
                 { "roots", AssetRoots.ToArray() },
                 { "runtimeSourceRoots", RuntimeSourceRoots.ToArray() },
-                { "excludePaths", ExcludePaths.ToArray() }
+                { "excludePaths", ExcludePaths.ToArray() },
+                {
+                    "pixelGrid",
+                    new Dictionary<string, object>
+                    {
+                        { "enabled", PixelGridEnabled },
+                        { "step", PixelGridStep }
+                    }
+                }
             };
         }
 

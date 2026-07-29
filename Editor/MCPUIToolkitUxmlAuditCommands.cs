@@ -102,6 +102,8 @@ namespace UnityMCP.Editor
             "uxml-layout-audit: allow-unconsumed-element-name";
         internal const string FIXED_FLEX_PARTITION_SUPPRESSION_MARKER =
             "uxml-layout-audit: allow-fixed-flex-partition";
+        internal const string PIXEL_GRID_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-off-grid-pixels";
 
         private const float CENTER_EPSILON = 0.01f;
 
@@ -146,6 +148,11 @@ namespace UnityMCP.Editor
         private static readonly Regex fixedFlexPartitionSuppressionRegex =
             new Regex(
                 @"^\s*uxml-layout-audit:\s*allow-fixed-flex-partition\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex pixelGridSuppressionRegex =
+            new Regex(
+                @"^\s*uxml-layout-audit:\s*allow-off-grid-pixels\s+(?<reason>.+?)\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private static readonly Regex ussCommentRegex =
@@ -246,7 +253,7 @@ namespace UnityMCP.Editor
                     AuditText(path,
                         File.ReadAllText(MCPUIToolkitAuditUtility.ToFullPath(path)),
                         layoutContracts, elementNameReferences, report,
-                        includeSuppressed);
+                        includeSuppressed, options: options);
                 }
                 catch (Exception exception)
                 {
@@ -652,6 +659,35 @@ namespace UnityMCP.Editor
                 suppressedFixedPartition.SuppressedCount == 1 &&
                 suppressedFixedPartition.Issues.Single().Suppressed);
 
+            var pixelGridPass = AuditFixture(
+                "<ui:VisualElement style=\"left: 6px; margin-left: -3px; " +
+                "padding: 3px 6px 9px;\"/>",
+                pixelGridEnabled: true, pixelGridStep: 3);
+            AddSelfTestCase(cases, "inline values on the configured grid pass",
+                pixelGridPass.WarningCount == 0);
+
+            var pixelGridFail = AuditFixture(
+                "<ui:VisualElement style=\"top: 4px; padding: 3px 7px; " +
+                "width: 7px; font-size: 7px;\"/>",
+                pixelGridEnabled: true, pixelGridStep: 3);
+            AddSelfTestCase(cases, "only off-grid inline structural declarations warn",
+                pixelGridFail.WarningCount == 1 &&
+                pixelGridFail.Issues.Single().Kind ==
+                "off-grid-pixel-declarations" &&
+                pixelGridFail.Issues.Single().InlineDeclarations.Keys
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .SequenceEqual(new[] { "padding", "top" }));
+
+            var pixelGridSuppressed = AuditFixture(
+                $"<!-- {PIXEL_GRID_SUPPRESSION_MARKER} " +
+                "fixture documents optical alignment -->" +
+                "<ui:VisualElement style=\"margin-right: 1px;\"/>",
+                includeSuppressed: true, pixelGridEnabled: true, pixelGridStep: 3);
+            AddSelfTestCase(cases, "reasoned inline pixel-grid suppression is retained",
+                pixelGridSuppressed.WarningCount == 0 &&
+                pixelGridSuppressed.SuppressedCount == 1 &&
+                pixelGridSuppressed.Issues.Single().Suppressed);
+
             return new Dictionary<string, object>
             {
                 { "passed", cases.All(testCase => (bool)testCase["passed"]) },
@@ -663,7 +699,8 @@ namespace UnityMCP.Editor
             string parentStyle = "width: 807px; height: 492px;", bool includeSuppressed = false,
             UxmlLayoutContractIndex layoutContracts = null,
             UxmlInlineStyleContractIndex inlineStyleContracts = null,
-            UxmlElementNameReferenceIndex elementNameReferences = null)
+            UxmlElementNameReferenceIndex elementNameReferences = null,
+            bool pixelGridEnabled = false, int pixelGridStep = 3)
         {
             var text =
                 "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
@@ -674,11 +711,18 @@ namespace UnityMCP.Editor
                 ScannedUxmlCount = 1,
                 IndexedUxmlCount = 1
             };
+            var options = MCPUIToolkitAuditOptions.FromArguments(
+                new Dictionary<string, object>
+                {
+                    { "useProjectSettings", false },
+                    { "pixelGridEnabled", pixelGridEnabled },
+                    { "pixelGridStep", pixelGridStep }
+                });
             AuditText("Assets/__UxmlLayoutAuditSelfTest.uxml", text,
                 layoutContracts ?? new UxmlLayoutContractIndex(),
                 elementNameReferences ?? UxmlElementNameReferenceIndex.Disabled,
                 report, includeSuppressed,
-                inlineStyleContracts);
+                inlineStyleContracts, options);
             report.SortIssues();
             return report;
         }
@@ -687,12 +731,17 @@ namespace UnityMCP.Editor
             UxmlLayoutContractIndex layoutContracts,
             UxmlElementNameReferenceIndex elementNameReferences,
             MCPUxmlLayoutAuditReport report, bool includeSuppressed,
-            UxmlInlineStyleContractIndex inlineStyleContracts = null)
+            UxmlInlineStyleContractIndex inlineStyleContracts = null,
+            MCPUIToolkitAuditOptions options = null)
         {
             var document = XDocument.Parse(text, LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
             IndexUxmlDocument(document, layoutContracts);
+            options = options ?? MCPUIToolkitAuditOptions.FromArguments(
+                new Dictionary<string, object> { { "useProjectSettings", false } });
             inlineStyleContracts = inlineStyleContracts ??
                                    BuildInlineStyleContractIndex(assetPath, document, report);
+            AuditPixelGridDeclarations(assetPath, document, options, report,
+                includeSuppressed);
             foreach (var element in document.Descendants())
             {
                 AuditElement(assetPath, element, layoutContracts, report, includeSuppressed);
@@ -712,6 +761,52 @@ namespace UnityMCP.Editor
                 report, includeSuppressed);
             AuditRepeatedInlineLayoutVariants(assetPath, document, layoutContracts, report,
                 includeSuppressed);
+        }
+
+        private static void AuditPixelGridDeclarations(string assetPath, XDocument document,
+            MCPUIToolkitAuditOptions options, MCPUxmlLayoutAuditReport report,
+            bool includeSuppressed)
+        {
+            if (options.PixelGridEnabled == false)
+                return;
+
+            foreach (var element in document.Descendants())
+            {
+                var offGridDeclarations =
+                    MCPUIToolkitPixelGridAuditUtility.FindOffGridDeclarations(
+                        ParseStyle(AttributeValue(element, "style")), options.PixelGridStep);
+                if (offGridDeclarations.Count == 0)
+                    continue;
+
+                var name = AttributeValue(element, "name");
+                var elementLabel = string.IsNullOrWhiteSpace(name)
+                    ? $"<{element.Name.LocalName}>"
+                    : $"#{name}";
+                var properties = offGridDeclarations.Keys
+                    .OrderBy(property => property, StringComparer.Ordinal)
+                    .ToList();
+                var suppressionReason = GetSuppressionReason(element,
+                    pixelGridSuppressionRegex);
+                var issue = new MCPUxmlLayoutAuditIssue
+                {
+                    AssetPath = assetPath,
+                    Line = GetLineNumber(element),
+                    Element = elementLabel,
+                    ElementName = name,
+                    Kind = "off-grid-pixel-declarations",
+                    GridStep = options.PixelGridStep,
+                    FixedProperties = properties,
+                    InlineDeclarations = offGridDeclarations,
+                    Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                    SuppressionReason = suppressionReason,
+                    Message =
+                        $"{elementLabel} has inline structural offset, spacing, or padding " +
+                        $"declarations outside the configured {options.PixelGridStep}px grid: " +
+                        $"{string.Join(", ", properties)}. Align them to the project grid or " +
+                        "add a reasoned suppression for a measured optical or seam correction."
+                };
+                report.Record(issue, includeSuppressed);
+            }
         }
 
         private static void AuditElement(string assetPath, XElement element,
@@ -2900,7 +2995,8 @@ namespace UnityMCP.Editor
                         $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_GROW_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.SINGLE_CHILD_CENTERING_WRAPPER_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.UNCONSUMED_ELEMENT_NAME_SUPPRESSION_MARKER} <reason> -->",
-                        $"<!-- {MCPUxmlLayoutAuditor.FIXED_FLEX_PARTITION_SUPPRESSION_MARKER} <reason> -->"
+                        $"<!-- {MCPUxmlLayoutAuditor.FIXED_FLEX_PARTITION_SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.PIXEL_GRID_SUPPRESSION_MARKER} <reason> -->"
                     }
                 }
             };
@@ -2919,6 +3015,7 @@ namespace UnityMCP.Editor
         public float ParentSize;
         public float Offset;
         public float Size;
+        public int GridStep;
         public string BaseClass;
         public int AuthoredUsageCount;
         public Dictionary<string, string> InlineDeclarations =
@@ -2992,6 +3089,14 @@ namespace UnityMCP.Editor
                 {
                     result["size"] = Size;
                 }
+            }
+            else if (string.Equals(Kind, "off-grid-pixel-declarations",
+                         StringComparison.Ordinal))
+            {
+                result["gridStep"] = GridStep;
+                result["inlineDeclarations"] =
+                    new Dictionary<string, string>(InlineDeclarations,
+                        StringComparer.OrdinalIgnoreCase);
             }
 
             return result;
