@@ -738,6 +738,8 @@ namespace UnityMCP.Editor
         private static readonly HashSet<string> RectKeys = new HashSet<string>(StringComparer.Ordinal)
         {
             "x", "y", "width", "height", "xMin", "yMin", "xMax", "yMax",
+            "position", "center", "min", "max", "size",
+            "left", "top", "right", "bottom",
         };
 
         private static readonly HashSet<string> BoundsKeys = new HashSet<string>(StringComparer.Ordinal)
@@ -929,36 +931,106 @@ namespace UnityMCP.Editor
         {
             formatted = null;
             if (!KeysAreSubset(dictionary, RectKeys) ||
-                !TryGetNumber(dictionary, "width", out double width) ||
-                !TryGetNumber(dictionary, "height", out double height))
+                !TryGetOptionalNumberPair(dictionary, "width", "height",
+                    out bool hasDimensions, out double width, out double height) ||
+                !TryGetOptionalTuple(dictionary, "size", 2,
+                    out bool hasSize, out double[] size))
                 return false;
 
-            bool hasX = TryGetNumber(dictionary, "x", out double x);
-            bool hasY = TryGetNumber(dictionary, "y", out double y);
-            bool hasXMin = TryGetNumber(dictionary, "xMin", out double xMin);
-            bool hasYMin = TryGetNumber(dictionary, "yMin", out double yMin);
-            bool hasXY = hasX && hasY;
-            bool hasMin = hasXMin && hasYMin;
-            if (!hasXY && !hasMin)
+            if (!hasDimensions && !hasSize)
+                return false;
+            if (!hasDimensions)
+            {
+                width = size[0];
+                height = size[1];
+            }
+            else if (hasSize &&
+                     (!Approximately(width, size[0]) || !Approximately(height, size[1])))
                 return false;
 
-            double startX = hasMin ? xMin : x;
-            double startY = hasMin ? yMin : y;
-            if (hasXY && hasMin &&
-                (!Approximately(x, xMin) || !Approximately(y, yMin)))
+            if (!TryGetOptionalNumberPair(dictionary, "x", "y",
+                    out bool hasXY, out double x, out double y) ||
+                !TryGetOptionalNumberPair(dictionary, "xMin", "yMin",
+                    out bool hasMinimumCoordinates, out double xMin, out double yMin) ||
+                !TryGetOptionalNumberPair(dictionary, "left", "top",
+                    out bool hasLeadingEdges, out double left, out double top) ||
+                !TryGetOptionalTuple(dictionary, "position", 2,
+                    out bool hasPosition, out double[] position) ||
+                !TryGetOptionalTuple(dictionary, "min", 2,
+                    out bool hasMinimum, out double[] minimum))
                 return false;
 
-            bool hasXMax = TryGetNumber(dictionary, "xMax", out double xMax);
-            bool hasYMax = TryGetNumber(dictionary, "yMax", out double yMax);
-            bool hasMax = hasXMax && hasYMax;
-            double endX = hasMax ? xMax : startX + width;
-            double endY = hasMax ? yMax : startY + height;
-            if (hasMax &&
-                (!Approximately(endX, startX + width) || !Approximately(endY, startY + height)))
+            if (!hasXY && !hasMinimumCoordinates && !hasLeadingEdges &&
+                !hasPosition && !hasMinimum)
+                return false;
+
+            double startX = hasXY ? x :
+                hasMinimumCoordinates ? xMin :
+                hasLeadingEdges ? left :
+                hasPosition ? position[0] : minimum[0];
+            double startY = hasXY ? y :
+                hasMinimumCoordinates ? yMin :
+                hasLeadingEdges ? top :
+                hasPosition ? position[1] : minimum[1];
+            if ((hasMinimumCoordinates &&
+                 (!Approximately(startX, xMin) || !Approximately(startY, yMin))) ||
+                (hasLeadingEdges &&
+                 (!Approximately(startX, left) || !Approximately(startY, top))) ||
+                (hasPosition &&
+                 (!Approximately(startX, position[0]) || !Approximately(startY, position[1]))) ||
+                (hasMinimum &&
+                 (!Approximately(startX, minimum[0]) || !Approximately(startY, minimum[1]))))
+                return false;
+
+            double endX = startX + width;
+            double endY = startY + height;
+            if (!TryGetOptionalNumberPair(dictionary, "xMax", "yMax",
+                    out bool hasMaximumCoordinates, out double xMax, out double yMax) ||
+                !TryGetOptionalNumberPair(dictionary, "right", "bottom",
+                    out bool hasTrailingEdges, out double right, out double bottom) ||
+                !TryGetOptionalTuple(dictionary, "max", 2,
+                    out bool hasMaximum, out double[] maximum) ||
+                !TryGetOptionalTuple(dictionary, "center", 2,
+                    out bool hasCenter, out double[] center))
+                return false;
+
+            if ((hasMaximumCoordinates &&
+                 (!Approximately(endX, xMax) || !Approximately(endY, yMax))) ||
+                (hasTrailingEdges &&
+                 (!Approximately(endX, right) || !Approximately(endY, bottom))) ||
+                (hasMaximum &&
+                 (!Approximately(endX, maximum[0]) || !Approximately(endY, maximum[1]))) ||
+                (hasCenter &&
+                 (!Approximately(startX + width * 0.5d, center[0]) ||
+                  !Approximately(startY + height * 0.5d, center[1]))))
                 return false;
 
             formatted = FormatRect(startX, startY, endX, endY, width, height);
             return true;
+        }
+
+        private static bool TryGetOptionalNumberPair(
+            Dictionary<string, object> dictionary, string firstKey, string secondKey,
+            out bool present, out double first, out double second)
+        {
+            bool hasFirst = TryGetNumber(dictionary, firstKey, out first);
+            bool hasSecond = TryGetNumber(dictionary, secondKey, out second);
+            present = hasFirst && hasSecond;
+            return hasFirst == hasSecond;
+        }
+
+        private static bool TryGetOptionalTuple(
+            Dictionary<string, object> dictionary, string key, int length,
+            out bool present, out double[] tuple)
+        {
+            present = dictionary.TryGetValue(key, out object value);
+            if (!present)
+            {
+                tuple = null;
+                return true;
+            }
+
+            return TryReadTuple(value, out tuple) && tuple.Length == length;
         }
 
         private static bool TryFormatBoundsDictionary(Dictionary<string, object> dictionary, out string formatted)

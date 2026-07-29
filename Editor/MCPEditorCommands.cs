@@ -1117,26 +1117,12 @@ namespace UnityMCP.Editor
             if (value is Type reflectedType)
                 return reflectedType.FullName;
 
-            if (value is Vector2 vector2)
-                return new Dictionary<string, object> { { "x", vector2.x }, { "y", vector2.y } };
-            if (value is Vector2Int vector2Int)
-                return new Dictionary<string, object> { { "x", vector2Int.x }, { "y", vector2Int.y } };
-            if (value is Vector3 vector3)
-                return new Dictionary<string, object> { { "x", vector3.x }, { "y", vector3.y }, { "z", vector3.z } };
-            if (value is Vector3Int vector3Int)
-                return new Dictionary<string, object> { { "x", vector3Int.x }, { "y", vector3Int.y }, { "z", vector3Int.z } };
-            if (value is Vector4 vector4)
-                return new Dictionary<string, object>
-                    { { "x", vector4.x }, { "y", vector4.y }, { "z", vector4.z }, { "w", vector4.w } };
-            if (value is Quaternion quaternion)
-                return new Dictionary<string, object>
-                    { { "x", quaternion.x }, { "y", quaternion.y }, { "z", quaternion.z }, { "w", quaternion.w } };
-            if (value is Color color)
-                return new Dictionary<string, object>
-                    { { "r", color.r }, { "g", color.g }, { "b", color.b }, { "a", color.a } };
-            if (value is Color32 color32)
-                return new Dictionary<string, object>
-                    { { "r", color32.r }, { "g", color32.g }, { "b", color32.b }, { "a", color32.a } };
+            // Execute-code eagerly serializes arbitrary values before MCPResponse reaches the
+            // transport boundary. Route every supported Unity value struct through the shared
+            // formatter here as well, otherwise structs such as Rect are reflected into all of
+            // their redundant aliases (x/position/min/left/etc.) before transport compaction.
+            if (MCPCompactValueFormatter.TryFormatUnityValue(value, out string compactUnityValue))
+                return compactUnityValue;
 
             if (value is UnityEngine.Object unityObject)
             {

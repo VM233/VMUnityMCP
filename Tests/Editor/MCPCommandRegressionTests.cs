@@ -5401,6 +5401,33 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ExecuteCodeSerialization_UsesSharedUnityValueCompactorBeforeReflection()
+        {
+            var serialized = MCPEditorCommands.SerializeResult(
+                new Dictionary<string, object>
+                {
+                    { "rect", new Rect(1f, 2f, 3f, 3f) },
+                    { "bounds", new Bounds(
+                        new Vector3(2.5f, 3.5f, 1f),
+                        new Vector3(3f, 3f, 2f)) },
+                    { "ray", new Ray(new Vector3(1f, 2f, 3f), Vector3.up) },
+                    { "border", new RectOffset(1, 2, 3, 4) },
+                },
+                new Dictionary<string, object>());
+
+            var result = RequireDictionary(serialized["result"]);
+            Assert.That(result["rect"], Is.EqualTo("(1,2)-(4,5),size:(3,3)"));
+            Assert.That(result["bounds"], Is.EqualTo("(1,2,0)-(4,5,2),size:(3,3,2)"));
+            Assert.That(result["ray"], Is.EqualTo("origin:(1,2,3),direction:(0,1,0)"));
+            Assert.That(result["border"], Is.EqualTo("LTRB(1,3,2,4)"));
+            Assert.That(Convert.ToInt32(serialized["serializedItems"]), Is.EqualTo(4));
+
+            var transported = RequireDictionary(MCPResponse.CompactForTransport(serialized));
+            var transportedResult = RequireDictionary(transported["result"]);
+            Assert.That(transportedResult, Is.EqualTo(result));
+        }
+
+        [Test]
         public void TransportCompaction_FormatsEquivalentDictionaryShapes()
         {
             var compacted = RequireDictionary(MCPResponse.CompactForTransport(
@@ -5422,12 +5449,46 @@ namespace UnityMCP.Editor.Tests
                         {
                             { "x", 1 },
                             { "y", 2 },
+                            { "position", new Dictionary<string, object>
+                                {
+                                    { "x", 1 },
+                                    { "y", 2 },
+                                }
+                            },
+                            { "center", new Dictionary<string, object>
+                                {
+                                    { "x", 2.5 },
+                                    { "y", 3.5 },
+                                }
+                            },
+                            { "min", new Dictionary<string, object>
+                                {
+                                    { "x", 1 },
+                                    { "y", 2 },
+                                }
+                            },
+                            { "max", new Dictionary<string, object>
+                                {
+                                    { "x", 4 },
+                                    { "y", 5 },
+                                }
+                            },
                             { "width", 3 },
                             { "height", 3 },
+                            { "size", new Dictionary<string, object>
+                                {
+                                    { "x", 3 },
+                                    { "y", 3 },
+                                }
+                            },
                             { "xMin", 1 },
                             { "yMin", 2 },
                             { "xMax", 4 },
                             { "yMax", 5 },
+                            { "left", 1 },
+                            { "top", 2 },
+                            { "right", 4 },
+                            { "bottom", 5 },
                         }
                     },
                     { "bounds", new Dictionary<string, object>

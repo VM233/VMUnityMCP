@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.43] - 2026-07-29
+
+- Route execute-code Unity value structs through the shared compact formatter before reflection can expand derived properties.
+- Recognize and consistency-check the complete Unity 6 `Rect` alias family, including position, center, min/max, size, and edge properties.
+
 ## [3.3.42] - 2026-07-29
 
 - Compact Unity value objects at the shared response transport boundary: vectors, rectangles, bounds, colors, sizes, ranges, edges, matrices, rays, and matching dictionary shapes now use concise scalar strings.
