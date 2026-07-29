@@ -822,7 +822,7 @@ namespace UnityMCP.Editor
                 case "uitoolkit/audit-uss-styles":
                     return "Audit USS selectors that serve exactly one authored UXML element and declarations that repeat the same winning value already supplied by the loaded PanelSettings theme or another loaded stylesheet.";
                 case "uitoolkit/audit-uxml-layout":
-                    return "Audit authored UXML for unconsumed element names, fully fixed flex partitions, layout-only manually centered containers, removable single-child centering wrappers, visually inert centered-label stretching or growth, repeated inline layout variants, and inline declarations already owned by loaded USS defaults.";
+                    return "Audit authored UXML for unconsumed element names, fully fixed flex partitions, fixed cross-axis content wrappers inside single-axis ScrollViews, layout-only manually centered containers, removable single-child centering wrappers, visually inert centered-label stretching or growth, repeated inline layout variants, and inline declarations already owned by loaded USS defaults.";
                 case "uitoolkit/windows":
                     return "List open Unity Editor windows with UI Toolkit root metadata.";
                 case "uitoolkit/tree":

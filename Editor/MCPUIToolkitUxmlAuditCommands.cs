@@ -98,6 +98,8 @@ namespace UnityMCP.Editor
             "uxml-layout-audit: allow-inert-text-grow";
         internal const string SINGLE_CHILD_CENTERING_WRAPPER_SUPPRESSION_MARKER =
             "uxml-layout-audit: allow-single-child-centering-wrapper";
+        internal const string FIXED_SCROLL_CROSS_AXIS_SIZE_SUPPRESSION_MARKER =
+            "uxml-layout-audit: allow-fixed-scroll-cross-axis-size";
         internal const string UNCONSUMED_ELEMENT_NAME_SUPPRESSION_MARKER =
             "uxml-layout-audit: allow-unconsumed-element-name";
         internal const string FIXED_FLEX_PARTITION_SUPPRESSION_MARKER =
@@ -138,6 +140,11 @@ namespace UnityMCP.Editor
         private static readonly Regex singleChildCenteringWrapperSuppressionRegex =
             new Regex(
                 @"^\s*uxml-layout-audit:\s*allow-single-child-centering-wrapper\s+(?<reason>.+?)\s*$",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private static readonly Regex fixedScrollCrossAxisSizeSuppressionRegex =
+            new Regex(
+                @"^\s*uxml-layout-audit:\s*allow-fixed-scroll-cross-axis-size\s+(?<reason>.+?)\s*$",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private static readonly Regex unconsumedElementNameSuppressionRegex =
@@ -596,6 +603,96 @@ namespace UnityMCP.Editor
                 suppressedCenteringWrapper.SuppressedCount == 1 &&
                 suppressedCenteringWrapper.Issues.Single().Suppressed);
 
+            const string fixedVerticalScrollCrossAxisSize =
+                "<ui:ScrollView mode=\"Vertical\" style=\"width: 312px; height: 240px;\">" +
+                "<ui:VisualElement name=\"StagePartyEntries\" " +
+                "style=\"width: 330px; align-items: center;\">" +
+                "<ui:VisualElement/><ui:VisualElement/><ui:VisualElement/>" +
+                "</ui:VisualElement></ui:ScrollView>";
+            var fixedVerticalScrollWrapper = AuditFixture(fixedVerticalScrollCrossAxisSize);
+            AddSelfTestCase(cases, "vertical scroll content wrapper fixed width warns",
+                fixedVerticalScrollWrapper.WarningCount == 1 &&
+                fixedVerticalScrollWrapper.Issues.Single().Kind ==
+                "fixed-scroll-cross-axis-content-size" &&
+                fixedVerticalScrollWrapper.Issues.Single().Axis == "horizontal" &&
+                Math.Abs(fixedVerticalScrollWrapper.Issues.Single().ParentSize - 312f) <=
+                CENTER_EPSILON &&
+                Math.Abs(fixedVerticalScrollWrapper.Issues.Single().Size - 330f) <=
+                CENTER_EPSILON);
+
+            var equalVerticalScrollWrapper = AuditFixture(
+                fixedVerticalScrollCrossAxisSize.Replace("width: 330px", "width: 312px"));
+            AddSelfTestCase(cases, "vertical scroll content wrapper repeated width warns",
+                equalVerticalScrollWrapper.WarningCount == 1 &&
+                equalVerticalScrollWrapper.Issues.Single().Kind ==
+                "fixed-scroll-cross-axis-content-size");
+
+            var stretchedVerticalScrollWrapper = AuditFixture(
+                fixedVerticalScrollCrossAxisSize.Replace("width: 330px; ", ""));
+            AddSelfTestCase(cases, "cross-axis stretch scroll wrapper passes",
+                stretchedVerticalScrollWrapper.WarningCount == 0);
+
+            var narrowerVerticalScrollWrapper = AuditFixture(
+                fixedVerticalScrollCrossAxisSize.Replace("width: 330px", "width: 300px"));
+            AddSelfTestCase(cases, "intentional narrower scroll wrapper passes",
+                narrowerVerticalScrollWrapper.WarningCount == 0);
+
+            var visualVerticalScrollWrapper = AuditFixture(
+                fixedVerticalScrollCrossAxisSize.Replace(
+                    "width: 330px; align-items: center;",
+                    "width: 330px; align-items: center; background-color: white;"));
+            AddSelfTestCase(cases, "visually owned scroll content region passes",
+                visualVerticalScrollWrapper.WarningCount == 0);
+
+            var clippingVerticalScrollWrapper = AuditFixture(
+                fixedVerticalScrollCrossAxisSize.Replace(
+                    "width: 330px; align-items: center;",
+                    "width: 330px; align-items: center; overflow: hidden;"));
+            AddSelfTestCase(cases, "clipping scroll content region passes",
+                clippingVerticalScrollWrapper.WarningCount == 0);
+
+            var interactiveVerticalScrollWrapper = AuditFixture(
+                fixedVerticalScrollCrossAxisSize.Replace(
+                    "name=\"StagePartyEntries\"",
+                    "name=\"StagePartyEntries\" focusable=\"true\""));
+            AddSelfTestCase(cases, "interactive scroll content region passes",
+                interactiveVerticalScrollWrapper.WarningCount == 0);
+
+            const string fixedHorizontalScrollCrossAxisSize =
+                "<ui:ScrollView mode=\"Horizontal\" style=\"width: 300px; height: 96px;\">" +
+                "<ui:VisualElement style=\"height: 102px; flex-direction: row;\">" +
+                "<ui:VisualElement/><ui:VisualElement/>" +
+                "</ui:VisualElement></ui:ScrollView>";
+            var fixedHorizontalScrollWrapper = AuditFixture(fixedHorizontalScrollCrossAxisSize);
+            AddSelfTestCase(cases, "horizontal scroll content wrapper fixed height warns",
+                fixedHorizontalScrollWrapper.WarningCount == 1 &&
+                fixedHorizontalScrollWrapper.Issues.Single().Kind ==
+                "fixed-scroll-cross-axis-content-size" &&
+                fixedHorizontalScrollWrapper.Issues.Single().Axis == "vertical");
+
+            var bidirectionalScrollWrapper = AuditFixture(
+                fixedVerticalScrollCrossAxisSize.Replace(
+                    "mode=\"Vertical\"", "mode=\"VerticalAndHorizontal\""));
+            AddSelfTestCase(cases, "bidirectional scroll content fixed size passes",
+                bidirectionalScrollWrapper.WarningCount == 0);
+
+            var unknownScrollExtent = AuditFixture(
+                fixedVerticalScrollCrossAxisSize.Replace("width: 312px; ", ""));
+            AddSelfTestCase(cases, "unknown scroll cross-axis extent passes",
+                unknownScrollExtent.WarningCount == 0);
+
+            var suppressedScrollWrapper = AuditFixture(
+                fixedVerticalScrollCrossAxisSize.Replace(
+                    "<ui:VisualElement name=\"StagePartyEntries\"",
+                    $"<!-- {FIXED_SCROLL_CROSS_AXIS_SIZE_SUPPRESSION_MARKER} " +
+                    "external surface owns a measured cross-axis crop -->" +
+                    "<ui:VisualElement name=\"StagePartyEntries\""),
+                includeSuppressed: true);
+            AddSelfTestCase(cases, "reasoned fixed scroll cross-axis suppression is retained",
+                suppressedScrollWrapper.WarningCount == 0 &&
+                suppressedScrollWrapper.SuppressedCount == 1 &&
+                suppressedScrollWrapper.Issues.Single().Suppressed);
+
             var unconsumedNameIndex = new UxmlElementNameReferenceIndex(true);
             const string unconsumedName =
                 "<ui:VisualElement name=\"LayoutOnlyName\"><ui:Label/></ui:VisualElement>";
@@ -754,6 +851,8 @@ namespace UnityMCP.Editor
             AuditVisuallyInertTextGrow(assetPath, document, inlineStyleContracts,
                 layoutContracts, report, includeSuppressed);
             AuditSingleChildCenteringWrapper(assetPath, document, inlineStyleContracts,
+                layoutContracts, report, includeSuppressed);
+            AuditFixedScrollCrossAxisContentSizes(assetPath, document, inlineStyleContracts,
                 layoutContracts, report, includeSuppressed);
             AuditUnconsumedElementNames(assetPath, document, elementNameReferences,
                 report, includeSuppressed);
@@ -1779,6 +1878,129 @@ namespace UnityMCP.Editor
                 };
                 report.Record(issue, includeSuppressed);
             }
+        }
+
+        private static void AuditFixedScrollCrossAxisContentSizes(string assetPath,
+            XDocument document, UxmlInlineStyleContractIndex inlineStyleContracts,
+            UxmlLayoutContractIndex layoutContracts, MCPUxmlLayoutAuditReport report,
+            bool includeSuppressed)
+        {
+            foreach (var scrollView in document.Descendants())
+            {
+                var scrollViewType = ResolveVisualElementType(scrollView);
+                if (scrollViewType == null ||
+                    typeof(ScrollView).IsAssignableFrom(scrollViewType) == false ||
+                    TryGetSingleAxisScrollCrossAxis(scrollView, out var crossAxis,
+                        out var crossSizeProperty) == false)
+                {
+                    continue;
+                }
+
+                var scrollStyle = ResolveAuthoredStyle(scrollView, inlineStyleContracts);
+                if (TryGetPixelLength(scrollStyle, crossSizeProperty,
+                        out var scrollCrossSize) == false ||
+                    scrollCrossSize <= 0)
+                {
+                    continue;
+                }
+
+                foreach (var contentWrapper in GetVisualContentChildren(scrollView))
+                {
+                    if (ResolveVisualElementType(contentWrapper) != typeof(VisualElement) ||
+                        GetVisualContentChildren(contentWrapper).Count == 0)
+                    {
+                        continue;
+                    }
+
+                    var inlineStyle = ParseStyle(AttributeValue(contentWrapper, "style"));
+                    if (TryGetPixelLength(inlineStyle, crossSizeProperty,
+                            out var wrapperCrossSize) == false ||
+                        wrapperCrossSize <= 0 ||
+                        wrapperCrossSize + CENTER_EPSILON < scrollCrossSize)
+                    {
+                        continue;
+                    }
+
+                    var wrapperStyle =
+                        ResolveAuthoredStyle(contentWrapper, inlineStyleContracts);
+                    if (StyleValue(wrapperStyle, "position") == "absolute" ||
+                        StyleValue(wrapperStyle, "display") == "none" ||
+                        HasVisualBoxContract(contentWrapper, wrapperStyle, layoutContracts) ||
+                        HasInteractionContract(contentWrapper) ||
+                        HasNonZeroMargin(wrapperStyle))
+                    {
+                        continue;
+                    }
+
+                    var wrapperName = AttributeValue(contentWrapper, "name");
+                    var wrapperLabel = string.IsNullOrWhiteSpace(wrapperName)
+                        ? $"<{contentWrapper.Name.LocalName}>"
+                        : $"#{wrapperName}";
+                    var scrollName = AttributeValue(scrollView, "name");
+                    var scrollLabel = string.IsNullOrWhiteSpace(scrollName)
+                        ? $"<{scrollView.Name.LocalName}>"
+                        : $"#{scrollName}";
+                    var suppressionReason = GetSuppressionReason(contentWrapper,
+                        fixedScrollCrossAxisSizeSuppressionRegex);
+                    var extentClause = wrapperCrossSize > scrollCrossSize + CENTER_EPSILON
+                        ? $"exceeds {scrollLabel}'s authored {FormatPixels(scrollCrossSize)} " +
+                          $"{crossSizeProperty} and creates overflow on an axis this " +
+                          "single-axis ScrollView does not scroll"
+                        : $"repeats {scrollLabel}'s authored {FormatPixels(scrollCrossSize)} " +
+                          $"{crossSizeProperty} instead of using the content container's " +
+                          "default cross-axis stretch";
+                    var issue = new MCPUxmlLayoutAuditIssue
+                    {
+                        AssetPath = assetPath,
+                        Line = GetLineNumber(contentWrapper),
+                        Element = wrapperLabel,
+                        ElementName = wrapperName,
+                        Kind = "fixed-scroll-cross-axis-content-size",
+                        Axis = crossAxis,
+                        FixedProperties = new List<string> { crossSizeProperty },
+                        ParentSize = scrollCrossSize,
+                        Size = wrapperCrossSize,
+                        InlineDeclarations = new Dictionary<string, string>(
+                            StringComparer.OrdinalIgnoreCase)
+                        {
+                            { crossSizeProperty, inlineStyle[crossSizeProperty] }
+                        },
+                        Suppressed = string.IsNullOrWhiteSpace(suppressionReason) == false,
+                        SuppressionReason = suppressionReason,
+                        Message =
+                            $"Plain direct content wrapper {wrapperLabel} fixes its " +
+                            $"{crossAxis} cross-axis {crossSizeProperty} to " +
+                            $"{FormatPixels(wrapperCrossSize)}, which {extentClause}. " +
+                            $"Remove the fixed {crossSizeProperty} and let the ScrollView own " +
+                            "its viewport while the wrapper stretches on the cross axis."
+                    };
+                    report.Record(issue, includeSuppressed);
+                }
+            }
+        }
+
+        private static bool TryGetSingleAxisScrollCrossAxis(XElement scrollView,
+            out string crossAxis, out string crossSizeProperty)
+        {
+            var mode = AttributeValue(scrollView, "mode").Trim();
+            if (string.IsNullOrWhiteSpace(mode) ||
+                string.Equals(mode, "Vertical", StringComparison.OrdinalIgnoreCase))
+            {
+                crossAxis = "horizontal";
+                crossSizeProperty = "width";
+                return true;
+            }
+
+            if (string.Equals(mode, "Horizontal", StringComparison.OrdinalIgnoreCase))
+            {
+                crossAxis = "vertical";
+                crossSizeProperty = "height";
+                return true;
+            }
+
+            crossAxis = "";
+            crossSizeProperty = "";
+            return false;
         }
 
         private static void AuditUnconsumedElementNames(string assetPath,
@@ -2994,6 +3216,7 @@ namespace UnityMCP.Editor
                         $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_STRETCH_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.INERT_TEXT_GROW_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.SINGLE_CHILD_CENTERING_WRAPPER_SUPPRESSION_MARKER} <reason> -->",
+                        $"<!-- {MCPUxmlLayoutAuditor.FIXED_SCROLL_CROSS_AXIS_SIZE_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.UNCONSUMED_ELEMENT_NAME_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.FIXED_FLEX_PARTITION_SUPPRESSION_MARKER} <reason> -->",
                         $"<!-- {MCPUxmlLayoutAuditor.PIXEL_GRID_SUPPRESSION_MARKER} <reason> -->"
@@ -3076,6 +3299,8 @@ namespace UnityMCP.Editor
                          StringComparison.Ordinal) ||
                      string.Equals(Kind, "single-child-centering-wrapper",
                          StringComparison.Ordinal) ||
+                     string.Equals(Kind, "fixed-scroll-cross-axis-content-size",
+                         StringComparison.Ordinal) ||
                      string.Equals(Kind, "unconsumed-element-name",
                          StringComparison.Ordinal) ||
                      string.Equals(Kind, "fixed-flex-partition",
@@ -3087,6 +3312,12 @@ namespace UnityMCP.Editor
                 if (string.Equals(Kind, "fixed-flex-partition",
                         StringComparison.Ordinal))
                 {
+                    result["size"] = Size;
+                }
+                else if (string.Equals(Kind, "fixed-scroll-cross-axis-content-size",
+                             StringComparison.Ordinal))
+                {
+                    result["parentSize"] = ParentSize;
                     result["size"] = Size;
                 }
             }

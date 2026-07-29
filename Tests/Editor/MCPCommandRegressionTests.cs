@@ -2507,6 +2507,55 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void UIToolkitUxmlAudit_ReportsFixedSingleAxisScrollCrossAxisContentSize()
+        {
+            const string uxmlPath =
+                TEST_FOLDER + "/Fixed Scroll Cross Axis Content Size.uxml";
+            File.WriteAllText(GetAbsolutePath(uxmlPath),
+                "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\">" +
+                "<ui:ScrollView mode=\"Vertical\" style=\"width: 312px; height: 240px;\">" +
+                "<!-- uxml-layout-audit: allow-unconsumed-element-name assertion anchor -->" +
+                "<ui:VisualElement name=\"StagePartyEntries\" " +
+                "style=\"width: 330px; align-items: center;\">" +
+                "<ui:VisualElement/><ui:VisualElement/><ui:VisualElement/>" +
+                "</ui:VisualElement></ui:ScrollView>" +
+                "<ui:ScrollView mode=\"VerticalAndHorizontal\" " +
+                "style=\"width: 312px; height: 240px;\">" +
+                "<ui:VisualElement style=\"width: 330px;\">" +
+                "<ui:VisualElement/>" +
+                "</ui:VisualElement></ui:ScrollView>" +
+                "</ui:UXML>");
+
+            var result = RequireDictionary(
+                MCPUIToolkitUxmlAuditCommands.AuditUxmlLayout(
+                    new Dictionary<string, object>
+                    {
+                        { "paths", new[] { uxmlPath } },
+                        { "roots", new[] { TEST_FOLDER } },
+                        { "runtimeSourceRoots", new[] { TEST_FOLDER } },
+                        { "useProjectSettings", false },
+                    }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["warningCount"], Is.EqualTo(1));
+            var issues = (List<Dictionary<string, object>>)result["issues"];
+            var issue = issues.Single();
+            Assert.That(issue["kind"],
+                Is.EqualTo("fixed-scroll-cross-axis-content-size"));
+            Assert.That(issue["element"], Is.EqualTo("#StagePartyEntries"));
+            Assert.That(issue["axis"], Is.EqualTo("horizontal"));
+            Assert.That(issue["parentSize"], Is.EqualTo(312f));
+            Assert.That(issue["size"], Is.EqualTo(330f));
+            Assert.That((List<string>)issue["fixedProperties"],
+                Is.EqualTo(new[] { "width" }));
+            Assert.That((Dictionary<string, string>)issue["inlineDeclarations"],
+                Is.EquivalentTo(new Dictionary<string, string>
+                {
+                    { "width", "330px" }
+                }));
+        }
+
+        [Test]
         public void UIToolkitUxmlAudit_ReportsOnlyUnconsumedElementNames()
         {
             const string uxmlPath = TEST_FOLDER + "/Element Name Consumers.uxml";

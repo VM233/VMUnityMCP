@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [4.3.0] - 2026-07-29
+
+- Extend the UXML layout audit with an independent finding for plain direct content wrappers whose fixed cross-axis size repeats or exceeds a single-axis `ScrollView` viewport.
+- Preserve intentional narrower constraints, bidirectional scrolling, unknown viewport extents, visual/clipping/interaction ownership, and reasoned local suppressions.
+
 ## [4.2.0] - 2026-07-29
 
 - Extend the USS audit with independent findings for advanced text generation without auto sizing, ineffective text alignment on shrink-wrapped Labels centered by their sole-child parent, and inheritable text styles owned by such child Labels.
