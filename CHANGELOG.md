@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.46] - 2026-07-29
+
+- Keep the domain-reload ticket snapshot focused on mutations and the explicitly resumable Editor-idle wait instead of caching completed read-only responses such as repeated tool metadata.
+- Skip unchanged snapshot rewrites, cap retained terminal mutations, and replace oversized recovery results with a structured non-retryable marker so background discovery cannot stall the Editor on synchronous multi-megabyte disk flushes.
+
 ## [3.3.45] - 2026-07-29
 
 - Extend the UXML layout audit to report authored element names with no indexed lookup consumer.

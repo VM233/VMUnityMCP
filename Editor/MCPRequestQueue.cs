@@ -100,6 +100,7 @@ namespace UnityMCP.Editor
         private static readonly Dictionary<long, Dictionary<string, object>> _reloadedTicketSnapshots
             = new Dictionary<long, Dictionary<string, object>>();
         private static bool _persistentSnapshotsLoaded;
+        private static string _lastPersistedSnapshotJson;
 
         // Synchronous waiters (backward compat)
         private static readonly Dictionary<long, List<ManualResetEventSlim>> _waiters
@@ -127,6 +128,8 @@ namespace UnityMCP.Editor
         private const int MaxReadBatchSize            = 5;
         private const int MaxTotalQueuedRequests      = 256;
         private const int MaxQueuedRequestsPerAgent   = 64;
+        private const int MaxPersistedCompletedTickets = 32;
+        private const int MaxPersistedResultCharacters = 64 * 1024;
 
         // ═══════════════════════════════════════════════════════
         //  Public API — Submit
@@ -1322,13 +1325,13 @@ namespace UnityMCP.Editor
                 string json = ReadPersistentTicketSnapshots();
                 if (string.IsNullOrEmpty(json))
                     return;
+                _lastPersistedSnapshotJson = json;
 
                 var snapshots = MiniJson.Deserialize(json) as List<object>;
                 if (snapshots == null)
                     return;
 
                 long maxTicketId = 0;
-                bool restoredNonterminalSnapshot = false;
                 foreach (var item in snapshots)
                 {
                     var snapshot = MCPResponse.ToDictionary(item);
@@ -1342,11 +1345,6 @@ namespace UnityMCP.Editor
                     if (TryRestoreEditorIdleWait(snapshot, out var restoredTicket) ||
                         TryRestorePersistentRequest(snapshot, out restoredTicket))
                     {
-                        string previousStatus = GetString(snapshot, "status");
-                        if (previousStatus == RequestStatus.Queued.ToString() ||
-                            previousStatus == RequestStatus.Executing.ToString())
-                            restoredNonterminalSnapshot = true;
-
                         if (restoredTicket.Status == RequestStatus.Queued)
                             EnqueueRestoredTicketLocked(restoredTicket);
                         else
@@ -1360,8 +1358,10 @@ namespace UnityMCP.Editor
 
                 if (maxTicketId > _nextTicketId)
                     Interlocked.Exchange(ref _nextTicketId, maxTicketId);
-                if (restoredNonterminalSnapshot)
-                    PersistTicketSnapshotsLocked();
+                // Rewrite legacy snapshots once so ordinary completed reads no longer
+                // remain as a full response cache after the next package update/reload.
+                // Resumed tickets also need their updated status and resume count saved.
+                PersistTicketSnapshotsLocked();
             }
         }
 
@@ -1641,21 +1641,53 @@ namespace UnityMCP.Editor
 
         private static void PersistTicketSnapshotsLocked()
         {
-            var snapshots = new List<object>();
+            var snapshots = BuildPersistentTicketSnapshotsLocked();
+            string json = MiniJson.Serialize(snapshots);
+            if (string.Equals(json, _lastPersistedSnapshotJson, StringComparison.Ordinal))
+                return;
 
+            if (WritePersistentTicketSnapshots(json))
+                _lastPersistedSnapshotJson = json;
+        }
+
+        private static List<object> BuildPersistentTicketSnapshotsLocked()
+        {
+            var snapshots = new List<object>();
             foreach (var agentQueue in _agentQueues.Values)
             {
                 foreach (var ticket in agentQueue)
-                    snapshots.Add(SnapshotTicket(ticket));
+                {
+                    if (ShouldPersistTicketSnapshot(ticket))
+                        snapshots.Add(SnapshotTicket(ticket));
+                }
             }
 
             foreach (var ticket in _executingTickets.Values)
+            {
+                if (ShouldPersistTicketSnapshot(ticket))
+                    snapshots.Add(SnapshotTicket(ticket));
+            }
+
+            foreach (var ticket in _completedTickets.Values
+                         .Where(ShouldPersistTicketSnapshot)
+                         .OrderByDescending(t => t.SubmittedAt)
+                         .Take(MaxPersistedCompletedTickets))
                 snapshots.Add(SnapshotTicket(ticket));
 
-            foreach (var ticket in _completedTickets.Values.OrderByDescending(t => t.SubmittedAt).Take(100))
-                snapshots.Add(SnapshotTicket(ticket));
+            return snapshots;
+        }
 
-            WritePersistentTicketSnapshots(MiniJson.Serialize(snapshots));
+        private static bool ShouldPersistTicketSnapshot(RequestTicket ticket)
+        {
+            if (ticket == null)
+                return false;
+
+            // Read-only routes are safe to submit again after a domain reload and must
+            // not turn the reload snapshot into a duplicate response cache. The idle
+            // wait is the one read-only workflow whose active-time budget and terminal
+            // result intentionally survive reloads.
+            return !ticket.IsReadOnly ||
+                   ticket.ActionName == "wait/editor-idle";
         }
 
         private static Dictionary<string, object> SnapshotTicket(RequestTicket ticket)
@@ -1692,12 +1724,39 @@ namespace UnityMCP.Editor
                 (ticket.Status == RequestStatus.Completed || ticket.Status == RequestStatus.Failed ||
                  ticket.Status == RequestStatus.TimedOut || ticket.Status == RequestStatus.Canceled ||
                  ticket.Status == RequestStatus.UncertainAfterReload))
-                snapshot["result"] = ticket.Result;
+                snapshot["result"] = GetPersistedTerminalResult(ticket);
 
             if (ticket.CompletedAt.HasValue)
                 snapshot["completedAt"] = ticket.CompletedAt.Value.ToString("O");
 
             return snapshot;
+        }
+
+        private static object GetPersistedTerminalResult(RequestTicket ticket)
+        {
+            try
+            {
+                string serializedResult = MiniJson.Serialize(ticket.Result);
+                if (serializedResult.Length <= MaxPersistedResultCharacters)
+                    return ticket.Result;
+            }
+            catch
+            {
+                // Fall through to the structured recovery marker below. Persistence
+                // must not break queue completion because one result cannot serialize.
+            }
+
+            return MCPResponse.Error(
+                "The request completed, but its response was too large to retain in the Unity domain-reload snapshot. Inspect the target before retrying the mutation.",
+                "completed_result_not_persisted",
+                false,
+                new Dictionary<string, object>
+                {
+                    { "ticketId", ticket.TicketId },
+                    { "actionName", ticket.ActionName },
+                    { "originalStatus", ticket.Status.ToString() },
+                    { "maximumPersistedResultCharacters", MaxPersistedResultCharacters },
+                });
         }
 
         private static bool TryGetLong(Dictionary<string, object> dictionary, string key, out long value)
@@ -1770,7 +1829,7 @@ namespace UnityMCP.Editor
             }
         }
 
-        private static void WritePersistentTicketSnapshots(string json)
+        private static bool WritePersistentTicketSnapshots(string json)
         {
             try
             {
@@ -1780,10 +1839,12 @@ namespace UnityMCP.Editor
                     Directory.CreateDirectory(directory);
 
                 WriteTextAtomically(path, json ?? "[]");
+                return true;
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[Unity MCP Queue] Failed to persist ticket snapshots: {ex.Message}");
+                return false;
             }
         }
 

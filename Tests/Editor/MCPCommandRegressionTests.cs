@@ -751,6 +751,71 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void RequestQueue_PersistentSnapshotsExcludeOrdinaryReadOnlyResponses()
+        {
+            var shouldPersist = typeof(MCPRequestQueue).GetMethod("ShouldPersistTicketSnapshot",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var maximumCompleted = typeof(MCPRequestQueue).GetField("MaxPersistedCompletedTickets",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(shouldPersist, Is.Not.Null);
+            Assert.That(maximumCompleted, Is.Not.Null);
+            Assert.That((int)maximumCompleted.GetRawConstantValue(), Is.LessThanOrEqualTo(32));
+
+            MCPRequestQueue.RequestTicket Ticket(string actionName, bool readOnly) => new()
+            {
+                TicketId = DateTime.UtcNow.Ticks,
+                AgentId = "snapshot-boundary-regression",
+                ActionName = actionName,
+                Status = MCPRequestQueue.RequestStatus.Completed,
+                SubmittedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow,
+                IsReadOnly = readOnly,
+                Result = new string('x', 120_000),
+            };
+
+            Assert.That(shouldPersist.Invoke(null, new object[] { Ticket("_meta/tools", true) }),
+                Is.EqualTo(false),
+                "Ordinary read-only responses are safe to rerun and must not bloat reload snapshots.");
+            Assert.That(shouldPersist.Invoke(null, new object[] { Ticket("scene/hierarchy", true) }),
+                Is.EqualTo(false));
+            Assert.That(shouldPersist.Invoke(null, new object[] { Ticket("wait/editor-idle", true) }),
+                Is.EqualTo(true),
+                "The explicit reload-resumable idle wait must keep its active-time state.");
+            Assert.That(shouldPersist.Invoke(null, new object[] { Ticket("asset/create-folder", false) }),
+                Is.EqualTo(true),
+                "Mutations retain recovery state so a reload cannot silently replay them.");
+        }
+
+        [Test]
+        public void RequestQueue_PersistentMutationResultsAreSizeBounded()
+        {
+            var compactResult = typeof(MCPRequestQueue).GetMethod("GetPersistedTerminalResult",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var maximumCharacters = typeof(MCPRequestQueue).GetField("MaxPersistedResultCharacters",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(compactResult, Is.Not.Null);
+            Assert.That(maximumCharacters, Is.Not.Null);
+            int limit = (int)maximumCharacters.GetRawConstantValue();
+
+            var ticket = new MCPRequestQueue.RequestTicket
+            {
+                TicketId = DateTime.UtcNow.Ticks,
+                AgentId = "snapshot-size-regression",
+                ActionName = "asset/create-folder",
+                Status = MCPRequestQueue.RequestStatus.Completed,
+                SubmittedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow,
+                IsReadOnly = false,
+                Result = new string('x', limit + 1),
+            };
+
+            var persistedResult = RequireDictionary(compactResult.Invoke(null, new object[] { ticket }));
+            Assert.That(persistedResult["success"], Is.EqualTo(false));
+            Assert.That(persistedResult["errorCode"], Is.EqualTo("completed_result_not_persisted"));
+            Assert.That(persistedResult["retryable"], Is.EqualTo(false));
+        }
+
+        [Test]
         public void EditorIdleWait_IsClassifiedAsReadOperation()
         {
             var method = typeof(MCPRequestQueue).GetMethod("IsReadOperation",
