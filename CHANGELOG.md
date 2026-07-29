@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [4.0.1] - 2026-07-29
+
+- Remove the Welcome window completely, including its automatic startup hook, Editor menu entry, dedicated assembly, styles, configuration, and image assets.
+
 ## [4.0.0] - 2026-07-29
 
 - Establish the independently maintained **VM Unity MCP** package in the standalone `VM233/VMUnityMCP` repository.
