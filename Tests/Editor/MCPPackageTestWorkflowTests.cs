@@ -232,7 +232,7 @@ namespace UnityMCP.Editor.Tests
             object[] arguments =
             {
                 new[] { "UnityMCP.Editor.Tests" },
-                new[] { "AnkleBreaker.UnityMCP.Editor.Tests" },
+                new[] { "VMUnityMCP.Editor.Tests" },
                 null,
             };
 
@@ -241,7 +241,7 @@ namespace UnityMCP.Editor.Tests
             Assert.That(valid, Is.False);
             Assert.That(arguments[2], Does.Contain("UnityMCP.Editor.Tests"));
             Assert.That(arguments[2],
-                Does.Contain("AnkleBreaker.UnityMCP.Editor.Tests"));
+                Does.Contain("VMUnityMCP.Editor.Tests"));
             Assert.That(arguments[2], Does.Contain("asmdef"));
         }
 
@@ -254,11 +254,11 @@ namespace UnityMCP.Editor.Tests
             Assert.That(method, Is.Not.Null);
             object[] arguments =
             {
-                new[] { "AnkleBreaker.UnityMCP.Editor.Tests" },
+                new[] { "VMUnityMCP.Editor.Tests" },
                 new[]
                 {
-                    "AnkleBreaker.UnityMCP.Editor",
-                    "AnkleBreaker.UnityMCP.Editor.Tests",
+                    "VMUnityMCP.Editor",
+                    "VMUnityMCP.Editor.Tests",
                 },
                 null,
             };

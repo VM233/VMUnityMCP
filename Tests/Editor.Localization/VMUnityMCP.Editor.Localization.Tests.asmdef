@@ -1,9 +1,9 @@
 {
-  "name": "AnkleBreaker.UnityMCP.Editor.Localization.Tests",
+  "name": "VMUnityMCP.Editor.Localization.Tests",
   "rootNamespace": "UnityMCP.Editor.Localization.Tests",
   "references": [
-    "AnkleBreaker.UnityMCP.Editor",
-    "AnkleBreaker.UnityMCP.Editor.Localization",
+    "VMUnityMCP.Editor",
+    "VMUnityMCP.Editor.Localization",
     "Unity.Localization",
     "Unity.Localization.Editor",
     "Unity.Addressables",

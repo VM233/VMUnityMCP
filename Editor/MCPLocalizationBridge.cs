@@ -7,7 +7,7 @@ namespace UnityMCP.Editor
     internal static class MCPLocalizationBridge
     {
         private const string CommandTypeName =
-            "UnityMCP.Editor.Localization.MCPLocalizationCommands, AnkleBreaker.UnityMCP.Editor.Localization";
+            "UnityMCP.Editor.Localization.MCPLocalizationCommands, VMUnityMCP.Editor.Localization";
 
         public static bool IsAvailable => ResolveCommandType() != null;
 

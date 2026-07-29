@@ -12,7 +12,7 @@ namespace UnityMCP.Editor
     public static class MCPUpdateChecker
     {
         private const string GitHubApiUrl =
-            "https://api.github.com/repos/AnkleBreaker-Studio/unity-mcp-plugin/releases/latest";
+            "https://api.github.com/repos/VM233/VMUnityMCP/releases/latest";
 
         private static string _currentVersion;
         public static string CurrentVersion
@@ -54,7 +54,7 @@ namespace UnityMCP.Editor
 
             // Fetch from GitHub
             var request = UnityWebRequest.Get(GitHubApiUrl);
-            request.SetRequestHeader("User-Agent", "unity-mcp-plugin");
+            request.SetRequestHeader("User-Agent", "VMUnityMCP");
             request.SetRequestHeader("Accept", "application/vnd.github.v3+json");
 
             _pendingCallback = callback;

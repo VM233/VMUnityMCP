@@ -50,8 +50,9 @@ namespace UnityMCP.Editor.Welcome
     [InitializeOnLoad]
     internal static class UnityMcpWelcomeAutoOpen
     {
-        private const string SESSION_KEY_OPENED = "UnityMcp.WelcomeWindow.OpenedThisSession";
-        private const string EDITOR_PREFS_PREFIX = "UnityMcp.WelcomeWindow";
+        private const string SESSION_KEY_OPENED =
+            "VMUnityMCP.WelcomeWindow.OpenedThisSession";
+        private const string EDITOR_PREFS_PREFIX = "VMUnityMCP.WelcomeWindow";
         private const string KEY_HAS_OPENED_ONCE = "HasOpenedOnce";
         private const string KEY_DONT_SHOW_AGAIN = "DontShowAgain";
 

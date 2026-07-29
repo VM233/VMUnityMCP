@@ -14,8 +14,8 @@ namespace UnityMCP.Editor
     [InitializeOnLoad]
     public static class MCPPackageTestCommands
     {
-        private const string DefaultPackageName = "com.anklebreaker.unity-mcp";
-        private const string DefaultTestAssembly = "AnkleBreaker.UnityMCP.Editor.Tests";
+        private const string DefaultPackageName = "com.vm233.unity-mcp";
+        private const string DefaultTestAssembly = "VMUnityMCP.Editor.Tests";
         private const double WorkflowTimeoutMinutes = 10;
 
         private static PackageTestWorkflow _workflow;

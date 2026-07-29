@@ -1384,7 +1384,7 @@ namespace UnityMCP.Editor
                     ));
                 case "testing/run-package-tests":
                     return Schema(Props(
-                        Prop("packageName", "string", "Git package name. Defaults to com.anklebreaker.unity-mcp."),
+                        Prop("packageName", "string", "Git package name. Defaults to com.vm233.unity-mcp."),
                         Prop("mode", "string", "Test mode: EditMode or PlayMode. Defaults to EditMode."),
                         Prop("assemblies", "array", "Test assembly names. Defaults to the Unity MCP regression assembly for the Unity MCP package."),
                         Prop("testNames", "array", "Optional exact test full names."),

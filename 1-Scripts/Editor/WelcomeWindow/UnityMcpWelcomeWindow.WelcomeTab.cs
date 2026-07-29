@@ -95,7 +95,7 @@ namespace UnityMCP.Editor.Welcome
 
         private void BuildMoreFromBox()
         {
-            VisualElement more = AddBox(_scroll, "More from AnkleBreaker Studio", UnityMcpWelcomeIcon.STORE);
+            VisualElement more = AddBox(_scroll, "Related projects", UnityMcpWelcomeIcon.STORE);
             if (_config.CrossSell != null && _config.CrossSell.Count > 0)
             {
                 AddBoxBody(more, _config.ProductName + " works standalone, and integrates automatically when these companions are present:");
@@ -109,10 +109,10 @@ namespace UnityMCP.Editor.Welcome
             VisualElement actions = new VisualElement();
             actions.style.flexDirection = FlexDirection.Row;
             actions.style.marginTop = 8;
-            Button browse = MakeAccentButton("Browse all our assets", UnityMcpWelcomeIcon.STORE, () => OpenUrl(_config.PublisherUrl));
+            Button browse = MakeAccentButton("Open Repository", UnityMcpWelcomeIcon.STORE, () => OpenUrl(_config.PublisherUrl));
             browse.style.flexGrow = 1; browse.style.minWidth = 0; browse.style.alignSelf = Align.Auto;
             actions.Add(browse);
-            Button github = MakeAccentButton("GitHub", UnityMcpWelcomeIcon.WEB, () => OpenUrl(GITHUB_URL));
+            Button github = MakeAccentButton("Original Project", UnityMcpWelcomeIcon.WEB, () => OpenUrl(ORIGINAL_PROJECT_URL));
             github.style.flexGrow = 1; github.style.minWidth = 0; github.style.alignSelf = Align.Auto; github.style.marginLeft = 8;
             actions.Add(github);
             more.Add(actions);

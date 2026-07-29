@@ -1,8 +1,8 @@
 {
-  "name": "AnkleBreaker.UnityMCP.Editor.Tests",
+  "name": "VMUnityMCP.Editor.Tests",
   "rootNamespace": "UnityMCP.Editor.Tests",
   "references": [
-    "AnkleBreaker.UnityMCP.Editor"
+    "VMUnityMCP.Editor"
   ],
   "includePlatforms": [
     "Editor"

@@ -1,4 +1,4 @@
-/* AnkleBreaker welcome-window theme: deep warm-brown background, molten-orange
+/* VM Unity MCP welcome-window theme: deep warm-brown background, molten-orange
  * accent (#d97a2a / #f4a047). Attached per-window (scoped to its panel) via the
  * theme helper, so the .unity-* overrides below only affect this window. */
 

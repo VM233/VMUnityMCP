@@ -1,8 +1,8 @@
 {
-  "name": "AnkleBreaker.UnityMCP.Editor.Localization",
+  "name": "VMUnityMCP.Editor.Localization",
   "rootNamespace": "UnityMCP.Editor.Localization",
   "references": [
-    "AnkleBreaker.UnityMCP.Editor",
+    "VMUnityMCP.Editor",
     "Unity.Localization",
     "Unity.Localization.Editor"
   ],

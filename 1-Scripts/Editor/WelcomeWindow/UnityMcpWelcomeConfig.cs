@@ -72,7 +72,7 @@ namespace UnityMCP.Editor.Welcome
         public const string DISTRIBUTION_GITHUB = "GitHub";
 
         public string ProductName = "My Asset";
-        public string Subtitle = "by AnkleBreaker Studio";
+        public string Subtitle = "by VM233";
 
         public string AboutHeading = "About";
         public string AboutText = "";

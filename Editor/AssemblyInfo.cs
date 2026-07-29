@@ -1,3 +1,3 @@
 using System.Runtime.CompilerServices;
 
-[assembly: InternalsVisibleTo("AnkleBreaker.UnityMCP.Editor.Tests")]
+[assembly: InternalsVisibleTo("VMUnityMCP.Editor.Tests")]

@@ -1,7 +1,7 @@
 {
-  "name": "com.anklebreaker.unity-mcp",
-  "version": "3.3.48",
-  "displayName": "AnkleBreaker Unity MCP",
+  "name": "com.vm233.unity-mcp",
+  "version": "4.0.0",
+  "displayName": "VM Unity MCP",
   "description": "MCP bridge for structured, queue-safe Unity Editor automation across assets, UI Toolkit, packages, builds, tests, and project-defined workflows.",
   "unity": "2021.3",
   "unityRelease": "18f1",
@@ -14,15 +14,14 @@
     "bridge"
   ],
   "author": {
-    "name": "AnkleBreaker Consulting & AnkleBreaker Studio",
-    "email": "francois@anklebreaker-studio.com",
-    "url": "https://anklebreaker-studio.com"
+    "name": "VM233",
+    "url": "https://github.com/VM233"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/AnkleBreaker-Studio/unity-mcp-plugin.git"
+    "url": "https://github.com/VM233/VMUnityMCP.git"
   },
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "tool",
   "dependencies": {
     "com.unity.2d.sprite": "1.0.0"

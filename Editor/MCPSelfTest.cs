@@ -556,7 +556,7 @@ namespace UnityMCP.Editor
         private static string TestScript()
         {
             // Try to read a script we know should exist (any .cs in Editor/)
-            string[] guids = UnityEditor.AssetDatabase.FindAssets("t:MonoScript", new[] { "Packages/com.anklebreaker.unity-mcp/Editor" });
+            string[] guids = UnityEditor.AssetDatabase.FindAssets("t:MonoScript", new[] { "Packages/com.vm233.unity-mcp/Editor" });
             if (guids.Length == 0)
             {
                 // Fallback: look in Assets

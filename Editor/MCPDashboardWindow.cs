@@ -103,7 +103,7 @@ namespace UnityMCP.Editor
         {
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            EditorGUILayout.LabelField("AnkleBreaker Unity MCP", _headerStyle, GUILayout.Height(28));
+            EditorGUILayout.LabelField("VM Unity MCP", _headerStyle, GUILayout.Height(28));
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
         }

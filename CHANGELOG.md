@@ -2,6 +2,12 @@
 
 All notable changes to this package will be documented in this file.
 
+## [4.0.0] - 2026-07-29
+
+- Establish the independently maintained **VM Unity MCP** package in the standalone `VM233/VMUnityMCP` repository.
+- Change the Unity package ID from `com.anklebreaker.unity-mcp` to `com.vm233.unity-mcp` and rename the package assemblies from `AnkleBreaker.UnityMCP.*` to `VMUnityMCP.*`.
+- Keep the original AnkleBreaker license and required attribution while moving product authorship, update checks, package testing defaults, documentation, and Editor branding to VM233.
+
 ## [3.3.48] - 2026-07-29
 
 - Add an opt-in, project-configurable pixel-grid audit for structural offsets, margin/gap spacing, and padding in USS declarations and UXML inline styles.

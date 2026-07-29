@@ -1,10 +1,10 @@
-# Unity MCP Plugin Fork
+# VM Unity MCP
 
-This is a lightweight fork of [AnkleBreaker Studio's Unity MCP Plugin](https://github.com/AnkleBreaker-Studio/unity-mcp-plugin).
+VM Unity MCP is an independently maintained Unity Editor MCP bridge published by VM233. It provides structured, queue-safe tools for scenes, assets, UI Toolkit, packages, builds, tests, project-defined workflows, and Editor diagnostics.
 
-The upstream project provides the full Unity Editor MCP bridge, broad tool coverage, dashboard, optional package integrations, FAQ, changelog, and general documentation. This fork keeps that base and adds a small set of workflow tools that are useful for automated Unity project editing.
+This project was originally derived from [AnkleBreaker Studio's Unity MCP Plugin](https://github.com/AnkleBreaker-Studio/unity-mcp-plugin) and retains its full license and attribution requirements. **Powered by AnkleBreaker MCP.** VM Unity MCP now develops and releases from a standalone repository rather than a GitHub fork.
 
-For complete upstream documentation, install notes, supported tool categories, screenshots, and general usage, see:
+Related original projects:
 
 - [Original Unity MCP Plugin](https://github.com/AnkleBreaker-Studio/unity-mcp-plugin)
 - [Unity MCP Server](https://github.com/AnkleBreaker-Studio/unity-mcp-server)
@@ -14,13 +14,13 @@ For complete upstream documentation, install notes, supported tool categories, s
 In Unity Package Manager, choose **Add package from git URL...** and enter:
 
 ```text
-https://github.com/VM233/unity-mcp-plugin.git
+https://github.com/VM233/VMUnityMCP.git
 ```
 
 For a reproducible project dependency, pin a specific commit:
 
 ```text
-https://github.com/VM233/unity-mcp-plugin.git#<commit-hash>
+https://github.com/VM233/VMUnityMCP.git#<commit-hash>
 ```
 
 The bridge runs inside the Unity Editor on `127.0.0.1`, usually port `7890`. Verify it with:
@@ -29,7 +29,7 @@ The bridge runs inside the Unity Editor on `127.0.0.1`, usually port `7890`. Ver
 http://127.0.0.1:7890/api/ping
 ```
 
-## Fork Additions
+## Capabilities
 
 | Area | MCP tool name | HTTP route | Purpose |
 |------|---------------|------------|---------|
