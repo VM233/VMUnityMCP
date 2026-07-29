@@ -148,15 +148,15 @@ namespace UnityMCP.Editor
             {
                 // Persist that we were running, so we restart after reload
                 SessionState.SetBool(WasRunningKey, true);
-                Stop();
+                MCPRequestQueue.PrepareForDomainReload();
+                MCPInstanceRegistry.MarkReloading();
+                Stop(false);
             }
         }
 
         private static void OnQuitting()
         {
             Stop();
-            // Final cleanup of registry on quit
-            MCPInstanceRegistry.Unregister();
         }
 
         /// <summary>Whether the server is currently running.</summary>
@@ -270,7 +270,7 @@ namespace UnityMCP.Editor
             }
         }
 
-        public static void Stop()
+        public static void Stop(bool unregisterInstance = true)
         {
             _isRunning = false;
 
@@ -278,8 +278,8 @@ namespace UnityMCP.Editor
             _manualPortRetryPending = false;
             _manualPortRetryCount = 0;
 
-            // Unregister from shared instance registry
-            MCPInstanceRegistry.Unregister();
+            if (unregisterInstance)
+                MCPInstanceRegistry.Unregister();
 
             try
             {

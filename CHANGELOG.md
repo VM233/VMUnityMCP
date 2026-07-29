@@ -2,6 +2,12 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.3.44] - 2026-07-29
+
+- Pause resumable editor-idle timeout budgets across planned Unity domain reloads and recover legacy expired snapshots with a fresh active-time budget.
+- Keep synchronous transport timeouts out of persistent ticket state, and allow legacy waiters to read terminal results written by the replacement AppDomain.
+- Preserve the instance registry lease during reload with an explicit `isReloading` marker, while retaining normal unregister behavior for real server stops and Editor quit.
+
 ## [3.3.43] - 2026-07-29
 
 - Route execute-code Unity value structs through the shared compact formatter before reflection can expand derived properties.

@@ -121,6 +121,9 @@ namespace UnityMCP.Editor
         private const int StaleExecutingLifetimeSec   = 120;
         private const string PersistentTicketSnapshotFileName = "request-queue-tickets-v2.json";
         public const int SyncTimeoutMs                = 30_000;
+        internal const int ReloadRecoveryTimeoutMs    = 120_000;
+        private const int PersistedSnapshotPollIntervalMs = 250;
+        private const int MaxEditorIdleReloadResumes  = 8;
         private const int MaxReadBatchSize            = 5;
         private const int MaxTotalQueuedRequests      = 256;
         private const int MaxQueuedRequestsPerAgent   = 64;
@@ -388,6 +391,13 @@ namespace UnityMCP.Editor
 
         private static object WaitForTicket(RequestTicket ticket)
         {
+            return WaitForTicket(ticket, SyncTimeoutMs, ReloadRecoveryTimeoutMs,
+                GetPersistentTicketSnapshotPath());
+        }
+
+        private static object WaitForTicket(RequestTicket ticket, int syncTimeoutMs,
+            int reloadRecoveryTimeoutMs, string snapshotPath)
+        {
             var waiter = new ManualResetEventSlim(false);
             lock (_queueLock)
             {
@@ -408,48 +418,49 @@ namespace UnityMCP.Editor
 
             try
             {
-                if (!waiter.Wait(SyncTimeoutMs))
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                bool reloadObserved = false;
+                string latestStatus = ticket.Status.ToString();
+                while (true)
                 {
-                    lock (_queueLock)
+                    if (TryGetCompletedWaitResult(ticket.TicketId, out object localResult))
+                        return localResult;
+
+                    if (TryReadPersistedWaitResult(snapshotPath, ticket, out int persistedResumeCount,
+                            out string persistedStatus, out bool terminal, out object persistedResult))
                     {
-                        ticket.ErrorMessage = $"Timed out after {SyncTimeoutMs / 1000}s waiting for main thread";
-                        ticket.ErrorCode = "sync_wait_timeout";
-                        ticket.Retryable = true;
-                        PersistTicketSnapshotsLocked();
+                        latestStatus = persistedStatus;
+                        reloadObserved |= persistedResumeCount > ticket.ResumeCount;
+                        if (terminal)
+                            return persistedResult;
                     }
-                    return MCPResponse.Error(ticket.ErrorMessage, "sync_wait_timeout", true,
+
+                    int timeoutMs = reloadObserved
+                        ? Math.Max(syncTimeoutMs, reloadRecoveryTimeoutMs)
+                        : syncTimeoutMs;
+                    long remainingMs = timeoutMs - stopwatch.ElapsedMilliseconds;
+                    if (remainingMs <= 0)
+                    {
+                        string errorCode = reloadObserved
+                            ? "sync_reload_recovery_timeout"
+                            : "sync_wait_timeout";
+                        string message = reloadObserved
+                            ? $"Timed out after {timeoutMs / 1000}s waiting for ticket recovery across a Unity domain reload."
+                            : $"Timed out after {timeoutMs / 1000}s waiting for the Unity main thread.";
+                        return MCPResponse.Error(message, errorCode, true,
                         new Dictionary<string, object>
                         {
                             { "ticketId", ticket.TicketId },
-                            { "status", ticket.Status.ToString() },
+                            { "status", latestStatus },
                             { "pollRoute", "queue/status" },
+                            { "reloadObserved", reloadObserved },
                         });
-                }
-
-                lock (_queueLock)
-                {
-                    if (_completedTickets.TryGetValue(ticket.TicketId, out var done))
-                    {
-                        if (done.Status == RequestStatus.Failed || done.Status == RequestStatus.TimedOut ||
-                            done.Status == RequestStatus.Canceled ||
-                            done.Status == RequestStatus.UncertainAfterReload)
-                        {
-                            var error = MCPResponse.NormalizeError(done.Result, done.ErrorCode ?? "request_failed",
-                                done.Retryable);
-                            error["ticketId"] = done.TicketId;
-                            return error;
-                        }
-
-                        return done.Result;
                     }
-                }
 
-                return MCPResponse.Error("Ticket completed but its result was not available.",
-                    "ticket_result_missing", true, new Dictionary<string, object>
-                {
-                    { "ticketId", ticket.TicketId },
-                    { "pollRoute", "queue/status" },
-                });
+                    int waitMs = (int)Math.Max(1,
+                        Math.Min(PersistedSnapshotPollIntervalMs, remainingMs));
+                    waiter.Wait(waitMs);
+                }
             }
             finally
             {
@@ -464,6 +475,92 @@ namespace UnityMCP.Editor
                     }
                 }
             }
+        }
+
+        private static bool TryGetCompletedWaitResult(long ticketId, out object result)
+        {
+            lock (_queueLock)
+            {
+                if (!_completedTickets.TryGetValue(ticketId, out var done))
+                {
+                    result = null;
+                    return false;
+                }
+
+                result = BuildTerminalWaitResult(done.Status, done.Result, done.ErrorMessage,
+                    done.ErrorCode, done.Retryable, done.TicketId);
+                return true;
+            }
+        }
+
+        private static bool TryReadPersistedWaitResult(string snapshotPath, RequestTicket ticket,
+            out int resumeCount, out string statusText, out bool terminal, out object result)
+        {
+            resumeCount = ticket.ResumeCount;
+            statusText = ticket.Status.ToString();
+            terminal = false;
+            result = null;
+            if (string.IsNullOrEmpty(snapshotPath))
+                return false;
+
+            string json;
+            if (!TryReadValidSnapshotJson(snapshotPath, out json) &&
+                !TryReadValidSnapshotJson(snapshotPath + ".bak", out json))
+                return false;
+
+            var snapshots = MiniJson.Deserialize(json) as List<object>;
+            if (snapshots == null)
+                return false;
+
+            foreach (var item in snapshots)
+            {
+                var snapshot = MCPResponse.ToDictionary(item);
+                if (snapshot == null ||
+                    !TryGetLong(snapshot, "ticketId", out long ticketId) ||
+                    ticketId != ticket.TicketId ||
+                    !string.Equals(GetString(snapshot, "agentId"), ticket.AgentId,
+                        StringComparison.Ordinal))
+                    continue;
+
+                resumeCount = GetInt(snapshot, "resumeCount", 0);
+                statusText = GetString(snapshot, "status", ticket.Status.ToString());
+                if (!Enum.TryParse(statusText, out RequestStatus status))
+                    return true;
+
+                terminal = status == RequestStatus.Completed || status == RequestStatus.Failed ||
+                           status == RequestStatus.TimedOut || status == RequestStatus.Canceled ||
+                           status == RequestStatus.UncertainAfterReload;
+                if (terminal)
+                {
+                    object snapshotResult = snapshot.TryGetValue("result", out var rawResult)
+                        ? rawResult
+                        : null;
+                    result = BuildTerminalWaitResult(status, snapshotResult,
+                        GetString(snapshot, "errorMessage"), GetString(snapshot, "errorCode"),
+                        GetBool(snapshot, "retryable", false), ticketId);
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        private static object BuildTerminalWaitResult(RequestStatus status, object ticketResult,
+            string errorMessage, string errorCode, bool retryable, long ticketId)
+        {
+            if (status == RequestStatus.Completed)
+                return ticketResult;
+
+            bool resultCarriesError = MCPResponse.TryGetError(ticketResult, out _, out _, out _);
+            var error = MCPResponse.NormalizeError(ticketResult,
+                string.IsNullOrEmpty(errorCode) ? "request_failed" : errorCode, retryable);
+            if (!string.IsNullOrEmpty(errorMessage) && !resultCarriesError)
+            {
+                error["error"] = errorMessage;
+                error["message"] = errorMessage;
+            }
+            error["ticketId"] = ticketId;
+            return error;
         }
 
         // ═══════════════════════════════════════════════════════
@@ -856,9 +953,49 @@ namespace UnityMCP.Editor
             }
         }
 
+        /// <summary>
+        /// Freeze the remaining active-time budget of resumable editor-idle waits before
+        /// Unity unloads this AppDomain. Domain reload downtime must not consume that budget.
+        /// </summary>
+        public static void PrepareForDomainReload()
+        {
+            EnsurePersistentSnapshotsLoaded();
+            lock (_queueLock)
+            {
+                DateTime nowUtc = DateTime.UtcNow;
+                bool changed = false;
+                foreach (var queue in _agentQueues.Values)
+                {
+                    foreach (var ticket in queue)
+                        changed |= PauseEditorIdleWaitForReload(ticket, nowUtc);
+                }
+                foreach (var ticket in _executingTickets.Values)
+                    changed |= PauseEditorIdleWaitForReload(ticket, nowUtc);
+
+                if (changed)
+                    PersistTicketSnapshotsLocked();
+            }
+        }
+
         // ═══════════════════════════════════════════════════════
         //  Internals
         // ═══════════════════════════════════════════════════════
+
+        private static bool PauseEditorIdleWaitForReload(RequestTicket ticket, DateTime nowUtc)
+        {
+            if (!TryGetEditorIdleWaitDeadline(ticket, out DateTime deadlineUtc))
+                return false;
+
+            int remainingTimeoutMs = (int)Math.Max(1,
+                Math.Min(int.MaxValue, (deadlineUtc - nowUtc).TotalMilliseconds));
+            var pausedArguments = new Dictionary<string, object>(ticket.PersistentArguments)
+            {
+                ["_remainingTimeoutMs"] = remainingTimeoutMs,
+            };
+            pausedArguments.Remove("_deadlineUtc");
+            ticket.PersistentArguments = pausedArguments;
+            return true;
+        }
 
         private static bool ExpireQueuedEditorIdleWaitsLocked(DateTime nowUtc)
         {
@@ -1267,7 +1404,8 @@ namespace UnityMCP.Editor
             };
 
             if (previousStatus == RequestStatus.Completed || previousStatus == RequestStatus.Failed ||
-                previousStatus == RequestStatus.TimedOut)
+                previousStatus == RequestStatus.TimedOut || previousStatus == RequestStatus.Canceled ||
+                previousStatus == RequestStatus.UncertainAfterReload)
             {
                 if (!snapshot.TryGetValue("result", out var result))
                 {
@@ -1286,38 +1424,66 @@ namespace UnityMCP.Editor
                 return false;
             }
 
-            int originalTimeoutMs = Math.Max(1, GetInt(persistentArguments, "timeoutMs", 30000));
-            DateTime deadlineUtc = GetDateTime(persistentArguments, "_deadlineUtc",
-                submittedAt.AddMilliseconds(originalTimeoutMs));
+            int originalTimeoutMs = Math.Max(1, GetInt(persistentArguments, "_originalTimeoutMs",
+                GetInt(persistentArguments, "timeoutMs", 30000)));
             DateTime nowUtc = DateTime.UtcNow;
-            int nextResumeCount = ticket.ResumeCount + 1;
-            if (nowUtc >= deadlineUtc)
+            int nextResumeCount = Math.Max(ticket.ResumeCount,
+                GetInt(persistentArguments, "_resumeCount", 0)) + 1;
+            if (nextResumeCount > MaxEditorIdleReloadResumes)
             {
-                var expiredArguments = new Dictionary<string, object>(persistentArguments)
+                var limitedArguments = new Dictionary<string, object>(persistentArguments)
                 {
-                    ["_originalTimeoutMs"] = GetInt(persistentArguments, "_originalTimeoutMs",
-                        originalTimeoutMs),
+                    ["_originalTimeoutMs"] = originalTimeoutMs,
                     ["_resumeCount"] = nextResumeCount,
-                    ["_deadlineUtc"] = deadlineUtc.ToString("O"),
                 };
-                ticket.PersistentArguments = expiredArguments;
+                limitedArguments.Remove("_remainingTimeoutMs");
+                ticket.PersistentArguments = limitedArguments;
                 ticket.ResumeCount = nextResumeCount;
                 if (string.IsNullOrEmpty(ticket.RequestKey))
                     ticket.RequestKey = MCPEditorCommands.BuildWaitForIdleRequestKey(persistentArguments);
-                CompleteExpiredEditorIdleWait(ticket, nowUtc, deadlineUtc);
+                CompleteExpiredEditorIdleWait(ticket, nowUtc, nowUtc);
+                ticket.ErrorMessage =
+                    $"Editor idle wait crossed more than {MaxEditorIdleReloadResumes} Unity domain reloads.";
+                ticket.ErrorCode = "editor_idle_reload_limit";
+                ticket.Result = MCPResponse.Error(ticket.ErrorMessage, ticket.ErrorCode, true,
+                    new Dictionary<string, object>
+                    {
+                        { "timedOut", true },
+                        { "reloadResumeLimitExceeded", true },
+                        { "maxReloadResumes", MaxEditorIdleReloadResumes },
+                        { "resumedAfterReload", true },
+                        { "resumeCount", nextResumeCount },
+                    });
                 return true;
             }
 
-            int remainingTimeoutMs = (int)Math.Max(1,
-                Math.Min(int.MaxValue, (deadlineUtc - nowUtc).TotalMilliseconds));
+            int remainingTimeoutMs = GetInt(persistentArguments, "_remainingTimeoutMs", -1);
+            if (remainingTimeoutMs <= 0)
+            {
+                if (TryGetDateTime(persistentArguments, "_deadlineUtc", out DateTime deadlineUtc) &&
+                    deadlineUtc.ToUniversalTime() > nowUtc)
+                {
+                    remainingTimeoutMs = (int)Math.Max(1,
+                        Math.Min(int.MaxValue,
+                            (deadlineUtc.ToUniversalTime() - nowUtc).TotalMilliseconds));
+                }
+                else
+                {
+                    // Legacy snapshots did not pause their deadline before unloading the old
+                    // AppDomain. Give them one fresh active-time budget on first restore.
+                    remainingTimeoutMs = originalTimeoutMs;
+                }
+            }
+
+            DateTime resumedDeadlineUtc = nowUtc.AddMilliseconds(remainingTimeoutMs);
             var resumedArguments = new Dictionary<string, object>(persistentArguments)
             {
                 ["timeoutMs"] = remainingTimeoutMs,
-                ["_originalTimeoutMs"] = GetInt(persistentArguments, "_originalTimeoutMs",
-                    originalTimeoutMs),
+                ["_originalTimeoutMs"] = originalTimeoutMs,
                 ["_resumeCount"] = nextResumeCount,
-                ["_deadlineUtc"] = deadlineUtc.ToString("O"),
+                ["_deadlineUtc"] = resumedDeadlineUtc.ToString("O"),
             };
+            resumedArguments.Remove("_remainingTimeoutMs");
             ticket.Status = RequestStatus.Queued;
             ticket.CompletedAt = null;
             ticket.Result = null;

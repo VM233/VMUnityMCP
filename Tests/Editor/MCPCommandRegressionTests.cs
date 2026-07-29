@@ -838,7 +838,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void EditorIdleWait_ExpiredReloadSnapshotRestoresAsTerminalTimeout()
+        public void EditorIdleWait_LegacyExpiredReloadSnapshotGetsFreshActiveTimeBudget()
         {
             long ticketId = DateTime.UtcNow.Ticks;
             var persistentArguments = new Dictionary<string, object>
@@ -870,21 +870,50 @@ namespace UnityMCP.Editor.Tests
             Assert.That(method.Invoke(null, invokeArguments), Is.EqualTo(true));
 
             var restored = (MCPRequestQueue.RequestTicket)invokeArguments[1];
-            Assert.That(restored.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.TimedOut));
-            Assert.That(restored.CompletedAt, Is.Not.Null);
-            Assert.That(restored.ErrorCode, Is.EqualTo("editor_idle_timeout"));
-            Assert.That(restored.Retryable, Is.True);
+            Assert.That(restored.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Queued));
+            Assert.That(restored.CompletedAt, Is.Null);
+            Assert.That(restored.ErrorCode, Is.Null);
+            Assert.That(restored.Retryable, Is.False);
             Assert.That(restored.ResumeCount, Is.EqualTo(1));
-            var result = RequireDictionary(restored.Result);
-            Assert.That(result["success"], Is.EqualTo(false));
-            Assert.That(result["timedOut"], Is.EqualTo(true));
-            Assert.That(result["deadlineExceededBeforeCompletion"], Is.EqualTo(true));
-            Assert.That(result["resumedAfterReload"], Is.EqualTo(true));
+            Assert.That(Convert.ToInt32(restored.PersistentArguments["timeoutMs"]), Is.EqualTo(5000));
+            Assert.That(DateTime.Parse(restored.PersistentArguments["_deadlineUtc"].ToString()),
+                Is.GreaterThan(DateTime.UtcNow));
+            Assert.That(restored.PersistentArguments.ContainsKey("_remainingTimeoutMs"), Is.False);
 
             var deferredProperty = typeof(MCPRequestQueue.RequestTicket).GetProperty(
                 "ProgressiveDeferredAction", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(deferredProperty, Is.Not.Null);
-            Assert.That(deferredProperty.GetValue(restored), Is.Null);
+            Assert.That(deferredProperty.GetValue(restored), Is.Not.Null);
+        }
+
+        [Test]
+        public void EditorIdleWait_PlannedReloadCapturesRemainingActiveTimeBudget()
+        {
+            DateTime nowUtc = DateTime.UtcNow;
+            var ticket = new MCPRequestQueue.RequestTicket
+            {
+                TicketId = nowUtc.Ticks,
+                AgentId = "reload-budget-regression",
+                ActionName = "wait/editor-idle",
+                Status = MCPRequestQueue.RequestStatus.Executing,
+                SubmittedAt = nowUtc.AddSeconds(-2),
+                PersistentArguments = new Dictionary<string, object>
+                {
+                    { "timeoutMs", 5000 },
+                    { "_originalTimeoutMs", 5000 },
+                    { "stableFrames", 3 },
+                    { "stableMs", 500 },
+                    { "_deadlineUtc", nowUtc.AddSeconds(3).ToString("O") },
+                },
+            };
+            var method = typeof(MCPRequestQueue).GetMethod("PauseEditorIdleWaitForReload",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+
+            Assert.That(method.Invoke(null, new object[] { ticket, nowUtc }), Is.EqualTo(true));
+            Assert.That(ticket.PersistentArguments.ContainsKey("_deadlineUtc"), Is.False);
+            Assert.That(Convert.ToInt32(ticket.PersistentArguments["_remainingTimeoutMs"]),
+                Is.InRange(2990, 3000));
         }
 
         [Test]
@@ -962,7 +991,8 @@ namespace UnityMCP.Editor.Tests
             var queueLockField = typeof(MCPRequestQueue).GetField("_queueLock",
                 BindingFlags.Static | BindingFlags.NonPublic);
             var waitMethod = typeof(MCPRequestQueue).GetMethod("WaitForTicket",
-                BindingFlags.Static | BindingFlags.NonPublic);
+                BindingFlags.Static | BindingFlags.NonPublic, null,
+                new[] { typeof(MCPRequestQueue.RequestTicket) }, null);
             Assert.That(completedField, Is.Not.Null);
             Assert.That(queueLockField, Is.Not.Null);
             Assert.That(waitMethod, Is.Not.Null);
@@ -985,6 +1015,130 @@ namespace UnityMCP.Editor.Tests
                 lock (queueLock)
                     completed.Remove(ticketId);
             }
+        }
+
+        [Test]
+        public void RequestQueue_SynchronousWaitReadsCompletionFromReplacementDomainSnapshot()
+        {
+            string path = Path.Combine(Path.GetTempPath(),
+                "unity-mcp-reload-wait-" + Guid.NewGuid().ToString("N") + ".json");
+            long ticketId = DateTime.UtcNow.Ticks;
+            var ticket = new MCPRequestQueue.RequestTicket
+            {
+                TicketId = ticketId,
+                AgentId = "replacement-domain-regression",
+                ActionName = "testing/get-package-job",
+                Status = MCPRequestQueue.RequestStatus.Queued,
+                SubmittedAt = DateTime.UtcNow,
+            };
+            File.WriteAllText(path,
+                $"[{{\"ticketId\":{ticketId},\"agentId\":\"{ticket.AgentId}\",\"actionName\":\"{ticket.ActionName}\",\"status\":\"Queued\",\"resumeCount\":1}}]");
+            var waitMethod = typeof(MCPRequestQueue).GetMethod("WaitForTicket",
+                BindingFlags.Static | BindingFlags.NonPublic, null,
+                new[] { typeof(MCPRequestQueue.RequestTicket), typeof(int), typeof(int), typeof(string) },
+                null);
+            Assert.That(waitMethod, Is.Not.Null);
+
+            var writer = new System.Threading.Thread(() =>
+            {
+                System.Threading.Thread.Sleep(60);
+                File.WriteAllText(path,
+                    $"[{{\"ticketId\":{ticketId},\"agentId\":\"{ticket.AgentId}\",\"actionName\":\"{ticket.ActionName}\",\"status\":\"Completed\",\"resumeCount\":1,\"result\":{{\"success\":true,\"source\":\"replacement-domain\"}}}}]");
+            });
+            try
+            {
+                writer.Start();
+                var result = RequireDictionary(waitMethod.Invoke(null,
+                    new object[] { ticket, 10, 1000, path }));
+
+                Assert.That(result["success"], Is.EqualTo(true));
+                Assert.That(result["source"], Is.EqualTo("replacement-domain"));
+                Assert.That(ticket.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Queued));
+                Assert.That(ticket.ErrorCode, Is.Null);
+                Assert.That(ticket.ErrorMessage, Is.Null);
+                Assert.That(ticket.Retryable, Is.False);
+            }
+            finally
+            {
+                writer.Join(1000);
+                foreach (string candidate in new[] { path, path + ".bak", path + ".tmp" })
+                {
+                    if (File.Exists(candidate))
+                        File.Delete(candidate);
+                }
+            }
+        }
+
+        [Test]
+        public void RequestQueue_SynchronousTransportTimeoutDoesNotMutatePersistentTicket()
+        {
+            string path = Path.Combine(Path.GetTempPath(),
+                "unity-mcp-transport-timeout-" + Guid.NewGuid().ToString("N") + ".json");
+            long ticketId = DateTime.UtcNow.Ticks;
+            var ticket = new MCPRequestQueue.RequestTicket
+            {
+                TicketId = ticketId,
+                AgentId = "transport-timeout-regression",
+                ActionName = "editor/state",
+                Status = MCPRequestQueue.RequestStatus.Queued,
+                SubmittedAt = DateTime.UtcNow,
+            };
+            File.WriteAllText(path,
+                $"[{{\"ticketId\":{ticketId},\"agentId\":\"{ticket.AgentId}\",\"actionName\":\"{ticket.ActionName}\",\"status\":\"Queued\",\"resumeCount\":0}}]");
+            var waitMethod = typeof(MCPRequestQueue).GetMethod("WaitForTicket",
+                BindingFlags.Static | BindingFlags.NonPublic, null,
+                new[] { typeof(MCPRequestQueue.RequestTicket), typeof(int), typeof(int), typeof(string) },
+                null);
+            Assert.That(waitMethod, Is.Not.Null);
+
+            try
+            {
+                var result = RequireDictionary(waitMethod.Invoke(null,
+                    new object[] { ticket, 20, 100, path }));
+                Assert.That(result["errorCode"], Is.EqualTo("sync_wait_timeout"));
+                Assert.That(ticket.Status, Is.EqualTo(MCPRequestQueue.RequestStatus.Queued));
+                Assert.That(ticket.ErrorCode, Is.Null);
+                Assert.That(ticket.ErrorMessage, Is.Null);
+                Assert.That(ticket.Retryable, Is.False);
+                Assert.That(File.ReadAllText(path), Does.Not.Contain("sync_wait_timeout"));
+            }
+            finally
+            {
+                foreach (string candidate in new[] { path, path + ".bak", path + ".tmp" })
+                {
+                    if (File.Exists(candidate))
+                        File.Delete(candidate);
+                }
+            }
+        }
+
+        [Test]
+        public void InstanceRegistry_ReloadLeaseExpiresOnlyWhenProcessIsDeadOrPortIsReleased()
+        {
+            var method = typeof(MCPInstanceRegistry).GetMethod("ShouldRemoveRegistryEntry",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+            DateTime nowUtc = DateTime.UtcNow;
+            Dictionary<string, object> Entry(bool reloading, DateTime reloadStartedAt) =>
+                new Dictionary<string, object>
+                {
+                    { "processId", 12345 },
+                    { "port", 7892 },
+                    { "isReloading", reloading },
+                    { "reloadStartedAt", reloadStartedAt.ToString("O") },
+                };
+            bool Remove(Dictionary<string, object> entry, bool processAlive, bool portAvailable) =>
+                (bool)method.Invoke(null, new object[]
+                {
+                    entry, nowUtc, new Func<int, bool>(_ => processAlive),
+                    new Func<int, bool>(_ => portAvailable),
+                });
+
+            Assert.That(Remove(Entry(false, nowUtc), false, false), Is.True);
+            Assert.That(Remove(Entry(false, nowUtc), true, true), Is.False);
+            Assert.That(Remove(Entry(true, nowUtc.AddMinutes(-1)), true, true), Is.False);
+            Assert.That(Remove(Entry(true, nowUtc.AddMinutes(-20)), true, true), Is.True);
+            Assert.That(Remove(Entry(true, nowUtc.AddMinutes(-20)), true, false), Is.False);
         }
 
         [Test]

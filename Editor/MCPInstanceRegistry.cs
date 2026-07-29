@@ -43,6 +43,7 @@ namespace UnityMCP.Editor
         /// (if Unity crashes, OnDisable never fires and the entry goes stale).
         /// </summary>
         private const double HeartbeatIntervalSeconds = 30.0;
+        internal const double ReloadRegistrationGraceSeconds = 600.0;
         private static double _lastHeartbeatTime = 0;
 
         /// <summary>
@@ -291,6 +292,48 @@ namespace UnityMCP.Editor
         }
 
         /// <summary>
+        /// Preserve this instance's discovery lease while Unity unloads the current
+        /// AppDomain. The replacement domain clears the marker when it registers again.
+        /// </summary>
+        public static void MarkReloading()
+        {
+            if (_registeredPort < 0)
+                return;
+
+            EditorApplication.update -= HeartbeatTick;
+            int port = _registeredPort;
+            WithRegistryLock(() =>
+            {
+                var instances = ReadRegistry();
+                string projectPath = GetProjectPath();
+                string nowUtc = DateTime.UtcNow.ToString("o");
+                Dictionary<string, object> entry = null;
+                foreach (var instance in instances)
+                {
+                    if (instance.ContainsKey("projectPath") &&
+                        ProjectPathEquals(instance["projectPath"]?.ToString(), projectPath) &&
+                        ExtractPort(instance) == port)
+                    {
+                        entry = instance;
+                        break;
+                    }
+                }
+
+                if (entry == null)
+                {
+                    entry = BuildCurrentInstanceEntry(port, nowUtc, nowUtc);
+                    instances.Add(entry);
+                }
+
+                entry["isReloading"] = true;
+                entry["reloadStartedAt"] = nowUtc;
+                entry["lastSeen"] = nowUtc;
+                CacheCurrentInstanceEntry(entry);
+                WriteRegistry(instances);
+            }, "mark-reloading");
+        }
+
+        /// <summary>
         /// EditorApplication.update callback — fires the heartbeat at regular intervals.
         /// This runs on the main thread, so it's safe but lightweight.
         /// During compiles, EditorApplication.update is NOT called (main thread is blocked),
@@ -343,7 +386,8 @@ namespace UnityMCP.Editor
 
         /// <summary>
         /// Unregister this Unity instance from the shared registry.
-        /// Call this on server stop, quit, or domain reload.
+        /// Call this on a real server stop or Editor quit. Planned domain reloads retain
+        /// the entry through <see cref="MarkReloading"/>.
         /// </summary>
         public static void Unregister()
         {
@@ -390,28 +434,9 @@ namespace UnityMCP.Editor
             WithRegistryLock(() =>
             {
                 var instances = ReadRegistry();
-                int removed = instances.RemoveAll(inst =>
-                {
-                    if (!inst.ContainsKey("processId")) return true;
-
-                    int pid = 0;
-                    if (inst["processId"] is long lp) pid = (int)lp;
-                    else if (inst["processId"] is double dp) pid = (int)dp;
-                    else int.TryParse(inst["processId"].ToString(), out pid);
-
-                    if (pid <= 0) return true;
-
-                    try
-                    {
-                        var proc = System.Diagnostics.Process.GetProcessById(pid);
-                        return proc.HasExited;
-                    }
-                    catch
-                    {
-                        // Process not found — stale
-                        return true;
-                    }
-                });
+                DateTime nowUtc = DateTime.UtcNow;
+                int removed = instances.RemoveAll(inst => ShouldRemoveRegistryEntry(inst, nowUtc,
+                    IsProcessAlive, IsPortAvailable));
 
                 if (removed > 0)
                 {
@@ -419,6 +444,70 @@ namespace UnityMCP.Editor
                     Debug.Log($"[AB-UMCP] Cleaned up {removed} stale instance(s) from registry.");
                 }
             }, "cleanup");
+        }
+
+        private static bool ShouldRemoveRegistryEntry(Dictionary<string, object> entry, DateTime nowUtc,
+            Func<int, bool> processAlive, Func<int, bool> portAvailable)
+        {
+            int processId = ExtractInt(entry, "processId");
+            if (processId <= 0 || !processAlive(processId))
+                return true;
+
+            if (!ExtractBool(entry, "isReloading"))
+                return false;
+
+            DateTime reloadStartedAt;
+            if (!TryExtractDateTime(entry, "reloadStartedAt", out reloadStartedAt) &&
+                !TryExtractDateTime(entry, "lastSeen", out reloadStartedAt) &&
+                !TryExtractDateTime(entry, "registeredAt", out reloadStartedAt))
+                return false;
+
+            if ((nowUtc - reloadStartedAt.ToUniversalTime()).TotalSeconds <=
+                ReloadRegistrationGraceSeconds)
+                return false;
+
+            int port = ExtractPort(entry);
+            return port <= 0 || portAvailable(port);
+        }
+
+        private static bool IsProcessAlive(int processId)
+        {
+            try
+            {
+                using (var process = System.Diagnostics.Process.GetProcessById(processId))
+                    return !process.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static int ExtractInt(Dictionary<string, object> entry, string key)
+        {
+            if (entry == null || !entry.TryGetValue(key, out var raw) || raw == null)
+                return 0;
+            if (raw is long longValue) return (int)longValue;
+            if (raw is double doubleValue) return (int)doubleValue;
+            return int.TryParse(raw.ToString(), out int value) ? value : 0;
+        }
+
+        private static bool ExtractBool(Dictionary<string, object> entry, string key)
+        {
+            if (entry == null || !entry.TryGetValue(key, out var raw) || raw == null)
+                return false;
+            return raw is bool value
+                ? value
+                : bool.TryParse(raw.ToString(), out value) && value;
+        }
+
+        private static bool TryExtractDateTime(Dictionary<string, object> entry, string key,
+            out DateTime value)
+        {
+            value = default;
+            return entry != null && entry.TryGetValue(key, out var raw) && raw != null &&
+                   DateTime.TryParse(raw.ToString(), null,
+                       System.Globalization.DateTimeStyles.RoundtripKind, out value);
         }
 
         // ─── ParrelSync Detection ───
@@ -592,7 +681,8 @@ namespace UnityMCP.Editor
                 { "isClone", IsParrelSyncClone() },
                 { "cloneIndex", GetParrelSyncCloneIndex() },
                 { "registeredAt", registeredAt },
-                { "lastSeen", lastSeen }
+                { "lastSeen", lastSeen },
+                { "isReloading", false }
             };
         }
 
