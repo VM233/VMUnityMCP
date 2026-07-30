@@ -71,6 +71,8 @@ namespace UnityMCP.Editor.Tests
         private const string NESTED_SCHEMA_TOOL_NAME = "unity-mcp-tests/validate-nested-schema";
         private const string STRICT_COMBINATOR_SCHEMA_TOOL_NAME =
             "unity-mcp-tests/validate-strict-combinator-schema";
+        private const string MISSING_OPERATION_KIND_TOOL_NAME =
+            "unity-mcp-tests/missing-operation-kind";
         private const string INCOMPLETE_FIRST_CLASS_TOOL_NAME = "unity-mcp-tests/incomplete-first-class";
         private const string PERSISTENT_PROJECT_TOOL_NAME = "unity-mcp-tests/persistent-step";
         private const string PERSISTENT_PROJECT_TOOL_CLEANUP_NAME =
@@ -130,6 +132,14 @@ namespace UnityMCP.Editor.Tests
                 { "success", true },
                 { "received", args }
             };
+        }
+
+        [MCPProjectTool(MISSING_OPERATION_KIND_TOOL_NAME,
+            Description = "Regression fixture for mandatory operation-kind metadata.",
+            InputSchemaJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}")]
+        private static object MissingOperationKindFixture(Dictionary<string, object> args)
+        {
+            return new Dictionary<string, object> { { "success", true } };
         }
 
         [MCPProjectTool(INCOMPLETE_FIRST_CLASS_TOOL_NAME,
@@ -3754,6 +3764,26 @@ namespace UnityMCP.Editor.Tests
             var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
             Assert.That(tools.Any(item =>
                 item["route"].ToString() == "project-tools/call/" + LAZY_READ_TOOL_NAME), Is.False);
+        }
+
+        [Test]
+        public void ProjectTool_MissingOperationKindIsRejectedFromEveryCatalogTier()
+        {
+            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: false)
+                .Single(tool => tool["toolName"].ToString() == MISSING_OPERATION_KIND_TOOL_NAME);
+            Assert.That(HasTag(descriptor, "invalid"), Is.True);
+            Assert.That(descriptor["validationError"].ToString(),
+                Does.Contain("must explicitly declare ReadOnly, MutatesAssets, or MutatesRuntime"));
+
+            Assert.That(MCPProjectToolCommands.GetToolDetails(validOnly: true)
+                .Any(tool => tool["toolName"].ToString() == MISSING_OPERATION_KIND_TOOL_NAME), Is.False);
+
+            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: false, compact: false, includeSchema: true, limit: 500));
+            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
+            Assert.That(tools.Any(item =>
+                item["route"].ToString() == "project-tools/call/" + MISSING_OPERATION_KIND_TOOL_NAME),
+                Is.False);
         }
 
         [Test]

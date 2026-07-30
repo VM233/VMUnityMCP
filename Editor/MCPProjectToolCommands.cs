@@ -1004,8 +1004,8 @@ namespace UnityMCP.Editor
                 if (operationKinds > 1)
                     return $"Project tool '{ToolName}' declares conflicting operation kinds.";
 
-                if (FirstClass && operationKinds == 0)
-                    return $"First-class project tool '{ToolName}' must explicitly declare ReadOnly, MutatesAssets, or MutatesRuntime.";
+                if (operationKinds == 0)
+                    return $"Project tool '{ToolName}' must explicitly declare ReadOnly, MutatesAssets, or MutatesRuntime.";
 
                 MCPProjectToolSideEffect effects = GetEffectiveSideEffects();
                 MCPProjectToolSideEffect writes = MCPProjectToolSideEffect.WritesAssets |

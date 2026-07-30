@@ -9,6 +9,9 @@ All notable changes to this package will be documented in this file.
 - Remove redundant exposure, validity, schema-enforcement, cleanup, and
   operation-kind aliases from project-tool list/get and `_meta/tools`.
   Invalid tools expose the `invalid` tag plus `validationError`.
+- Require every project tool, including lazy catalog-only tools, to declare
+  exactly one operation kind so missing safety metadata cannot silently enter
+  discovery.
 - Publish only tool-specific `errorCodes`; the three standard project-tool
   failure codes remain part of the shared contract instead of repeating on
   every descriptor.
