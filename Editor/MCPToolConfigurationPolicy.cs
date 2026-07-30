@@ -18,7 +18,7 @@ namespace UnityMCP.Editor
         // audit and updating this fingerprint. This prevents new tools from silently
         // inheriting an inappropriate global default.
         internal const string AuditedRouteManifestSha256 =
-            "8010bd6ec922b7fb31608bf7b252120b1666952e9e19c52349fed06783a32fbf";
+            "605809562e5412cb10f0ba48671d78aaeb24ca61ab387b91a3303fe95e25ed0c";
 
         private static readonly Dictionary<string, string> ResultLimitArguments =
             new Dictionary<string, string>(StringComparer.Ordinal)

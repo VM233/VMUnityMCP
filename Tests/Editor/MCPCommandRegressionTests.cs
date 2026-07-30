@@ -6891,7 +6891,7 @@ namespace UnityMCP.Editor.Tests
         public void ToolMetadata_DefaultIsCompactPaginatedAndSchemaFree()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools());
-            Assert.That(System.Convert.ToInt32(result["schemaVersion"]), Is.EqualTo(3));
+            Assert.That(System.Convert.ToInt32(result["schemaVersion"]), Is.EqualTo(4));
             Assert.That(result["compact"], Is.EqualTo(true));
             Assert.That(result["firstClassOnly"], Is.EqualTo(true));
             Assert.That(System.Convert.ToInt32(result["returnedTools"]), Is.LessThanOrEqualTo(50));
@@ -6949,6 +6949,7 @@ namespace UnityMCP.Editor.Tests
                 "build/start",
                 "compilation/errors",
                 "component/set-property",
+                "editor/execute-code",
                 "editor/play-mode",
                 "queue/info",
                 "search/scene",
@@ -6976,6 +6977,8 @@ namespace UnityMCP.Editor.Tests
                 "project-tools/get",
                 "project-tools/execute",
                 "jobs/cancel",
+                "jobs/cleanup",
+                "jobs/get",
                 "asset/import-settings/get",
                 "asset/import-settings/set",
                 "scene/workspace",
