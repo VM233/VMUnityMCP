@@ -7548,6 +7548,78 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void TransportCompaction_UsesPresenceTagsForCapabilitiesAndWorkflowLifecycle()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "jobId", "job-1" },
+                    { "jobType", "fixture" },
+                    { "status", "running" },
+                    { "readOnly", false },
+                    { "dangerous", true },
+                    { "requiresPlayMode", false },
+                    { "mutatesAssets", true },
+                    { "mutatesRuntime", false },
+                    { "mayReloadDomain", false },
+                    { "cancelRequested", false },
+                    { "captureMayStillComplete", true },
+                    { "recoveredAfterReload", true },
+                    { "reused", false },
+                    { "started", true },
+                    { "completed", false },
+                    { "cancelled", false },
+                    { "pollRoute", "jobs/get" },
+                    { "pollArgs", new Dictionary<string, object>
+                        {
+                            { "jobId", "job-1" },
+                            { "jobType", "fixture" },
+                        }
+                    },
+                    { "startedAt", "2026-07-31T00:00:00Z" },
+                    { "updatedAt", "2026-07-31T00:00:00Z" },
+                    { "compilationDiagnostics", new Dictionary<string, object>
+                        {
+                            { "isCompiling", false },
+                            { "counts", new Dictionary<string, object>
+                                {
+                                    { "errors", 0 },
+                                    { "warnings", 0 },
+                                }
+                            },
+                        }
+                    },
+                    { "visible", false },
+                    { "valid", false },
+                    { "fileExists", false },
+                }));
+
+            Assert.That((IList)compacted["tags"], Is.EquivalentTo(new[]
+            {
+                "captureMayStillComplete", "dangerous", "recoveredAfterReload",
+            }));
+            Assert.That((IList)compacted["sideEffects"],
+                Is.EquivalentTo(new[] { "writesAssets" }));
+            foreach (string retired in new[]
+                     {
+                         "readOnly", "dangerous", "requiresPlayMode",
+                         "mutatesAssets", "mutatesRuntime", "mayReloadDomain",
+                         "cancelRequested", "captureMayStillComplete",
+                         "recoveredAfterReload", "reused", "started", "completed",
+                         "cancelled", "pollRoute", "pollArgs", "updatedAt",
+                         "compilationDiagnostics",
+                     })
+            {
+                Assert.That(compacted.ContainsKey(retired), Is.False, retired);
+            }
+
+            Assert.That(compacted["visible"], Is.EqualTo(false));
+            Assert.That(compacted["valid"], Is.EqualTo(false));
+            Assert.That(compacted["fileExists"], Is.EqualTo(false));
+        }
+
+        [Test]
         public void TransportCompaction_PreservesCompleteProjectToolSchemaInsideCompletedTicket()
         {
             var source = new Dictionary<string, object>

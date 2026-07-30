@@ -30,7 +30,69 @@ namespace UnityMCP.Editor
             internal const string Invalid = "invalid";
             internal const string CancellationRequested = "cancellationRequested";
             internal const string Reused = "reused";
+            internal const string CancelableBeforeStart = "cancelableBeforeStart";
+            internal const string CaptureMayStillComplete = "captureMayStillComplete";
+            internal const string Cleared = "cleared";
+            internal const string CompletionRecovered = "completionRecovered";
+            internal const string DeadlineExceeded = "deadlineExceeded";
+            internal const string DryRun = "dryRun";
+            internal const string Interactive = "interactive";
+            internal const string ManifestModified = "manifestModified";
+            internal const string ManifestRestored = "manifestRestored";
+            internal const string ReconciledAfterReload = "reconciledAfterReload";
+            internal const string RecoveredAfterReload = "recoveredAfterReload";
+            internal const string RecoveredAcrossOwner = "recoveredAcrossOwner";
+            internal const string RecoveredFromSaveException = "recoveredFromSaveException";
+            internal const string ReloadResumeLimitExceeded = "reloadResumeLimitExceeded";
+            internal const string ResumedAfterReload = "resumedAfterReload";
+            internal const string StuckSuspected = "stuckSuspected";
+            internal const string TimedOut = "timedOut";
         }
+
+        private static readonly IReadOnlyDictionary<string, string> PresenceBooleanTags =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                { "readOnly", Tag.ReadOnly },
+                { "dangerous", Tag.Dangerous },
+                { "longRunning", Tag.LongRunning },
+                { "requiresPlayMode", Tag.RequiresPlayMode },
+                { "firstClass", Tag.FirstClass },
+                { "fallback", Tag.Fallback },
+                { "cleanup", Tag.Cleanup },
+                { "cleanupDeclared", Tag.CleanupDeclared },
+                { "cleanupAvailable", Tag.CleanupAvailable },
+                { "incremental", Tag.IncrementalJob },
+                { "incrementalJob", Tag.IncrementalJob },
+                { "hasOutputSchema", Tag.OutputSchema },
+                { "cancellationRequested", Tag.CancellationRequested },
+                { "cancelRequested", Tag.CancellationRequested },
+                { "reused", Tag.Reused },
+                { "cancelableBeforeStart", Tag.CancelableBeforeStart },
+                { "captureMayStillComplete", Tag.CaptureMayStillComplete },
+                { "cleared", Tag.Cleared },
+                { "completionRecovered", Tag.CompletionRecovered },
+                { "completionRecoveredFromLeafResults", Tag.CompletionRecovered },
+                { "deadlineExceededBeforeCompletion", Tag.DeadlineExceeded },
+                { "dryRun", Tag.DryRun },
+                { "interactive", Tag.Interactive },
+                { "manifestRestored", Tag.ManifestRestored },
+                { "reconciledAfterReload", Tag.ReconciledAfterReload },
+                { "recoveredAfterReload", Tag.RecoveredAfterReload },
+                { "recoveredAcrossOwner", Tag.RecoveredAcrossOwner },
+                { "recoveredFromSaveException", Tag.RecoveredFromSaveException },
+                { "reloadResumeLimitExceeded", Tag.ReloadResumeLimitExceeded },
+                { "resumedAfterReload", Tag.ResumedAfterReload },
+                { "stuckSuspected", Tag.StuckSuspected },
+                { "timedOut", Tag.TimedOut },
+            };
+
+        private static readonly IReadOnlyDictionary<string, string> SideEffectBooleanFields =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                { "mutatesAssets", "writesAssets" },
+                { "mutatesRuntime", "changesRuntimeState" },
+                { "mayReloadDomain", "reloadsDomain" },
+            };
 
         internal static List<string> BuildToolTags(
             bool readOnly = false,
@@ -127,6 +189,51 @@ namespace UnityMCP.Editor
             List<string> normalized = ReadStrings(values);
             if (normalized.Count > 0)
                 target[key] = Normalize(normalized);
+        }
+
+        /// <summary>
+        /// Converts authoring and lifecycle booleans whose false value is represented by
+        /// absence into the shared public tags/effects vocabulary. Domain facts such as
+        /// valid, visible, found, enabled, or fileExists are deliberately not included:
+        /// their false value is business data rather than absent metadata.
+        /// </summary>
+        internal static void CompactTransportFlags(Dictionary<string, object> target)
+        {
+            if (target == null || target.Count == 0)
+                return;
+
+            var tags = target.TryGetValue("tags", out object tagValue)
+                ? ReadStrings(tagValue as IEnumerable)
+                : new List<string>();
+            foreach (KeyValuePair<string, string> pair in PresenceBooleanTags)
+            {
+                if (!target.TryGetValue(pair.Key, out object value) || !(value is bool flag))
+                    continue;
+
+                target.Remove(pair.Key);
+                if (flag)
+                    tags.Add(pair.Value);
+            }
+            SetTags(target, tags);
+
+            var sideEffects = target.TryGetValue("sideEffects", out object effectValue)
+                ? ReadStrings(effectValue as IEnumerable)
+                : new List<string>();
+            foreach (KeyValuePair<string, string> pair in SideEffectBooleanFields)
+            {
+                if (!target.TryGetValue(pair.Key, out object value) || !(value is bool flag))
+                    continue;
+
+                target.Remove(pair.Key);
+                if (flag)
+                    sideEffects.Add(pair.Value);
+            }
+
+            List<string> normalizedEffects = Normalize(sideEffects);
+            if (normalizedEffects.Count == 0)
+                target.Remove("sideEffects");
+            else
+                target["sideEffects"] = normalizedEffects;
         }
 
         private static List<string> ReadStrings(IEnumerable values)

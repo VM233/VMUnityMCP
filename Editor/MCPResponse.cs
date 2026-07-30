@@ -221,6 +221,9 @@ namespace UnityMCP.Editor
                 CompactCollectionAndPaginationMetadata(compacted);
                 CompactNamedResultPagination(compacted);
                 RemoveFalseTruncationFlags(compacted);
+                MCPContractMetadata.CompactTransportFlags(compacted);
+                CompactJobAliases(compacted);
+                RemoveIdleCompilationDiagnostics(compacted);
             }
 
             if (isRoot)
@@ -639,6 +642,56 @@ namespace UnityMCP.Editor
 
             foreach (string key in removableKeys)
                 dictionary.Remove(key);
+        }
+
+        private static void CompactJobAliases(Dictionary<string, object> dictionary)
+        {
+            bool hasJobIdentity = dictionary.ContainsKey("jobId") ||
+                                  dictionary.ContainsKey("workflowId");
+            if (!hasJobIdentity || !dictionary.ContainsKey("status"))
+                return;
+
+            dictionary.Remove("pollRoute");
+            dictionary.Remove("statusRoute");
+            dictionary.Remove("cancelRoute");
+            dictionary.Remove("cleanupRoute");
+            dictionary.Remove("pollArgs");
+
+            foreach (string key in new[] { "started", "completed", "canceled", "cancelled" })
+            {
+                if (dictionary.TryGetValue(key, out object value) && value is bool)
+                    dictionary.Remove(key);
+            }
+
+            if (dictionary.TryGetValue("startedAt", out object startedAt) &&
+                dictionary.TryGetValue("updatedAt", out object updatedAt) &&
+                ValuesEqual(startedAt, updatedAt))
+            {
+                dictionary.Remove("updatedAt");
+            }
+        }
+
+        private static void RemoveIdleCompilationDiagnostics(Dictionary<string, object> dictionary)
+        {
+            if (!dictionary.TryGetValue("compilationDiagnostics", out object diagnosticsValue) ||
+                !(diagnosticsValue is Dictionary<string, object> diagnostics))
+                return;
+
+            bool compiling = diagnostics.TryGetValue("isCompiling", out object compilingValue) &&
+                             ToBool(compilingValue);
+            long errors = 0;
+            long warnings = 0;
+            if (diagnostics.TryGetValue("counts", out object countsValue) &&
+                countsValue is Dictionary<string, object> counts)
+            {
+                if (counts.TryGetValue("errors", out object errorsValue))
+                    TryGetInteger(errorsValue, out errors);
+                if (counts.TryGetValue("warnings", out object warningsValue))
+                    TryGetInteger(warningsValue, out warnings);
+            }
+
+            if (!compiling && errors == 0 && warnings == 0)
+                dictionary.Remove("compilationDiagnostics");
         }
 
         private static void RemoveEmptyContainers(Dictionary<string, object> dictionary,

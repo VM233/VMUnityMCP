@@ -463,13 +463,22 @@ namespace UnityMCP.Editor
                 { "packageName", workflow.PackageName },
                 { "mode", workflow.Mode },
                 { "assemblies", workflow.Assemblies ?? Array.Empty<string>() },
-                { "manifestChanged", workflow.ManifestChanged },
-                { "manifestRestored", !workflow.ManifestChanged || ManifestIsRestored(workflow) },
-                { "cancelRequested", workflow.CancelRequested },
                 { "startedAt", workflow.StartedAt.ToString("O") },
                 { "updatedAt", workflow.UpdatedAt.ToString("O") },
                 { "compilationDiagnostics", MCPConsoleCommands.GetCompilationDiagnosticsSummary() },
             };
+            var tags = new List<string>();
+            if (workflow.CancelRequested)
+                tags.Add(MCPContractMetadata.Tag.CancellationRequested);
+            if (workflow.ManifestChanged)
+            {
+                bool manifestIsRestored = ManifestIsRestored(workflow);
+                if (manifestIsRestored && workflow.State != "enabling")
+                    tags.Add(MCPContractMetadata.Tag.ManifestRestored);
+                else if (!manifestIsRestored)
+                    tags.Add(MCPContractMetadata.Tag.ManifestModified);
+            }
+            MCPContractMetadata.SetTags(response, tags);
             if (!string.IsNullOrEmpty(workflow.TestJobId))
                 response["testJobId"] = workflow.TestJobId;
             if (!string.IsNullOrEmpty(workflow.Error))

@@ -20,6 +20,10 @@ All notable changes to this package will be documented in this file.
 - Compact persistent Job snapshots with presence-only lifecycle tags and
   optional fields. Null results, empty timestamps, false state flags, derived
   routes, and derived cancel modes are no longer repeated.
+- Apply the same transport contract to specialized build, test, package-test,
+  import, refresh, and profiler workflows: positive lifecycle metadata is
+  merged into sorted `tags`, derived polling/state aliases are omitted, and
+  idle compilation diagnostics are suppressed.
 - Advance live tool metadata to schema version 5.
 
 ## [5.4.0] - 2026-07-31

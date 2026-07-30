@@ -210,6 +210,11 @@ The full ownership matrix and authoritative built-in route audit are in
   `cancellationRequested`, and `reused`). Fields that do not yet have a value
   are omitted; `status`, timestamps, progress, results, and errors remain
   explicit runtime facts.
+- The transport applies that rule uniformly to specialized build, test,
+  package-test, import, refresh, and profiler workflows. Poll-route aliases,
+  status-derived booleans, idle compilation diagnostics, and false lifecycle
+  markers are omitted. Business facts whose false value is meaningful—such as
+  `valid`, `visible`, `found`, or `fileExists`—remain explicit.
 - Execute-code uses compact Unity value strings by default. Pass
   `unityStructFormat="structured"` for typed objects with stable fields.
 - Completed pagination aliases and exact duplicate counts are removed on the
