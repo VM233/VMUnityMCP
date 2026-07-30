@@ -58,8 +58,7 @@ namespace UnityMCP.Editor
             string path = args.ContainsKey("path") ? args["path"].ToString() : "";
             if (string.IsNullOrEmpty(path))
             {
-                path = "Assets/Screenshots/GameView_" +
-                       DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png";
+                path = MCPSettingsManager.CreateDefaultScreenshotPath("GameView");
             }
 
             int superSize = Math.Max(1, args.ContainsKey("superSize")

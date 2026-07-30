@@ -693,9 +693,8 @@ namespace UnityMCP.Editor
             EditorGUILayout.Space(8);
 
             EditorGUILayout.LabelField("Project Settings", EditorStyles.boldLabel);
-            MCPSettingsGUI.DrawProjectStartupSettings();
             EditorGUILayout.HelpBox(
-                "Project context, action history, and tool category settings are in Project Settings.",
+                "Team-owned context, execute-code namespaces, UI Toolkit audit rules, Physics defaults, and screenshot output are in Project Settings.",
                 MessageType.None);
 
             EditorGUILayout.BeginHorizontal();

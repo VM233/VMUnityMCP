@@ -2,6 +2,16 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.3.0] - 2026-07-30
+
+- Replace pseudo-project EditorPrefs with versionable `ProjectSettings/UnityMCPSettings.json` for project context, Execute Code namespaces, Physics query dimension, and screenshot output, with non-destructive migration on first write.
+- Add user preferences for the automatic port range, optional primary result-limit override, compact-by-default Prefab YAML responses, and persistent Job History size; move local MPPM, Action History, and category controls to Preferences.
+- Derive tool categories from the authoritative route registry, use stable SHA-256 project/instance preference keys, and preserve legacy values where their old keys can still be resolved.
+- Apply configured screenshot and Physics defaults only when request arguments are omitted, annotate tool schemas with their default source, and keep destructive choices, raw detail, queue/transport safety limits, and complex graph budgets explicit.
+- Keep `mcp/health` compact unless recent actions are requested, while reporting the effective configuration and automatic port range.
+- Audit all 405 built-in routes and enforce the audited route-manifest fingerprint in regression tests so future tools cannot bypass configuration review.
+- Ignore Unity-excluded tilde directories such as `Documentation~` in package `.meta` linting instead of reporting false missing-meta failures.
+
 ## [5.2.1] - 2026-07-30
 
 - Defer project-binding classification for the outer `queue/submit` transport envelope until its inner `apiPath` is parsed, allowing unbound read-only metadata discovery while continuing to reject unbound mutations.

@@ -17,8 +17,9 @@ namespace UnityMCP.Editor
     /// JSON file at %LOCALAPPDATA%/UnityMCP/instances.json (Windows) or
     /// ~/.local/share/UnityMCP/instances.json (macOS/Linux).
     ///
-    /// On startup, the plugin auto-selects the first available port in the range
-    /// 7890-7899. The MCP server reads this registry to discover all running instances.
+    /// On startup, the plugin auto-selects the first available port in the configured
+    /// user range (7890-7899 by default). The MCP server reads this registry to discover
+    /// all running instances.
     ///
     /// Supports:
     ///   - Multiple different projects open simultaneously
@@ -27,9 +28,24 @@ namespace UnityMCP.Editor
     /// </summary>
     public static class MCPInstanceRegistry
     {
-        // Port range for auto-selection
-        public const int PortRangeStart = 7890;
-        public const int PortRangeEnd = 7899;
+        public const int DefaultPortRangeStart = 7890;
+        public const int DefaultPortRangeEnd = 7899;
+        public static int PortRangeStart
+        {
+            get
+            {
+                MCPSettingsManager.GetAutoPortRange(out int start, out _);
+                return start;
+            }
+        }
+        public static int PortRangeEnd
+        {
+            get
+            {
+                MCPSettingsManager.GetAutoPortRange(out _, out int end);
+                return end;
+            }
+        }
 
         private static readonly string RegistryDir;
         private static readonly string RegistryPath;
@@ -213,7 +229,17 @@ namespace UnityMCP.Editor
         /// </summary>
         private static int GetLastUsedPort()
         {
-            return EditorPrefs.GetInt("UnityMCP_LastUsedPort_" + GetProjectPath().GetHashCode(), -1);
+            string stableKey =
+                "UnityMCP_LastUsedPort_v2_" +
+                MCPSettingsManager.GetStableProjectScopeHash();
+            if (!EditorPrefs.HasKey(stableKey))
+            {
+                string legacyKey =
+                    "UnityMCP_LastUsedPort_" + GetProjectPath().GetHashCode();
+                if (EditorPrefs.HasKey(legacyKey))
+                    EditorPrefs.SetInt(stableKey, EditorPrefs.GetInt(legacyKey));
+            }
+            return EditorPrefs.GetInt(stableKey, -1);
         }
 
         /// <summary>
@@ -221,7 +247,10 @@ namespace UnityMCP.Editor
         /// </summary>
         private static void SaveLastUsedPort(int port)
         {
-            EditorPrefs.SetInt("UnityMCP_LastUsedPort_" + GetProjectPath().GetHashCode(), port);
+            EditorPrefs.SetInt(
+                "UnityMCP_LastUsedPort_v2_" +
+                MCPSettingsManager.GetStableProjectScopeHash(),
+                port);
         }
 
         /// <summary>

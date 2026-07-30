@@ -1268,7 +1268,8 @@ namespace UnityMCP.Editor
             if (string.IsNullOrEmpty(screenshotPath))
             {
                 string safeName = Path.GetFileNameWithoutExtension(uxmlPath).Replace(' ', '_');
-                screenshotPath = "Assets/Screenshots/UIBuilder_" + safeName + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png";
+                screenshotPath = MCPSettingsManager.CreateDefaultScreenshotPath(
+                    "UIBuilder_" + safeName);
             }
 
             int frame = 0;

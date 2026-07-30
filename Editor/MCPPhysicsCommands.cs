@@ -375,9 +375,17 @@ namespace UnityMCP.Editor
 
         private static bool Use2D(Dictionary<string, object> args)
         {
-            if (args == null || !args.TryGetValue("dimension", out object value) || value == null)
-                return false;
-            string dimension = value.ToString();
+            string dimension;
+            if (args == null ||
+                !args.TryGetValue("dimension", out object value) ||
+                value == null)
+            {
+                dimension = MCPSettingsManager.DefaultPhysicsDimension;
+            }
+            else
+            {
+                dimension = value.ToString();
+            }
             if (string.Equals(dimension, "2D", StringComparison.OrdinalIgnoreCase))
                 return true;
             if (string.Equals(dimension, "3D", StringComparison.OrdinalIgnoreCase))

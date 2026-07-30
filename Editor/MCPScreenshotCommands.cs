@@ -37,7 +37,7 @@ namespace UnityMCP.Editor
             bool returnBase64 = transport == "base64" || transport == "both";
             string path = GetString(args, "path");
             if (writeFile && string.IsNullOrEmpty(path))
-                path = "Assets/Screenshots/SceneView_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png";
+                path = MCPSettingsManager.CreateDefaultScreenshotPath("SceneView");
 
             var sceneView = SceneView.lastActiveSceneView;
             if (sceneView == null)
@@ -612,7 +612,7 @@ namespace UnityMCP.Editor
         // PLATFORM: Windows editor only — these Win32 paths have no macOS/Linux equivalent.
         //
         // args: window (required — EditorWindow type FullName e.g. "UnityEditor.InspectorWindow",
-        //       simple type name, or tab title); path (optional — default Assets/Screenshots/…,
+        //       simple type name, or tab title); path (optional — default project screenshot directory,
         //       any user-chosen .png path is honoured); maxDimension (optional, default 8192);
         //       captureMode (optional: auto, print-window, or screen).
         public static object CaptureEditorWindow(Dictionary<string, object> args)
@@ -625,7 +625,7 @@ namespace UnityMCP.Editor
 
             string path = args != null && args.ContainsKey("path") ? args["path"].ToString() : "";
             if (string.IsNullOrEmpty(path))
-                path = "Assets/Screenshots/EditorWindow_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png";
+                path = MCPSettingsManager.CreateDefaultScreenshotPath("EditorWindow");
             if (!path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                 return Err("path must end in .png");
             int maxDimension = args != null && args.ContainsKey("maxDimension") ? Convert.ToInt32(args["maxDimension"]) : 8192;

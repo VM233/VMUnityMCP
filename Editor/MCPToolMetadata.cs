@@ -498,6 +498,7 @@ namespace UnityMCP.Editor
             ToolProfile profile = GetToolProfile(route);
             Dictionary<string, object> inputSchema = AddTargetBindingSchema(
                 GetToolInputSchema(route), !profile.ReadOnly);
+            MCPToolConfigurationPolicy.AnnotateInputSchema(route, inputSchema);
             bool isFirstClass = string.Equals(profile.Exposure, ExposureFirstClass, StringComparison.Ordinal);
             return new Dictionary<string, object>
             {
@@ -1244,6 +1245,16 @@ namespace UnityMCP.Editor
         {
             switch (route)
             {
+                case "_meta/tools":
+                    return Schema(Props(
+                        Prop("firstClassOnly", "boolean", "Return only release-managed first-class tools. Defaults to true."),
+                        Prop("compact", "boolean", "Return compact descriptors. Defaults to true."),
+                        Prop("includeSchema", "boolean", "Include input schemas. Defaults to false."),
+                        Prop("offset", "number", "Tool offset. Defaults to 0."),
+                        Prop("limit", "number", "Maximum tools returned. Built-in default is 50; capped at 200."),
+                        Prop("category", "string", "Optional exact category filter."),
+                        Prop("includeMetadataIssues", "boolean", "Include metadata audit diagnostics in detailed mode. Defaults to false.")
+                    ));
                 case "asset/list":
                     return Schema(Props(
                         Prop("folder", "string", "Folder to search. Defaults to Assets."),
@@ -1299,7 +1310,7 @@ namespace UnityMCP.Editor
                     ), "assetPath");
                 case "physics/raycast":
                     return Schema(Props(
-                        Prop("dimension", "string", "Physics dimension: 3D (default) or 2D."),
+                        Prop("dimension", "string", "Physics dimension: 2D or 3D. Defaults to Project Settings > Unity MCP > Tool Defaults (3D initially)."),
                         Prop("origin", "object", "Ray origin with x/y/z. z is ignored for 2D."),
                         Prop("direction", "object", "Ray direction with x/y/z. z is ignored for 2D."),
                         Prop("maxDistance", "number", "Maximum ray distance. Defaults to infinity."),
@@ -1309,7 +1320,7 @@ namespace UnityMCP.Editor
                     ), "origin", "direction");
                 case "physics/overlap-sphere":
                     return Schema(Props(
-                        Prop("dimension", "string", "Physics dimension: 3D (default) or 2D. In 2D this performs an overlap circle."),
+                        Prop("dimension", "string", "Physics dimension: 2D or 3D. Defaults to the Unity MCP project setting (3D initially). In 2D this performs an overlap circle."),
                         Prop("center", "object", "Query center with x/y/z. z is ignored for 2D."),
                         Prop("radius", "number", "Sphere or circle radius. Defaults to 1."),
                         Prop("layerMask", "number", "Optional Physics or Physics2D layer mask."),
@@ -1317,7 +1328,7 @@ namespace UnityMCP.Editor
                     ), "center");
                 case "physics/overlap-box":
                     return Schema(Props(
-                        Prop("dimension", "string", "Physics dimension: 3D (default) or 2D."),
+                        Prop("dimension", "string", "Physics dimension: 2D or 3D. Defaults to the Unity MCP project setting (3D initially)."),
                         Prop("center", "object", "Query center with x/y/z. z is ignored for 2D."),
                         Prop("halfExtents", "object", "Half extents with x/y/z. In 2D, x/y are doubled into box size."),
                         Prop("angle", "number", "2D box rotation in degrees. Ignored for 3D."),
@@ -1515,7 +1526,8 @@ namespace UnityMCP.Editor
                     ));
                 case "mcp/health":
                     return Schema(Props(
-                        Prop("recentCount", "number", "Number of recent MCP actions to return. Defaults to 20."),
+                        Prop("includeRecentActions", "boolean", "Include recent and slow action details. Defaults to false so health checks remain compact."),
+                        Prop("recentCount", "number", "Number of recent MCP actions to return when includeRecentActions is true. Defaults to 20."),
                         Prop("slowThresholdMs", "number", "Recent actions at or above this duration are listed as slow. Defaults to 1000.")
                     ));
                 case "mcp/set-autostart":
@@ -1785,7 +1797,7 @@ namespace UnityMCP.Editor
                         Prop("componentType", "string", "Component type name or full name."),
                         Prop("propertyName", "string", "Serialized property name or property path to set."),
                         AnyJsonValueProp("value", "Serialized value to assign. Accepts primitive values, arrays, and objects. A primitive scalar may be wrapped as {value: ...} when the MCP client exposes this field as an object."),
-                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                         Prop("prefabFileDiffContextLines", "number", "Context lines around prefab YAML changes. Defaults to 2."),
                         Prop("prefabFileDiffMaxLines", "number", "Maximum diff lines returned. Defaults to 200."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary.")
@@ -1800,7 +1812,7 @@ namespace UnityMCP.Editor
                         Prop("referencePrefabPath", "string", "Path of a GameObject inside the same prefab to assign."),
                         Prop("referenceComponentType", "string", "When using referencePrefabPath, assign this component instead of the GameObject."),
                         Prop("clear", "boolean", "Clear the ObjectReference."),
-                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary.")
                     ), "assetPath", "propertyName");
                 case "prefab-asset/instantiate-child-prefab":
@@ -1824,7 +1836,7 @@ namespace UnityMCP.Editor
                         Prop("position", "object", "Optional local position object with x/y/z."),
                         Prop("rotation", "object", "Optional local Euler rotation object with x/y/z."),
                         Prop("scale", "object", "Optional local scale object with x/y/z."),
-                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary.")
                     ), "assetPath", "name");
                 case "prefab-asset/add-component":
@@ -1836,7 +1848,7 @@ namespace UnityMCP.Editor
                         Prop("typeResolveTimeoutMs", "number", "Maximum type wait time in milliseconds. Defaults to 30000."),
                         Prop("typeResolveStableMs", "number", "Continuous idle time after type resolution before editing. Defaults to 500."),
                         Prop("refreshAssets", "boolean", "Call AssetDatabase.Refresh once before waiting. Defaults to true."),
-                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                         Prop("prefabFileDiffContextLines", "number", "Context lines around prefab YAML changes. Defaults to 2."),
                         Prop("prefabFileDiffMaxLines", "number", "Maximum diff lines returned. Defaults to 200."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary."),
@@ -1851,7 +1863,7 @@ namespace UnityMCP.Editor
                         Prop("prefabPath", "string", "Path of the GameObject inside the prefab. Empty means root."),
                         Prop("componentType", "string", "Component type name or full name."),
                         Prop("componentIndex", "number", "Component index when multiple components of the same type exist. Defaults to 0."),
-                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary.")
                     ), "assetPath", "componentType");
                 case "prefab-asset/move-component":
@@ -1861,7 +1873,7 @@ namespace UnityMCP.Editor
                         Prop("targetPrefabPath", "string", "Path of the target GameObject inside the prefab. Empty means root."),
                         Prop("componentType", "string", "Component type name or full name."),
                         Prop("componentIndex", "number", "Component index on the source GameObject. Defaults to 0."),
-                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                         Prop("prefabFileDiffContextLines", "number", "Context lines around prefab YAML changes. Defaults to 2."),
                         Prop("prefabFileDiffMaxLines", "number", "Maximum diff lines returned. Defaults to 200."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary.")
@@ -1878,7 +1890,7 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("assetPath", "string", "Prefab asset path to edit."),
                         Prop("prefabPath", "string", "Path of the child GameObject to remove. Cannot be root."),
-                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary.")
                     ), "assetPath", "prefabPath");
                 case "prefab-asset/find":
@@ -1898,7 +1910,7 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("assetPath", "string", "Prefab Variant asset path to clean."),
                         Prop("dryRun", "boolean", "Report removable overrides without saving. Defaults to false."),
-                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                        Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                         Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary.")
                     ), "assetPath");
                 case "component/set-reference":
@@ -2295,7 +2307,7 @@ namespace UnityMCP.Editor
                         Prop("capture", "boolean", "Capture the UI Builder window after opening. Defaults to true."),
                         Prop("autoMatchGameView", "boolean", "Enable UI Builder Match Game View when visible document content overflows the configured canvas. Defaults to true."),
                         Prop("requireContentFit", "boolean", "Fail the preview result when visible document content remains clipped by the canvas. Defaults to true."),
-                        Prop("screenshotPath", "string", "PNG path for the UI Builder screenshot."),
+                        Prop("screenshotPath", "string", "PNG path for the UI Builder screenshot. Defaults to the Unity MCP project screenshot directory."),
                         Prop("maxDimension", "number", "Maximum screenshot dimension. Defaults to 8192."),
                         Prop("zoom", "number", "Requested zoom, recorded for diagnostics. UI Builder has no stable public zoom API.")
                     ));
@@ -2305,7 +2317,7 @@ namespace UnityMCP.Editor
                     ), "assertions");
                 case "screenshot/game":
                     return Schema(Props(
-                        Prop("path", "string", "Output PNG path. Defaults under Assets/Screenshots."),
+                        Prop("path", "string", "Output PNG path. Defaults to the Unity MCP project screenshot directory (Assets/Screenshots initially)."),
                         Prop("superSize", "number", "Resolution multiplier. Defaults to 1."),
                         Prop("waitFrames", "number", "Frames to wait before requesting a running capture. Ignored while paused. Defaults to 2."),
                         Prop("stableFrames", "number", "Consecutive stable file-size frames required for a running capture. Ignored while paused. Defaults to 2."),
@@ -2321,10 +2333,17 @@ namespace UnityMCP.Editor
                     ));
                 case "screenshot/scene":
                     return Schema(Props(
-                        Prop("path", "string", "Output PNG path for file or both transport. Defaults under Assets/Screenshots."),
+                        Prop("path", "string", "Output PNG path for file or both transport. Defaults to the Unity MCP project screenshot directory (Assets/Screenshots initially)."),
                         Prop("width", "number", "Capture width in pixels. Defaults to 1920."),
                         Prop("height", "number", "Capture height in pixels. Defaults to 1080."),
                         Prop("transport", "string", "Output transport: file, base64, or both. Defaults to file.")
+                    ));
+                case "screenshot/editor-window":
+                    return Schema(Props(
+                        Prop("window", "string", "EditorWindow type full name, simple type name, or exact tab title."),
+                        Prop("typeOrTitle", "string", "Legacy alias for window."),
+                        Prop("path", "string", "Output PNG path. Defaults to the Unity MCP project screenshot directory (Assets/Screenshots initially)."),
+                        Prop("maxDimension", "number", "Maximum screenshot dimension. Defaults to 8192.")
                     ));
                 case "graphics/asset-preview":
                     return Schema(Props(
@@ -2676,7 +2695,7 @@ namespace UnityMCP.Editor
                 Prop("typeResolveTimeoutMs", "number", "Maximum type wait time in milliseconds. Defaults to 30000."),
                 Prop("typeResolveStableMs", "number", "Continuous idle time after type resolution before editing. Defaults to 500."),
                 Prop("refreshAssets", "boolean", "Schedule AssetDatabase.Refresh only when a referenced component type is missing. Defaults to true."),
-                Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                 Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary."));
             properties["references"] = new Dictionary<string, object>
             {
@@ -2695,7 +2714,7 @@ namespace UnityMCP.Editor
                 Prop("typeResolveTimeoutMs", "number", "Maximum type wait time in milliseconds. Defaults to 30000."),
                 Prop("typeResolveStableMs", "number", "Continuous idle time after type resolution before editing. Defaults to 500."),
                 Prop("refreshAssets", "boolean", "When referenced component types are missing, return a retryable response and schedule AssetDatabase.Refresh after the response. The refresh is skipped when all types are already loaded. Defaults to true."),
-                Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to true."),
+                Prop("includePrefabFileDiff", "boolean", "Return before/after prefab YAML diff. Defaults to the Unity MCP user preference (disabled initially)."),
                 Prop("prefabFileDiffContextLines", "number", "Context lines around prefab YAML changes. Defaults to 2."),
                 Prop("prefabFileDiffMaxLines", "number", "Maximum diff lines returned. Defaults to 200."),
                 Prop("prefabFileDiffMode", "string", "Diff return mode: summary, minimal, or full. Defaults to summary."),

@@ -12,16 +12,33 @@ namespace UnityMCP.Editor
     {
         public static object GetHealth(Dictionary<string, object> args)
         {
+            bool includeRecentActions =
+                GetBool(args, "includeRecentActions", false);
             int recentCount = GetInt(args, "recentCount", 20);
             int slowThresholdMs = GetInt(args, "slowThresholdMs", 1000);
 
             var process = Process.GetCurrentProcess();
-            var recent = MCPActionHistory.GetRecent(Math.Max(1, recentCount));
+            var recent = includeRecentActions
+                ? MCPActionHistory.GetRecent(Math.Max(1, recentCount))
+                : new List<MCPActionRecord>();
             var slowActions = recent
                 .Where(record => record.ExecutionTimeMs >= slowThresholdMs)
                 .OrderByDescending(record => record.ExecutionTimeMs)
                 .Select(ActionToDictionary)
                 .ToList();
+            var history = new Dictionary<string, object>
+            {
+                { "count", MCPActionHistory.Count },
+                { "recentIncluded", includeRecentActions },
+                { "recentCount", recent.Count },
+                { "slowThresholdMs", slowThresholdMs },
+            };
+            if (includeRecentActions)
+            {
+                history["recent"] =
+                    recent.Select(ActionToDictionary).ToList();
+                history["slowActions"] = slowActions;
+            }
 
             return new Dictionary<string, object>
             {
@@ -33,6 +50,8 @@ namespace UnityMCP.Editor
                         { "autoStart", MCPSettingsManager.AutoStart },
                         { "useManualPort", MCPSettingsManager.UseManualPort },
                         { "configuredPort", MCPSettingsManager.Port },
+                        { "autoPortRangeStart", MCPInstanceRegistry.PortRangeStart },
+                        { "autoPortRangeEnd", MCPInstanceRegistry.PortRangeEnd },
                         { "startOnVirtualPlayers", MCPSettingsManager.StartOnVirtualPlayers },
                         { "maxRequestsPerEditorUpdate", MCPBridgeServer.MaxRequestsPerEditorUpdate },
                         { "postReloadProcessingDelaySeconds", MCPBridgeServer.PostReloadProcessingDelaySeconds },
@@ -67,6 +86,7 @@ namespace UnityMCP.Editor
                         { "monoHeapSizeBytes", Profiler.GetMonoHeapSizeLong() },
                     }
                 },
+                { "configuration", MCPSettingsManager.GetConfigurationSnapshot() },
                 { "queue", MCPRequestQueue.GetQueueInfo() },
                 { "sessions", new Dictionary<string, object>
                     {
@@ -75,15 +95,7 @@ namespace UnityMCP.Editor
                         { "activeSessions", MCPRequestQueue.GetActiveSessions() },
                     }
                 },
-                { "history", new Dictionary<string, object>
-                    {
-                        { "count", MCPActionHistory.Count },
-                        { "recentCount", recent.Count },
-                        { "recent", recent.Select(ActionToDictionary).ToList() },
-                        { "slowThresholdMs", slowThresholdMs },
-                        { "slowActions", slowActions },
-                    }
-                },
+                { "history", history },
             };
         }
 

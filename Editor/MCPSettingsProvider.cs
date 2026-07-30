@@ -17,7 +17,14 @@ namespace UnityMCP.Editor
                     "Unity",
                     "MCP",
                     "port",
+                    "port range",
                     "auto-start",
+                    "virtual players",
+                    "result limit",
+                    "prefab diff",
+                    "action history",
+                    "job history",
+                    "categories",
                     "preferences"
                 }
             };
@@ -41,9 +48,11 @@ namespace UnityMCP.Editor
                     "audit",
                     "tooltip",
                     "context",
-                    "categories",
-                    "action history",
-                    "virtual players"
+                    "physics",
+                    "2D",
+                    "3D",
+                    "screenshot",
+                    "tool defaults"
                 }
             };
         }

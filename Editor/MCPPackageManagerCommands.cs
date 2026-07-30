@@ -851,6 +851,7 @@ namespace UnityMCP.Editor
         {
             string normalized = NormalizePath(path);
             return HasHiddenPathSegment(normalized) ||
+                   HasUnityIgnoredTildeSegment(normalized) ||
                    HasPathSegment(normalized, ".git") ||
                    HasPathSegment(normalized, "node_modules") ||
                    HasPathSegment(normalized, "Temp") ||
@@ -874,6 +875,17 @@ namespace UnityMCP.Editor
                     continue;
 
                 if (segment.StartsWith(".", StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasUnityIgnoredTildeSegment(string path)
+        {
+            foreach (string segment in path.Split('/'))
+            {
+                if (segment.EndsWith("~", StringComparison.Ordinal))
                     return true;
             }
 

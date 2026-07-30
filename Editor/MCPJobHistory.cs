@@ -10,7 +10,6 @@ namespace UnityMCP.Editor
 {
     internal static class MCPJobHistory
     {
-        private const int MaxEntries = 200;
         private const int MaxSnapshotCharacters = 128 * 1024;
         private static readonly object Sync = new object();
         private static List<Dictionary<string, object>> entries;
@@ -32,7 +31,7 @@ namespace UnityMCP.Editor
                     { "snapshot", boundedSnapshot },
                 });
                 entries = entries.OrderByDescending(item => ParseDate(GetString(item, "updatedAt")))
-                    .Take(MaxEntries).ToList();
+                    .Take(MCPSettingsManager.JobHistoryMaxEntries).ToList();
                 Save();
             }
         }
@@ -109,7 +108,7 @@ namespace UnityMCP.Editor
             {
                 if (!(MiniJson.Deserialize(File.ReadAllText(path)) is IList list)) return;
                 entries = list.Cast<object>().Select(MCPResponse.ToDictionary).Where(item => item != null)
-                    .Take(MaxEntries).ToList();
+                    .Take(MCPSettingsManager.JobHistoryMaxEntries).ToList();
             }
             catch (Exception exception)
             {

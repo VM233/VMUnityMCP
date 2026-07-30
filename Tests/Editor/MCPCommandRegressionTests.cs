@@ -70,6 +70,8 @@ namespace UnityMCP.Editor.Tests
         private const string LAZY_READ_TOOL_NAME = "unity-mcp-tests/read-lazy-state";
         private const string NESTED_SCHEMA_TOOL_NAME = "unity-mcp-tests/validate-nested-schema";
         private const string INCOMPLETE_FIRST_CLASS_TOOL_NAME = "unity-mcp-tests/incomplete-first-class";
+        private bool projectConfigurationExisted;
+        private string projectConfigurationContents;
 
         [MCPProjectTool(RUNTIME_MUTATION_TOOL_NAME,
             Description = "Regression fixture for explicit runtime mutation metadata.",
@@ -125,6 +127,14 @@ namespace UnityMCP.Editor.Tests
         [SetUp]
         public void SetUp()
         {
+            string projectConfigurationPath =
+                MCPProjectConfiguration.GetFullPath();
+            projectConfigurationExisted =
+                File.Exists(projectConfigurationPath);
+            projectConfigurationContents = projectConfigurationExisted
+                ? File.ReadAllText(projectConfigurationPath)
+                : null;
+
             AssetDatabase.DeleteAsset(TEST_FOLDER);
             AssetDatabase.CreateFolder("Assets", "__UnityMCPTests");
         }
@@ -140,6 +150,16 @@ namespace UnityMCP.Editor.Tests
             }
 
             AssetDatabase.DeleteAsset(TEST_FOLDER);
+
+            string projectConfigurationPath =
+                MCPProjectConfiguration.GetFullPath();
+            if (projectConfigurationExisted)
+                File.WriteAllText(
+                    projectConfigurationPath,
+                    projectConfigurationContents ?? "");
+            else if (File.Exists(projectConfigurationPath))
+                File.Delete(projectConfigurationPath);
+            MCPSettingsManager.ReloadProjectConfiguration();
         }
 
         [Test]
@@ -178,6 +198,7 @@ namespace UnityMCP.Editor.Tests
                 { "assetPath", PREFAB_PATH },
                 { "parentPrefabPath", "MCP Test Prefab/Controls/Gold" },
                 { "name", "Value Sync" },
+                { "includePrefabFileDiff", true },
                 { "prefabFileDiffMode", "minimal" },
                 { "prefabFileDiffMaxLines", 500 },
             }));
@@ -1916,6 +1937,161 @@ namespace UnityMCP.Editor.Tests
             finally
             {
                 MCPSettingsManager.ExecuteCodeAdditionalNamespacesText = originalNamespaces;
+            }
+        }
+
+        [Test]
+        public void ProjectConfiguration_RoundTripsTeamSettingsAndValidatesPaths()
+        {
+            MCPSettingsManager.ContextEnabled = false;
+            MCPSettingsManager.ContextPath = "Assets/Editor/MCPContext";
+            MCPSettingsManager.ExecuteCodeAdditionalNamespacesText =
+                "System.IO\nSystem.Linq\nSystem.IO";
+            MCPSettingsManager.DefaultPhysicsDimension = "2D";
+            MCPSettingsManager.ScreenshotOutputDirectory =
+                "Temp/UnityMCP/Captures";
+
+            MCPSettingsManager.ReloadProjectConfiguration();
+
+            Assert.That(MCPSettingsManager.ContextEnabled, Is.False);
+            Assert.That(MCPSettingsManager.ContextPath,
+                Is.EqualTo("Assets/Editor/MCPContext"));
+            Assert.That(
+                MCPSettingsManager.GetExecuteCodeAdditionalNamespaces(),
+                Is.EqualTo(new[] { "System.IO", "System.Linq" }));
+            Assert.That(MCPSettingsManager.DefaultPhysicsDimension,
+                Is.EqualTo("2D"));
+            Assert.That(MCPSettingsManager.CreateDefaultScreenshotPath(
+                    "Game View"),
+                Does.StartWith("Temp/UnityMCP/Captures/GameView_"));
+
+            string json = File.ReadAllText(
+                MCPProjectConfiguration.GetFullPath());
+            Assert.That(json, Does.Contain("\"schemaVersion\": 1"));
+            Assert.That(json, Does.Contain("\"physicsDimension\": \"2D\""));
+
+            Assert.Throws<InvalidDataException>(() =>
+                MCPSettingsManager.ScreenshotOutputDirectory =
+                    "../outside");
+            Assert.Throws<InvalidDataException>(() =>
+                MCPSettingsManager.ScreenshotOutputDirectory =
+                    "Assets/..");
+            Assert.That(MCPSettingsManager.ScreenshotOutputDirectory,
+                Is.EqualTo("Temp/UnityMCP/Captures"));
+        }
+
+        [Test]
+        public void ToolConfigurationPolicy_AuditsManifestAndHonorsExplicitLimits()
+        {
+            List<string> routes = GetBuiltInRoutes();
+            Assert.That(
+                MCPToolConfigurationPolicy.ComputeRouteManifestSha256(routes),
+                Is.EqualTo(
+                    MCPToolConfigurationPolicy.AuditedRouteManifestSha256));
+            foreach (string route in
+                     MCPToolConfigurationPolicy
+                         .ConfigurableResultLimitArguments.Keys)
+            {
+                Assert.That(routes, Does.Contain(route), route);
+            }
+
+            bool originalOverride =
+                MCPSettingsManager.OverrideDefaultResultLimit;
+            int originalLimit = MCPSettingsManager.DefaultResultLimit;
+            try
+            {
+                MCPSettingsManager.OverrideDefaultResultLimit = true;
+                MCPSettingsManager.DefaultResultLimit = 37;
+
+                var implicitArguments =
+                    new Dictionary<string, object>();
+                MCPToolConfigurationPolicy.ApplyDefaults(
+                    "asset/list", implicitArguments);
+                Assert.That(implicitArguments["limit"], Is.EqualTo(37));
+
+                var explicitArguments =
+                    new Dictionary<string, object> { { "limit", 9 } };
+                MCPToolConfigurationPolicy.ApplyDefaults(
+                    "asset/list", explicitArguments);
+                Assert.That(explicitArguments["limit"], Is.EqualTo(9));
+
+                var mutationArguments =
+                    new Dictionary<string, object>();
+                MCPToolConfigurationPolicy.ApplyDefaults(
+                    "asset/delete", mutationArguments);
+                Assert.That(mutationArguments, Is.Empty);
+            }
+            finally
+            {
+                MCPSettingsManager.OverrideDefaultResultLimit =
+                    originalOverride;
+                MCPSettingsManager.DefaultResultLimit = originalLimit;
+            }
+        }
+
+        [Test]
+        public void ToolCategories_AreDerivedFromAuthoritativeRoutes()
+        {
+            var expected = GetBuiltInRoutes()
+                .Select(route =>
+                {
+                    int slash = route.IndexOf('/');
+                    return slash > 0
+                        ? route.Substring(0, slash)
+                        : route;
+                })
+                .Where(category =>
+                    category != "_meta" &&
+                    category != "agents" &&
+                    category != "ping" &&
+                    category != "queue")
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(category => category, StringComparer.Ordinal)
+                .ToArray();
+
+            Assert.That(MCPSettingsManager.GetAllCategoryNames(),
+                Is.EqualTo(expected));
+            Assert.That(expected,
+                Does.Contain("addressables")
+                    .And.Contain("audio-mixer")
+                    .And.Contain("cinemachine")
+                    .And.Contain("localization")
+                    .And.Contain("material")
+                    .And.Contain("timeline")
+                    .And.Contain("vfxgraph"));
+        }
+
+        [Test]
+        public void PackageMetaLint_IgnoresUnityExcludedTildeDirectories()
+        {
+            string packagePath = Path.Combine(
+                Path.GetTempPath(),
+                $"unity-mcp-meta-lint-{Guid.NewGuid():N}");
+            try
+            {
+                string documentationPath =
+                    Path.Combine(packagePath, "Documentation~");
+                Directory.CreateDirectory(documentationPath);
+                File.WriteAllText(
+                    Path.Combine(documentationPath, "configuration.md"),
+                    "# Configuration");
+
+                var result = RequireDictionary(
+                    MCPPackageManagerCommands.LintPackageMetas(
+                        new Dictionary<string, object>
+                        {
+                            { "path", packagePath },
+                            { "checkDirectories", true },
+                        }));
+
+                Assert.That(result["success"], Is.EqualTo(true));
+                Assert.That(result["isValid"], Is.EqualTo(true));
+                Assert.That(result["missingCount"], Is.EqualTo(0));
+            }
+            finally
+            {
+                if (Directory.Exists(packagePath))
+                    Directory.Delete(packagePath, true);
             }
         }
 

@@ -602,7 +602,14 @@ namespace UnityMCP.Editor
                 else if (_deferredRoutes.TryGetValue(apiPath, out var deferredHandler))
                 {
                     ticket = MCPRequestQueue.SubmitPersistentDeferredRequest(agentId, apiPath,
-                        (resolve, progress) => deferredHandler(ParseJson(innerBody), resolve, progress),
+                        (resolve, progress) =>
+                        {
+                            var deferredArguments = ParseJson(innerBody);
+                            MCPToolConfigurationPolicy.ApplyDefaults(
+                                apiPath, deferredArguments);
+                            deferredHandler(
+                                deferredArguments, resolve, progress);
+                        },
                         innerBody, requestKey, out reused);
                 }
                 else
@@ -730,10 +737,12 @@ namespace UnityMCP.Editor
             string nestedBody = GetArgumentString(args, "body");
             var nestedArgs = GetArgumentDictionary(args, "args")
                              ?? new Dictionary<string, object>();
-            if (string.IsNullOrEmpty(nestedBody))
-                nestedBody = MiniJson.Serialize(nestedArgs);
+            if (!string.IsNullOrEmpty(nestedBody))
+                nestedArgs = ParseJson(nestedBody);
+            MCPToolConfigurationPolicy.ApplyDefaults(route, nestedArgs);
+            nestedBody = MiniJson.Serialize(nestedArgs);
 
-            if (TryBuildProjectMismatchResponse(route, ParseJson(nestedBody), out var projectMismatch))
+            if (TryBuildProjectMismatchResponse(route, nestedArgs, out var projectMismatch))
             {
                 resolve(projectMismatch);
                 return;
@@ -741,7 +750,7 @@ namespace UnityMCP.Editor
 
             if (_deferredRoutes.TryGetValue(route, out var deferredHandler))
             {
-                deferredHandler(ParseJson(nestedBody), resolve, _ => { });
+                deferredHandler(nestedArgs, resolve, _ => { });
                 return;
             }
 
@@ -861,10 +870,14 @@ namespace UnityMCP.Editor
         /// </summary>
         private static object RouteRequest(string path, string method, string body)
         {
+            var configuredArguments = ParseJson(body);
+            MCPToolConfigurationPolicy.ApplyDefaults(path, configuredArguments);
+            body = MiniJson.Serialize(configuredArguments);
+
             // ─── Meta endpoints (no category check) ───
             if (path == "_meta/tools")
             {
-                var args = ParseJson(body);
+                var args = configuredArguments;
                 bool firstClassOnly = !args.TryGetValue("firstClassOnly", out var value) ||
                                       value == null || Convert.ToBoolean(value);
                 bool compact = !args.TryGetValue("compact", out value) ||

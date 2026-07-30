@@ -624,7 +624,8 @@ namespace UnityMCP.Editor
                 { "reconciledAfterReload", true },
                 { "resumeCount", GetInt(args, "_resumeCount", 1) },
             };
-            if (GetBool(args, "includePrefabFileDiff", true))
+            if (GetBool(args, "includePrefabFileDiff",
+                    MCPSettingsManager.IncludePrefabFileDiffByDefault))
                 result["prefabFileDiffUnavailable"] = "reconciled-after-domain-reload";
             return result;
         }
@@ -2181,7 +2182,10 @@ namespace UnityMCP.Editor
                 args = new Dictionary<string, object>();
 
             if (args.ContainsKey("includePrefabFileDiff") == false)
-                args["includePrefabFileDiff"] = true;
+            {
+                args["includePrefabFileDiff"] =
+                    MCPSettingsManager.IncludePrefabFileDiffByDefault;
+            }
             if (args.ContainsKey("prefabFileDiffMode") == false)
                 args["prefabFileDiffMode"] = "summary";
             if (args.ContainsKey("prefabFileDiffContextLines") == false)
@@ -4258,7 +4262,8 @@ namespace UnityMCP.Editor
         private static void AddPrefabFileDiff(Dictionary<string, object> result,
             AssetTextSnapshot beforeSnapshot, string assetPath, Dictionary<string, object> args)
         {
-            if (result == null || GetBool(args, "includePrefabFileDiff", true) == false)
+            if (result == null || GetBool(args, "includePrefabFileDiff",
+                    MCPSettingsManager.IncludePrefabFileDiffByDefault) == false)
                 return;
 
             result["prefabFileDiff"] = BuildAssetTextDiff(beforeSnapshot, assetPath, args);
