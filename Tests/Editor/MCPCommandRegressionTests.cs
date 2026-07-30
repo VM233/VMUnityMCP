@@ -696,11 +696,21 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void UnifiedExecutionRoutes_AreDeferredAndRetiredBatchRoutesAreRemoved()
         {
-            var routesProperty = typeof(MCPBridgeServer).GetProperty("DeferredRouteNames",
+            var deferredRegistry = typeof(MCPToolMetadata).Assembly.GetType(
+                "UnityMCP.Editor.MCPDeferredRouteRegistry");
+            Assert.That(deferredRegistry, Is.Not.Null);
+            var routesProperty = deferredRegistry.GetProperty("RouteNames",
                 BindingFlags.Static | BindingFlags.NonPublic);
             Assert.That(routesProperty, Is.Not.Null);
             var routes = (IEnumerable<string>)routesProperty.GetValue(null);
             var deferredRoutes = routes.ToHashSet(StringComparer.Ordinal);
+
+            var bridgeRoutesProperty = typeof(MCPBridgeServer).GetProperty("DeferredRouteNames",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(bridgeRoutesProperty, Is.Not.Null);
+            CollectionAssert.AreEquivalent(deferredRoutes,
+                (IEnumerable<string>)bridgeRoutesProperty.GetValue(null),
+                "The HTTP bridge must delegate deferred route discovery to the executable registry.");
             Assert.That(routes, Does.Contain("prefab-asset/configure-component"));
             Assert.That(routes, Does.Contain("prefab-asset/transaction-edit"));
             Assert.That(routes, Does.Contain("asset/import"));
@@ -714,6 +724,21 @@ namespace UnityMCP.Editor.Tests
             var registeredRoutes = GetBuiltInRoutes();
             CollectionAssert.IsSubsetOf(deferredRoutes, registeredRoutes,
                 "Every deferred route must belong to the authoritative built-in route registry.");
+
+            Type registry = typeof(MCPToolMetadata).Assembly.GetType("UnityMCP.Editor.MCPRouteRegistry");
+            Assert.That(registry, Is.Not.Null);
+            var nonDeferredRoutesProperty = registry.GetProperty("NonDeferredRoutes",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(nonDeferredRoutesProperty, Is.Not.Null);
+            var nonDeferredRoutes = ((IEnumerable<string>)nonDeferredRoutesProperty.GetValue(null))
+                .ToHashSet(StringComparer.Ordinal);
+            CollectionAssert.IsEmpty(nonDeferredRoutes.Intersect(deferredRoutes),
+                "Deferred routes must only be declared by the executable deferred-handler registry.");
+            CollectionAssert.AreEquivalent(
+                nonDeferredRoutes.Concat(deferredRoutes),
+                registeredRoutes,
+                "The authoritative route catalog must be the exact union of non-deferred routes and deferred handlers.");
+
             Assert.That(registeredRoutes, Does.Not.Contain("prefab-asset/batch-edit"));
             Assert.That(registeredRoutes, Does.Not.Contain("asset/move-batch"));
             Assert.That(registeredRoutes, Does.Not.Contain("component/batch-wire"));

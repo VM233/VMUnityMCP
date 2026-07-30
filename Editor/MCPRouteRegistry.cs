@@ -1,17 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace UnityMCP.Editor
 {
     /// <summary>
-    /// Authoritative built-in route manifest. The regression suite verifies that every
-    /// switch handler is represented here, so runtime metadata never needs to parse source files.
+    /// Authoritative built-in route manifest. Non-deferred routes are declared here while deferred
+    /// routes are incorporated from their executable handler registry, so every route name has one source.
     /// </summary>
     internal static class MCPRouteRegistry
     {
-        private static readonly string[] BuiltInRouteArray =
+        private static readonly string[] NonDeferredRouteArray =
         {
-            "advanced/execute",
             "agents/list",
             "agents/log",
             "animation/add-event",
@@ -60,12 +60,10 @@ namespace UnityMCP.Editor
             "asset/dependencies",
             "asset/export-unitypackage",
             "asset/get-refresh-job",
-            "asset/import",
             "asset/import-settings/get",
             "asset/import-settings/set",
             "asset/import-unitypackage",
             "asset/list",
-            "asset/move",
             "asset/refresh",
             "asset/rename",
             "asset/transaction",
@@ -88,7 +86,6 @@ namespace UnityMCP.Editor
             "component/get-referenceable",
             "component/remove",
             "component/set-property",
-            "component/set-reference",
             "console/clear",
             "console/query",
             "constraint/add",
@@ -103,7 +100,6 @@ namespace UnityMCP.Editor
             "debugger/events",
             "editor/execute-code",
             "editor/execute-menu-item",
-            "editor/play-mode",
             "editor/state",
             "editorprefs/delete",
             "editorprefs/get",
@@ -157,7 +153,6 @@ namespace UnityMCP.Editor
             "localization/set-selected-locale",
             "localization/settings",
             "localization/status",
-            "localization/upsert-entry",
             "localization/upsert-variable",
             "localization/validate",
             "localization/variables",
@@ -176,14 +171,9 @@ namespace UnityMCP.Editor
             "navigation/clear",
             "navigation/info",
             "navigation/set-destination",
-            "packages/add",
             "packages/info",
             "packages/lint-metas",
-            "packages/list",
-            "packages/remove",
-            "packages/search",
             "packages/status",
-            "packages/update-git",
             "particle/create",
             "particle/info",
             "particle/playback",
@@ -206,12 +196,10 @@ namespace UnityMCP.Editor
             "prefab/info",
             "prefab/revert-overrides",
             "prefab/unpack",
-            "prefab-asset/add-component",
             "prefab-asset/add-gameobject",
             "prefab-asset/apply-variant-override",
             "prefab-asset/cleanup-missing-overrides",
             "prefab-asset/compare-variant",
-            "prefab-asset/configure-component",
             "prefab-asset/find",
             "prefab-asset/get-properties",
             "prefab-asset/hierarchy",
@@ -223,7 +211,6 @@ namespace UnityMCP.Editor
             "prefab-asset/revert-variant-override",
             "prefab-asset/set-property",
             "prefab-asset/set-reference",
-            "prefab-asset/transaction-edit",
             "prefab-asset/transfer-variant-overrides",
             "prefab-asset/variant-info",
             "profiler/analyze",
@@ -231,7 +218,6 @@ namespace UnityMCP.Editor
             "profiler/frame-data",
             "profiler/memory",
             "profiler/memory-breakdown",
-            "profiler/memory-snapshot",
             "profiler/memory-snapshot-status",
             "profiler/memory-status",
             "profiler/memory-top-assets",
@@ -259,7 +245,6 @@ namespace UnityMCP.Editor
             "sceneview/set-camera",
             "screenshot/crop",
             "screenshot/editor-window",
-            "screenshot/game",
             "screenshot/scene",
             "script/create",
             "script/read",
@@ -360,7 +345,6 @@ namespace UnityMCP.Editor
             "terrain/smooth",
             "testing/get-job",
             "testing/get-package-job",
-            "testing/list-tests",
             "testing/run-package-tests",
             "testing/run-tests",
             "timeline/info",
@@ -383,7 +367,6 @@ namespace UnityMCP.Editor
             "uitoolkit/audit-uss-styles",
             "uitoolkit/audit-uxml-layout",
             "uitoolkit/authoring-transaction",
-            "uitoolkit/builder-preview",
             "uitoolkit/capture-element",
             "uitoolkit/compare-element",
             "uitoolkit/diagnose-runtime",
@@ -392,7 +375,6 @@ namespace UnityMCP.Editor
             "uitoolkit/generated-children",
             "uitoolkit/locate-element",
             "uitoolkit/query",
-            "uitoolkit/refresh",
             "uitoolkit/repaint",
             "uitoolkit/resource-audit",
             "uitoolkit/runtime-documents",
@@ -410,7 +392,6 @@ namespace UnityMCP.Editor
             "undo/redo",
             "vfxgraph/info",
             "vfxgraph/transaction",
-            "wait/editor-idle",
             "_meta/tools",
             "_meta/capabilities",
             "queue/cancel",
@@ -418,8 +399,15 @@ namespace UnityMCP.Editor
             "queue/status"
         };
 
+        private static readonly string[] BuiltInRouteArray = NonDeferredRouteArray
+            .Concat(MCPDeferredRouteRegistry.RouteNames)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
         private static readonly HashSet<string> BuiltInRouteSet =
             new HashSet<string>(BuiltInRouteArray, StringComparer.Ordinal);
+
+        internal static IEnumerable<string> NonDeferredRoutes => NonDeferredRouteArray;
 
         internal static IEnumerable<string> BuiltInRoutes => BuiltInRouteArray;
 

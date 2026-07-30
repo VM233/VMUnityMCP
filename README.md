@@ -36,6 +36,10 @@ hand-maintained README list. This prevents installed Unity packages, Unity
 versions, and the currently selected project from producing stale concrete
 tools.
 
+The built-in catalog is the exact union of the non-deferred route manifest and
+the executable deferred-handler registry. Deferred names are not repeated in a
+second list, and reading metadata does not initialize the HTTP listener.
+
 | Area | Contract |
 |---|---|
 | Discovery | `_meta/capabilities` reports package/version-gated integrations. `_meta/tools` provides the compact route catalog for server synchronization. |

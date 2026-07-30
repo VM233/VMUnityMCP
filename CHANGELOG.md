@@ -2,6 +2,17 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.3.3] - 2026-07-30
+
+- Move callback-based route names and handlers into one executable deferred
+  registry, and compose the authoritative route catalog from that registry
+  plus the non-deferred manifest.
+- Remove every deferred route from the hand-maintained non-deferred manifest,
+  including the former `testing/list-tests` special case, and enforce exact
+  union/disjointness contracts in the regression suite.
+- Keep route metadata discovery free of HTTP-listener initialization side
+  effects by separating the deferred registry from `MCPBridgeServer`.
+
 ## [5.3.2] - 2026-07-30
 
 - Make `prefab-asset/add-component` honor its optional initial `properties`

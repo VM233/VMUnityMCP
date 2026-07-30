@@ -33,39 +33,7 @@ namespace UnityMCP.Editor
         /// <summary>The port this server is currently bound to (0 if not running).</summary>
         public static int ActivePort => _isRunning ? _activePort : 0;
 
-        // Routes whose Unity APIs use async callbacks (fire on next editor frame).
-        // Register here instead of adding per-route if-conditions in HandleRequest/HandleQueueSubmit.
-        private delegate void DeferredRouteHandler(Dictionary<string, object> args, Action<object> resolve,
-            Action<object> progress);
-
-        private static readonly Dictionary<string, DeferredRouteHandler>
-            _deferredRoutes = new Dictionary<string, DeferredRouteHandler>
-        {
-            { "testing/list-tests", (args, resolve, _) => MCPTestRunnerCommands.ListTests(args, resolve) },
-            { "advanced/execute", (args, resolve, _) => ExecuteAdvancedRouteDeferred(args, resolve) },
-            { "wait/editor-idle", (args, resolve, _) => MCPEditorCommands.WaitForIdle(args, resolve) },
-            { "editor/play-mode", (args, resolve, _) => MCPEditorCommands.SetPlayMode(args, resolve) },
-            { "uitoolkit/refresh", (args, resolve, _) => MCPUICommands.RefreshUIToolkit(args, resolve) },
-            { "uitoolkit/builder-preview", (args, resolve, _) => MCPUICommands.OpenUIBuilderPreview(args, resolve) },
-            { "screenshot/game", (args, resolve, _) => MCPGameViewCaptureCommands.CaptureGameView(args, resolve) },
-            { "packages/update-git", (args, resolve, _) => MCPPackageManagerCommands.UpdateGitPackageDeferred(args, resolve) },
-            { "packages/list", (args, resolve, _) => MCPPackageManagerCommands.ListPackagesDeferred(args, resolve) },
-            { "packages/add", (args, resolve, _) => MCPPackageManagerCommands.AddPackageDeferred(args, resolve) },
-            { "packages/remove", (args, resolve, _) => MCPPackageManagerCommands.RemovePackageDeferred(args, resolve) },
-            { "packages/search", (args, resolve, _) => MCPPackageManagerCommands.SearchPackageDeferred(args, resolve) },
-            { "profiler/memory-snapshot", (args, resolve, _) =>
-                MCPMemoryProfilerCommands.TakeMemorySnapshot(args, resolve) },
-            { "prefab-asset/add-component", MCPPrefabAssetCommands.AddComponentDeferred },
-            { "prefab-asset/configure-component", MCPPrefabAssetCommands.ConfigureComponentDeferred },
-            { "prefab-asset/transaction-edit", MCPPrefabAssetCommands.TransactionEditDeferred },
-            { "asset/import", MCPAssetCommands.ImportDeferred },
-            { "asset/move", MCPAssetCommands.MoveDeferred },
-            { "component/set-reference", MCPComponentCommands.SetReferencesDeferred },
-            { "localization/upsert-entry", (args, resolve, progress) =>
-                MCPLocalizationBridge.ExecuteDeferred("localization/upsert-entry", args, resolve, progress) },
-        };
-
-        internal static IEnumerable<string> DeferredRouteNames => _deferredRoutes.Keys;
+        internal static IEnumerable<string> DeferredRouteNames => MCPDeferredRouteRegistry.RouteNames;
 
         // SessionState key to persist running state across domain reloads (Play Mode, recompile)
         private const string WasRunningKey = "UnityMCP_WasRunningBeforeReload";
@@ -599,7 +567,7 @@ namespace UnityMCP.Editor
                 {
                     ticket = MCPRequestQueue.SubmitResumableEditorIdleWait(agentId, innerArgs, out reused);
                 }
-                else if (_deferredRoutes.TryGetValue(apiPath, out var deferredHandler))
+                else if (MCPDeferredRouteRegistry.TryGet(apiPath, out var deferredHandler))
                 {
                     ticket = MCPRequestQueue.SubmitPersistentDeferredRequest(agentId, apiPath,
                         (resolve, progress) =>
@@ -716,7 +684,7 @@ namespace UnityMCP.Editor
             return RouteRequest(route, nestedMethod, nestedBody);
         }
 
-        private static void ExecuteAdvancedRouteDeferred(Dictionary<string, object> args, Action<object> resolve)
+        internal static void ExecuteAdvancedRouteDeferred(Dictionary<string, object> args, Action<object> resolve)
         {
             string route = GetArgumentString(args, "route");
             if (string.IsNullOrEmpty(route))
@@ -748,7 +716,7 @@ namespace UnityMCP.Editor
                 return;
             }
 
-            if (_deferredRoutes.TryGetValue(route, out var deferredHandler))
+            if (MCPDeferredRouteRegistry.TryGet(route, out var deferredHandler))
             {
                 deferredHandler(nestedArgs, resolve, _ => { });
                 return;
@@ -1931,13 +1899,13 @@ namespace UnityMCP.Editor
 
         internal static bool IsDeferredRoute(string path)
         {
-            return !string.IsNullOrEmpty(path) && _deferredRoutes.ContainsKey(path);
+            return MCPDeferredRouteRegistry.Contains(path);
         }
 
         internal static void ExecutePersistedDeferredRoute(string path, string body, Action<object> resolve,
             Action<object> progress)
         {
-            if (!_deferredRoutes.TryGetValue(path, out var handler))
+            if (!MCPDeferredRouteRegistry.TryGet(path, out var handler))
             {
                 resolve(MCPResponse.Error($"Deferred route was not found: '{path}'.", "route_not_found"));
                 return;

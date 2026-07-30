@@ -1,7 +1,13 @@
 # Unity MCP configuration architecture and tool audit
 
-This document records the configuration review for the 405 built-in routes in
-`MCPRouteRegistry`. The audited manifest SHA-256 is
+This document records the configuration review for the 405 built-in routes
+published by `MCPRouteRegistry`. The registry composes its catalog from a
+non-deferred manifest and `MCPDeferredRouteRegistry`, which owns both deferred
+names and executable handlers. The two sources must be disjoint, their union
+must exactly equal the published catalog, and metadata inspection does not
+initialize `MCPBridgeServer`.
+
+The audited manifest SHA-256 is
 `8010bd6ec922b7fb31608bf7b252120b1666952e9e19c52349fed06783a32fbf`.
 The regression suite compares that fingerprint with the authoritative route
 manifest, so adding, removing, or renaming a route requires another
