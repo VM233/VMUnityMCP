@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.2.1] - 2026-07-30
+
+- Defer project-binding classification for the outer `queue/submit` transport envelope until its inner `apiPath` is parsed, allowing unbound read-only metadata discovery while continuing to reject unbound mutations.
+
 ## [5.2.0] - 2026-07-30
 
 - Add first-class persistent-job cancellation for Player Builds, Unity tests, package-test workflows, Memory Profiler snapshots, and Addressables builds, with explicit cooperative/pre-start cancellation results.

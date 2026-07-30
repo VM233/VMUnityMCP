@@ -4196,6 +4196,14 @@ namespace UnityMCP.Editor.Tests
             Assert.That(method.Invoke(null, readArguments), Is.EqualTo(false));
             Assert.That(readArguments[2], Is.Null);
 
+            var queueEnvelopeArguments = new object[]
+            {
+                "queue/submit", new Dictionary<string, object>(), null
+            };
+            Assert.That(method.Invoke(null, queueEnvelopeArguments), Is.EqualTo(false));
+            Assert.That(queueEnvelopeArguments[2], Is.Null,
+                "The outer queue envelope must defer target classification to its inner apiPath.");
+
             foreach (string contextRoute in new[] { "context", "context/Architecture" })
             {
                 var contextArguments = new object[]

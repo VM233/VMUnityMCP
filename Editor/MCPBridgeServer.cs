@@ -840,6 +840,10 @@ namespace UnityMCP.Editor
                 case "queue/status":
                 case "queue/info":
                 case "queue/cancel":
+                // The outer transport envelope cannot be classified until
+                // HandleQueueSubmit parses apiPath. The inner route is validated
+                // immediately afterwards, so writes still require project binding.
+                case "queue/submit":
                 case "instance/current":
                 case "instance/list":
                 case "instance/resolve":
