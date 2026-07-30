@@ -7380,7 +7380,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void TransportCompaction_UnwrapsProjectToolSuccessEnvelope()
+        public void TransportCompaction_UnwrapsProjectToolEnvelopeAndPreservesOutputSchemaShape()
         {
             var result = new Dictionary<string, object>
             {
@@ -7410,11 +7410,11 @@ namespace UnityMCP.Editor.Tests
             Assert.That(compacted.ContainsKey("success"), Is.False);
             Assert.That(compacted.ContainsKey("result"), Is.False);
             Assert.That(compacted.ContainsKey("toolName"), Is.False);
-            Assert.That(compacted.ContainsKey("warningCount"), Is.False);
-            Assert.That(compacted.ContainsKey("hasWarnings"), Is.False);
-            Assert.That(compacted.ContainsKey("returnedIssueCount"), Is.False);
-            Assert.That(compacted.ContainsKey("warnings"), Is.False);
-            Assert.That(compacted.ContainsKey("issues"), Is.False);
+            Assert.That(compacted["warningCount"], Is.EqualTo(0));
+            Assert.That(compacted["hasWarnings"], Is.EqualTo(false));
+            Assert.That(compacted["returnedIssueCount"], Is.EqualTo(0));
+            Assert.That((IList)compacted["warnings"], Is.Empty);
+            Assert.That((IList)compacted["issues"], Is.Empty);
         }
 
         [Test]

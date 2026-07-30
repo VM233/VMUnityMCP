@@ -197,7 +197,7 @@ namespace UnityMCP.Editor
                 return formattedValue;
 
             if (isRoot && IsProjectToolSuccessEnvelope(source))
-                return CompactValue(source["result"], true);
+                return PreserveProjectToolSchemaShape(source["result"]);
 
             bool isQueueTicketEnvelope = IsQueueTicketEnvelope(source);
             var compacted = new Dictionary<string, object>();
@@ -234,6 +234,51 @@ namespace UnityMCP.Editor
 
             RemoveEmptyContainers(compacted, isRoot, emptyPrimaryCollectionKey);
             return compacted;
+        }
+
+        /// <summary>
+        /// Project tools advertise and validate an explicit output schema before
+        /// execution completes. Their wire payload must therefore retain empty
+        /// containers, required counts, flags, and nested object members exactly
+        /// as validated. Only the internal success/toolName envelope and the
+        /// transport-only Unity struct marker are removed.
+        /// </summary>
+        private static object PreserveProjectToolSchemaShape(object value)
+        {
+            if (value == null || value is string || value is decimal)
+                return value;
+
+            Type valueType = value.GetType();
+            if (valueType.IsPrimitive || valueType.IsEnum)
+                return value;
+
+            if (value is IList list)
+            {
+                var transportedList = new List<object>(list.Count);
+                foreach (object item in list)
+                    transportedList.Add(PreserveProjectToolSchemaShape(item));
+                return transportedList;
+            }
+
+            if (MCPCompactValueFormatter.TryFormatUnityValue(value,
+                    out string formattedValue))
+            {
+                return formattedValue;
+            }
+
+            Dictionary<string, object> source = ToDictionary(value);
+            if (source == null)
+                return value;
+
+            var transported = new Dictionary<string, object>();
+            foreach (KeyValuePair<string, object> pair in source)
+            {
+                if (pair.Key == "$unityStruct")
+                    continue;
+                transported[pair.Key] =
+                    PreserveProjectToolSchemaShape(pair.Value);
+            }
+            return transported;
         }
 
         private static bool IsProjectToolSuccessEnvelope(Dictionary<string, object> dictionary)

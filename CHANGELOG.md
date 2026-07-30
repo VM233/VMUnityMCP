@@ -23,6 +23,10 @@ All notable changes to this package will be documented in this file.
   and poses without transport compaction rewriting them.
 - Treat pre-start cancellation as side-effect-free and never run cleanup for
   code that did not cross the execution boundary.
+- Preserve the exact validated project-tool result shape across the HTTP
+  transport, including required empty collections, counts, and flags, so the
+  public `structuredContent` continues to satisfy its advertised
+  `outputSchema`.
 
 ## [5.3.5] - 2026-07-30
 

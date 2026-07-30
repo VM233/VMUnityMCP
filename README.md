@@ -186,6 +186,9 @@ The full ownership matrix and authoritative built-in route audit are in
   block remains a short human-readable summary.
 - Successful bridge responses may omit redundant `success=true`; errors keep a
   stable error code and retryability.
+- Project-tool success envelopes are unwrapped without compacting the validated
+  result object. Required empty collections, counts, flags, and nested members
+  therefore retain the exact shape declared by the tool's `outputSchema`.
 - `editor/execute-code` reports invalid submissions and compiler diagnostics as
   non-retryable structured errors. Compilation failures use
   `execute_code_compilation_failed` and return `userCodeExecuted=false`, so
