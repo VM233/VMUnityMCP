@@ -2,6 +2,17 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.3.5] - 2026-07-30
+
+- Classify `editor/execute-code` compilation failures with the stable
+  `execute_code_compilation_failed` error code instead of the generic `error`
+  fallback.
+- Return structured non-retryable pre-execution errors and
+  `userCodeExecuted=false` for missing code, invalid namespace imports,
+  unavailable Roslyn, and caller-code compilation failures.
+- Add regression coverage for compilation diagnostics, caller line numbers,
+  error classification, and the no-execution guarantee.
+
 ## [5.3.4] - 2026-07-30
 
 - Enforce project-tool JSON Schema `not` and `const` constraints before

@@ -167,6 +167,10 @@ The full ownership matrix and authoritative built-in route audit are in
 
 - Successful responses omit redundant `success=true`; errors keep a stable
   error code and retryability.
+- `editor/execute-code` reports invalid submissions and compiler diagnostics as
+  non-retryable structured errors. Compilation failures use
+  `execute_code_compilation_failed` and return `userCodeExecuted=false`, so
+  callers can distinguish invalid C# from bridge or runtime failures.
 - Completed pagination aliases and exact duplicate counts are removed on the
   wire. A sole empty primary collection is preserved so a zero-match result
   cannot disappear from a completed ticket.

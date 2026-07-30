@@ -513,16 +513,26 @@ namespace UnityMCP.Editor
 
         public static object ExecuteCode(Dictionary<string, object> args)
         {
-            string code = args.ContainsKey("code") ? args["code"].ToString() : "";
+            string code = args != null && args.ContainsKey("code") && args["code"] != null
+                ? args["code"].ToString()
+                : "";
             if (string.IsNullOrEmpty(code))
-                return new { error = "code is required" };
+            {
+                return MCPResponse.Error("code is required", "invalid_arguments", false,
+                    new Dictionary<string, object>
+                    {
+                        { "userCodeExecuted", false },
+                    });
+            }
 
             if (!TryLoadRoslyn())
             {
-                return new Dictionary<string, object>
-                {
-                    { "error", "Roslyn (Microsoft.CodeAnalysis) is not available in this Unity version. ExecuteCode requires Roslyn for dynamic compilation." },
-                };
+                return MCPResponse.Error(
+                    "Roslyn (Microsoft.CodeAnalysis) is not available in this Unity version. ExecuteCode requires Roslyn for dynamic compilation.",
+                    "execute_code_compiler_unavailable", false, new Dictionary<string, object>
+                    {
+                        { "userCodeExecuted", false },
+                    });
             }
 
             try
@@ -530,7 +540,13 @@ namespace UnityMCP.Editor
                 string fullCode = BuildExecuteCodeSource(args, code, out int generatedPrefixLineCount,
                     out int userCodeLineCount, out string usingError);
                 if (usingError.Length > 0)
-                    return new { error = usingError };
+                {
+                    return MCPResponse.Error(usingError, "invalid_arguments", false,
+                        new Dictionary<string, object>
+                        {
+                            { "userCodeExecuted", false },
+                        });
+                }
 
                 // --- Roslyn-based compilation (via reflection) ---
                 // All Roslyn types accessed through reflection to avoid compile-time dependency.
@@ -737,13 +753,14 @@ namespace UnityMCP.Editor
                         errors.Add($"{lineLabel}: {message}");
                     }
 
-                    return new Dictionary<string, object>
+                    return MCPResponse.Error("Compilation failed",
+                        "execute_code_compilation_failed", false, new Dictionary<string, object>
                     {
-                        { "error", "Compilation failed" },
                         { "errors", errors },
                         { "codePreview", code.Length <= 2000 ? code : code.Substring(0, 2000) },
                         { "codeTruncated", code.Length > 2000 },
-                    };
+                        { "userCodeExecuted", false },
+                    });
                 }
 
                 object loadContext = null;

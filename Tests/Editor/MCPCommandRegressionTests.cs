@@ -1952,9 +1952,37 @@ namespace UnityMCP.Editor.Tests
             {
                 { "code", "var value = 1;\nreturn MissingSymbol;" },
             }));
+            Assert.That(failure["success"], Is.EqualTo(false));
             Assert.That(failure["error"], Is.EqualTo("Compilation failed"));
+            Assert.That(failure["errorCode"], Is.EqualTo("execute_code_compilation_failed"));
+            Assert.That(failure["retryable"], Is.EqualTo(false));
+            Assert.That(failure["userCodeExecuted"], Is.EqualTo(false));
             var errors = (List<string>)failure["errors"];
             Assert.That(errors.Any(error => error.StartsWith("Line 2:", StringComparison.Ordinal)), Is.True);
+            Assert.That(failure["codePreview"], Is.EqualTo("var value = 1;\nreturn MissingSymbol;"));
+        }
+
+        [Test]
+        public void ExecuteCode_PreExecutionValidationUsesStructuredErrors()
+        {
+            var missingCode = RequireDictionary(MCPEditorCommands.ExecuteCode(
+                new Dictionary<string, object>()));
+            Assert.That(missingCode["success"], Is.EqualTo(false));
+            Assert.That(missingCode["errorCode"], Is.EqualTo("invalid_arguments"));
+            Assert.That(missingCode["retryable"], Is.EqualTo(false));
+            Assert.That(missingCode["userCodeExecuted"], Is.EqualTo(false));
+
+            var invalidUsing = RequireDictionary(MCPEditorCommands.ExecuteCode(
+                new Dictionary<string, object>
+                {
+                    { "code", "return 1;" },
+                    { "usings", new[] { "System.IO;" } },
+                }));
+            Assert.That(invalidUsing["success"], Is.EqualTo(false));
+            Assert.That(invalidUsing["errorCode"], Is.EqualTo("invalid_arguments"));
+            Assert.That(invalidUsing["retryable"], Is.EqualTo(false));
+            Assert.That(invalidUsing["userCodeExecuted"], Is.EqualTo(false));
+            Assert.That(invalidUsing["error"].ToString(), Does.Contain("Invalid namespace"));
         }
 
         [Test]
