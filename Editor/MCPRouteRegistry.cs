@@ -138,6 +138,7 @@ namespace UnityMCP.Editor
             "jobs/get",
             "jobs/list",
             "jobs/cancel",
+            "jobs/cleanup",
             "lighting/create",
             "lighting/create-light-probe-group",
             "lighting/create-reflection-probe",

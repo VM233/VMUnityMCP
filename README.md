@@ -47,7 +47,7 @@ second list, and reading metadata does not initialize the HTTP listener.
 | Specialized routes | Lower-frequency routes remain available through lazy metadata or `unity_advanced_execute`. |
 | Project extensions | `unity_project_tools_list`, `unity_project_tools_get`, and `unity_project_tools_execute` discover and execute project/package-defined tools without leaking one project's catalog into another project. |
 | Multi-instance safety | Instance discovery, explicit port selection, expected-project binding, and per-agent queue ownership prevent cross-project mutation. |
-| Long work | Builds, tests, refreshes, package tests, snapshots, and Addressables builds use persistent jobs or tickets; owned cancel routes are cooperative. |
+| Long work | Builds, tests, refreshes, package tests, snapshots, Addressables builds, execute-code, and long project tools use persistent jobs or tickets; owned cancel routes are cooperative. |
 | Optional packages | Localization, Shader Graph, VFX Graph, Addressables, Timeline, Cinemachine, and Build Profiles publish only when their capability is available. |
 
 Major route families include:
@@ -81,6 +81,13 @@ public static class ProjectMcpTools
             "{\"type\":\"object\",\"properties\":{" +
             "\"id\":{\"type\":\"string\",\"description\":\"Content id.\"}" +
             "},\"required\":[\"id\"],\"additionalProperties\":false}",
+        OutputSchemaJson =
+            "{\"type\":\"object\",\"properties\":{" +
+            "\"id\":{\"type\":\"string\"}," +
+            "\"created\":{\"type\":\"boolean\"}" +
+            "},\"required\":[\"id\",\"created\"],\"additionalProperties\":false}",
+        SideEffects = MCPProjectToolSideEffect.WritesAssets,
+        ErrorCodes = new[] { "content_id_conflict" },
         MutatesAssets = true)]
     public static object AddContent(Dictionary<string, object> args)
     {
@@ -95,6 +102,15 @@ Declare exactly one operation kind: `ReadOnly`, `MutatesAssets`, or
 property and reject unknown business arguments. The bridge recursively enforces
 the supported JSON Schema subset before invocation, including
 `allOf`/`anyOf`/`oneOf`, `not`, `const`, nested objects, and array items.
+Declared output schemas are also enforced before success. Use `SideEffects` for
+the concrete effect classes, `ErrorCodes` for domain failures, and
+`CleanupToolName` only when the operation produces a token owned by that cleanup
+tool.
+
+`LongRunning=true` and an explicit `runAsJob=true` both return a persistent Job.
+Class-based tools can implement `IMCPPersistentProjectTool` to yield a
+`MCPProjectToolJobStep` between Editor updates. Every continuation value must be
+returned in the step state; the bridge does not retain the tool instance.
 
 The canonical client workflow is:
 
@@ -165,12 +181,21 @@ The full ownership matrix and authoritative built-in route audit are in
 
 ## Response and safety conventions
 
-- Successful responses omit redundant `success=true`; errors keep a stable
-  error code and retryability.
+- Tool metadata publishes an `outputSchema` for every route. The companion
+  server exposes the actual result through MCP `structuredContent`; the text
+  block remains a short human-readable summary.
+- Successful bridge responses may omit redundant `success=true`; errors keep a
+  stable error code and retryability.
 - `editor/execute-code` reports invalid submissions and compiler diagnostics as
   non-retryable structured errors. Compilation failures use
   `execute_code_compilation_failed` and return `userCodeExecuted=false`, so
   callers can distinguish invalid C# from bridge or runtime failures.
+- `editor/execute-code` always returns a persistent Job. Poll `jobs/get`; use
+  `jobs/cancel` before execution or between incremental steps; and use
+  `jobs/cleanup` only when the Job reports an available cleanup contract.
+  Reusing an `idempotencyKey` with different arguments is rejected.
+- Execute-code uses compact Unity value strings by default. Pass
+  `unityStructFormat="structured"` for typed objects with stable fields.
 - Completed pagination aliases and exact duplicate counts are removed on the
   wire. A sole empty primary collection is preserved so a zero-match result
   cannot disappear from a completed ticket.

@@ -72,6 +72,9 @@ namespace UnityMCP.Editor.Tests
         private const string STRICT_COMBINATOR_SCHEMA_TOOL_NAME =
             "unity-mcp-tests/validate-strict-combinator-schema";
         private const string INCOMPLETE_FIRST_CLASS_TOOL_NAME = "unity-mcp-tests/incomplete-first-class";
+        private const string PERSISTENT_PROJECT_TOOL_NAME = "unity-mcp-tests/persistent-step";
+        private const string PERSISTENT_PROJECT_TOOL_CLEANUP_NAME =
+            "unity-mcp-tests/persistent-step-cleanup";
         private bool projectConfigurationExisted;
         private string projectConfigurationContents;
 
@@ -137,6 +140,69 @@ namespace UnityMCP.Editor.Tests
         private static object IncompleteFirstClassFixture(Dictionary<string, object> args)
         {
             return new Dictionary<string, object> { { "success", true } };
+        }
+
+        [MCPProjectTool(PERSISTENT_PROJECT_TOOL_NAME,
+            Description = "Regression fixture for resumable persistent project-tool jobs.",
+            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"requiredSteps\":{\"type\":\"integer\",\"description\":\"Number of yielded steps before completion.\"},\"value\":{\"type\":\"integer\",\"description\":\"Value returned when the job completes.\"}},\"required\":[\"requiredSteps\",\"value\"],\"additionalProperties\":false}",
+            OutputSchemaJson = "{\"type\":\"object\",\"properties\":{\"value\":{\"type\":\"integer\"},\"stepCount\":{\"type\":\"integer\"}},\"required\":[\"value\",\"stepCount\"],\"additionalProperties\":false}",
+            CleanupToolName = PERSISTENT_PROJECT_TOOL_CLEANUP_NAME,
+            SideEffects = MCPProjectToolSideEffect.ChangesRuntimeState |
+                          MCPProjectToolSideEffect.CreatesTemporaryObjects,
+            ErrorCodes = new[] { "fixture_failed" },
+            MutatesRuntime = true,
+            LongRunning = true,
+            FirstClass = true)]
+        public sealed class PersistentProjectToolFixture : IMCPPersistentProjectTool
+        {
+            public object Execute(Dictionary<string, object> args)
+            {
+                return new Dictionary<string, object>
+                {
+                    { "value", Convert.ToInt32(args["value"]) },
+                    { "stepCount", 0 },
+                };
+            }
+
+            public MCPProjectToolJobStep ExecuteJobStep(Dictionary<string, object> args,
+                Dictionary<string, object> state)
+            {
+                int stepCount = state.TryGetValue("stepCount", out object stepValue)
+                    ? Convert.ToInt32(stepValue)
+                    : 0;
+                int requiredSteps = Convert.ToInt32(args["requiredSteps"]);
+                if (stepCount < requiredSteps)
+                {
+                    stepCount++;
+                    return MCPProjectToolJobStep.Pending(
+                        new Dictionary<string, object> { { "stepCount", stepCount } },
+                        requiredSteps == 0 ? 1d : (double)stepCount / requiredSteps,
+                        $"Completed step {stepCount} of {requiredSteps}.",
+                        delayMilliseconds: 1,
+                        cleanupToken: "fixture-cleanup-token");
+                }
+
+                return MCPProjectToolJobStep.Complete(
+                    new Dictionary<string, object>
+                    {
+                        { "value", Convert.ToInt32(args["value"]) },
+                        { "stepCount", stepCount },
+                    },
+                    "fixture-cleanup-token");
+            }
+        }
+
+        [MCPProjectTool(PERSISTENT_PROJECT_TOOL_CLEANUP_NAME,
+            Description = "Cleanup regression fixture for persistent project-tool jobs.",
+            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"description\":\"Cleanup action.\",\"const\":\"cleanup\"},\"cleanupToken\":{\"type\":\"string\",\"description\":\"Token produced by the persistent fixture.\"}},\"required\":[\"action\",\"cleanupToken\"],\"additionalProperties\":false}",
+            OutputSchemaJson = "{\"type\":\"object\",\"properties\":{\"cleaned\":{\"type\":\"boolean\"}},\"required\":[\"cleaned\"],\"additionalProperties\":false}",
+            MutatesRuntime = true)]
+        private static object CleanupPersistentProjectToolFixture(Dictionary<string, object> args)
+        {
+            return new Dictionary<string, object>
+            {
+                { "cleaned", args["cleanupToken"].ToString() == "fixture-cleanup-token" },
+            };
         }
 
         [SetUp]
@@ -1583,7 +1649,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ExecuteCode_NestedCollectionsRemainStructured()
         {
-            var response = RequireDictionary(MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+            var response = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(new Dictionary<string, object>
             {
                 { "code", "return new { labels = new[] { \"a\", \"b\" }, values = new[] { 1, 2 }, nested = new { ok = true } };" },
             }));
@@ -1598,10 +1664,97 @@ namespace UnityMCP.Editor.Tests
             Assert.That(nested["ok"], Is.EqualTo(true));
         }
 
+        [UnityTest]
+        public IEnumerator ExecuteCode_PublicRouteRunsAsOwnerScopedPersistentJob()
+        {
+            const string agentId = "execute-code-job-test-agent";
+            string idempotencyKey = Guid.NewGuid().ToString("N");
+            Dictionary<string, object> started = RequireDictionary(
+                MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+                {
+                    { "code", "return new UnityEngine.Vector3(1f, 2f, 3f);" },
+                    { "unityStructFormat", "structured" },
+                    { "idempotencyKey", idempotencyKey },
+                    { "_agentId", agentId },
+                }));
+
+            Assert.That(started["jobType"], Is.EqualTo("execute-code"));
+            Assert.That(started["status"], Is.EqualTo("queued"));
+            Assert.That(started["cancelMode"], Is.EqualTo("beforeStart"));
+            string jobId = started["jobId"].ToString();
+
+            Dictionary<string, object> reused = RequireDictionary(
+                MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+                {
+                    { "code", "return new UnityEngine.Vector3(1f, 2f, 3f);" },
+                    { "unityStructFormat", "structured" },
+                    { "idempotencyKey", idempotencyKey },
+                    { "_agentId", agentId },
+                }));
+            Assert.That(reused["jobId"], Is.EqualTo(jobId));
+            Assert.That(reused["reused"], Is.EqualTo(true));
+
+            Dictionary<string, object> snapshot = null;
+            for (int frame = 0; frame < 120; frame++)
+            {
+                yield return null;
+                snapshot = RequireDictionary(MCPJobCommands.Get(
+                    new Dictionary<string, object>
+                    {
+                        { "jobId", jobId },
+                        { "_agentId", agentId },
+                    }));
+                if (snapshot["status"].ToString() == "succeeded")
+                    break;
+            }
+
+            Assert.That(snapshot["status"], Is.EqualTo("succeeded"));
+            Dictionary<string, object> executionResult =
+                RequireDictionary(snapshot["result"]);
+            Dictionary<string, object> vector =
+                RequireDictionary(executionResult["result"]);
+            Assert.That(vector["type"], Is.EqualTo("Vector3"));
+            Assert.That(Convert.ToSingle(vector["z"]), Is.EqualTo(3f));
+        }
+
+        [Test]
+        public void ExecuteCode_PreStartCancellationCannotRunCleanup()
+        {
+            const string agentId = "execute-code-prestart-cancel-test-agent";
+            Dictionary<string, object> started = RequireDictionary(
+                MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+                {
+                    { "code", "return \"never-ran\";" },
+                    { "cleanupCode", "return \"must-not-run\";" },
+                    { "idempotencyKey", Guid.NewGuid().ToString("N") },
+                    { "_agentId", agentId },
+                }));
+
+            Dictionary<string, object> canceled = RequireDictionary(
+                MCPJobCommands.Cancel(new Dictionary<string, object>
+                {
+                    { "jobId", started["jobId"] },
+                    { "_agentId", agentId },
+                }));
+
+            Assert.That(canceled["status"], Is.EqualTo("canceled"));
+            Assert.That(canceled["cleanupStatus"], Is.EqualTo("none"));
+            Assert.That(canceled["cleanupDeclared"], Is.EqualTo(false));
+
+            Dictionary<string, object> cleanup = RequireDictionary(
+                MCPJobCommands.Cleanup(new Dictionary<string, object>
+                {
+                    { "jobId", started["jobId"] },
+                    { "_agentId", agentId },
+                }));
+            Assert.That(cleanup["success"], Is.EqualTo(false));
+            Assert.That(cleanup["errorCode"], Is.EqualTo("job_not_cleanable"));
+        }
+
         [Test]
         public void ExecuteCode_IsNotPatternUsesLatestSupportedLanguageVersion()
         {
-            var response = RequireDictionary(MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+            var response = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(new Dictionary<string, object>
             {
                 { "code", "object value = \"ready\"; return value is not int;" },
             }));
@@ -1880,7 +2033,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ExecuteCode_ResultBudgetTruncatesLargeCollections()
         {
-            var response = RequireDictionary(MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+            var response = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(new Dictionary<string, object>
             {
                 { "code", "return Enumerable.Range(0, 10).ToArray();" },
                 { "maxResultItems", 2 },
@@ -1896,7 +2049,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ExecuteCode_DestroyedUnityObjectSerializesAsNull()
         {
-            var response = RequireDictionary(MCPEditorCommands.ExecuteCode(
+            var response = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(
                 new Dictionary<string, object>
                 {
                     {
@@ -1941,14 +2094,14 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ExecuteCode_UIElementsUsingAndUserLineNumbersAreAvailable()
         {
-            var success = RequireDictionary(MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+            var success = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(new Dictionary<string, object>
             {
                 { "code", "return new Button { name = \"Ready\" }.name;" },
             }));
             Assert.That(success["success"], Is.EqualTo(true));
             Assert.That(success["result"], Is.EqualTo("Ready"));
 
-            var failure = RequireDictionary(MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+            var failure = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(new Dictionary<string, object>
             {
                 { "code", "var value = 1;\nreturn MissingSymbol;" },
             }));
@@ -1965,14 +2118,14 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ExecuteCode_PreExecutionValidationUsesStructuredErrors()
         {
-            var missingCode = RequireDictionary(MCPEditorCommands.ExecuteCode(
+            var missingCode = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(
                 new Dictionary<string, object>()));
             Assert.That(missingCode["success"], Is.EqualTo(false));
             Assert.That(missingCode["errorCode"], Is.EqualTo("invalid_arguments"));
             Assert.That(missingCode["retryable"], Is.EqualTo(false));
             Assert.That(missingCode["userCodeExecuted"], Is.EqualTo(false));
 
-            var invalidUsing = RequireDictionary(MCPEditorCommands.ExecuteCode(
+            var invalidUsing = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(
                 new Dictionary<string, object>
                 {
                     { "code", "return 1;" },
@@ -1993,7 +2146,7 @@ namespace UnityMCP.Editor.Tests
             {
                 MCPSettingsManager.ExecuteCodeAdditionalNamespacesText = "System.IO";
 
-                var response = RequireDictionary(MCPEditorCommands.ExecuteCode(
+                var response = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(
                     new Dictionary<string, object>
                     {
                         { "code", "return Path.GetFileName(\"folder/file.txt\");" },
@@ -2181,7 +2334,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ExecuteCode_UsesUnloadableAssemblyIsolation()
         {
-            var response = RequireDictionary(MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+            var response = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(new Dictionary<string, object>
             {
                 { "code", "return 7;" },
             }));
@@ -2193,7 +2346,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void ExecuteCode_UnityReferencesAvoidIsolatedAppDomain()
         {
-            var response = RequireDictionary(MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+            var response = RequireDictionary(MCPEditorCommands.ExecuteCodeInline(new Dictionary<string, object>
             {
                 { "code", "return UnityEditor.EditorApplication.isPlaying;" },
             }));
@@ -3805,6 +3958,169 @@ namespace UnityMCP.Editor.Tests
             Assert.That(response["success"], Is.EqualTo(true));
             var result = RequireDictionary(response["result"]);
             CollectionAssert.IsEmpty((string[])result["receivedKeys"]);
+        }
+
+        [UnityTest]
+        public IEnumerator PersistentProjectToolJob_SupportsSchemaMetadataIdempotencyStepsAndCleanup()
+        {
+            const string agentId = "persistent-project-tool-test-agent";
+            string idempotencyKey = Guid.NewGuid().ToString("N");
+            Dictionary<string, object> Start(int value)
+            {
+                return RequireDictionary(MCPProjectToolCommands.Execute(
+                    new Dictionary<string, object>
+                    {
+                        { "toolName", PERSISTENT_PROJECT_TOOL_NAME },
+                        { "_agentId", agentId },
+                        { "idempotencyKey", idempotencyKey },
+                        { "args", new Dictionary<string, object>
+                            {
+                                { "requiredSteps", 2 },
+                                { "value", value },
+                            }
+                        },
+                    }));
+            }
+
+            Dictionary<string, object> started = Start(7);
+            Assert.That(started["status"], Is.EqualTo("queued"));
+            Assert.That(started["incremental"], Is.EqualTo(true));
+            Assert.That(started["cancelMode"], Is.EqualTo("betweenSteps"));
+            Assert.That(started["cleanupDeclared"], Is.EqualTo(true));
+            string jobId = started["jobId"].ToString();
+            string accessToken = started["jobAccessToken"].ToString();
+
+            Dictionary<string, object> reused = Start(7);
+            Assert.That(reused["jobId"], Is.EqualTo(jobId));
+            Assert.That(reused["reused"], Is.EqualTo(true));
+
+            Dictionary<string, object> conflict = Start(8);
+            Assert.That(conflict["success"], Is.EqualTo(false));
+            Assert.That(conflict["errorCode"], Is.EqualTo("idempotency_conflict"));
+
+            Dictionary<string, object> descriptor = MCPProjectToolCommands
+                .GetToolDetails(validOnly: true)
+                .Single(tool => tool["toolName"].ToString() == PERSISTENT_PROJECT_TOOL_NAME);
+            Assert.That(descriptor["incrementalJob"], Is.EqualTo(true));
+            Assert.That(descriptor["enforcesOutputSchema"], Is.EqualTo(true));
+            CollectionAssert.Contains((ICollection)descriptor["sideEffects"], "changesRuntimeState");
+            CollectionAssert.Contains((ICollection)descriptor["sideEffects"], "createsTemporaryObjects");
+            CollectionAssert.Contains((ICollection)descriptor["errorCodes"], "fixture_failed");
+
+            Dictionary<string, object> snapshot = null;
+            for (int frame = 0; frame < 120; frame++)
+            {
+                yield return null;
+                snapshot = RequireDictionary(MCPJobCommands.Get(
+                    new Dictionary<string, object>
+                    {
+                        { "jobId", jobId },
+                        { "_agentId", agentId },
+                    }));
+                if (snapshot["status"].ToString() == "succeeded")
+                    break;
+            }
+
+            Assert.That(snapshot, Is.Not.Null);
+            Assert.That(snapshot["status"], Is.EqualTo("succeeded"));
+            Assert.That(Convert.ToDouble(snapshot["progress"]), Is.EqualTo(1d));
+            Assert.That(Convert.ToInt32(snapshot["stepCount"]), Is.EqualTo(2));
+            Assert.That(snapshot["cleanupStatus"], Is.EqualTo("available"));
+            Dictionary<string, object> successEnvelope = RequireDictionary(snapshot["result"]);
+            Dictionary<string, object> jobResult = RequireDictionary(successEnvelope["result"]);
+            Assert.That(Convert.ToInt32(jobResult["value"]), Is.EqualTo(7));
+            Assert.That(Convert.ToInt32(jobResult["stepCount"]), Is.EqualTo(2));
+
+            Dictionary<string, object> cleanupQueued = RequireDictionary(MCPJobCommands.Cleanup(
+                new Dictionary<string, object>
+                {
+                    { "jobId", jobId },
+                    { "jobAccessToken", accessToken },
+                    { "_agentId", "different-agent" },
+                }));
+            Assert.That(cleanupQueued["cleanupStatus"], Is.EqualTo("queued"));
+
+            for (int frame = 0; frame < 120; frame++)
+            {
+                yield return null;
+                snapshot = RequireDictionary(MCPJobCommands.Get(
+                    new Dictionary<string, object>
+                    {
+                        { "jobId", jobId },
+                        { "jobAccessToken", accessToken },
+                        { "_agentId", "different-agent" },
+                    }));
+                if (snapshot["cleanupStatus"].ToString() == "succeeded")
+                    break;
+            }
+
+            Assert.That(snapshot["cleanupStatus"], Is.EqualTo("succeeded"));
+            Dictionary<string, object> cleanupEnvelope =
+                RequireDictionary(snapshot["cleanupResult"]);
+            Dictionary<string, object> cleanupResult =
+                RequireDictionary(cleanupEnvelope["result"]);
+            Assert.That(cleanupResult["cleaned"], Is.EqualTo(true));
+        }
+
+        [UnityTest]
+        public IEnumerator PersistentProjectToolJob_CancelsBetweenSteps()
+        {
+            const string agentId = "persistent-project-tool-cancel-test-agent";
+            Dictionary<string, object> started = RequireDictionary(
+                MCPProjectToolCommands.Execute(new Dictionary<string, object>
+                {
+                    { "toolName", PERSISTENT_PROJECT_TOOL_NAME },
+                    { "_agentId", agentId },
+                    { "idempotencyKey", Guid.NewGuid().ToString("N") },
+                    { "args", new Dictionary<string, object>
+                        {
+                            { "requiredSteps", 100 },
+                            { "value", 5 },
+                        }
+                    },
+                }));
+            string jobId = started["jobId"].ToString();
+
+            Dictionary<string, object> snapshot = null;
+            for (int frame = 0; frame < 120; frame++)
+            {
+                yield return null;
+                snapshot = RequireDictionary(MCPJobCommands.Get(
+                    new Dictionary<string, object>
+                    {
+                        { "jobId", jobId },
+                        { "_agentId", agentId },
+                    }));
+                if (snapshot["status"].ToString() == "running" &&
+                    Convert.ToInt32(snapshot["stepCount"]) > 0)
+                {
+                    break;
+                }
+            }
+            Assert.That(snapshot["status"], Is.EqualTo("running"));
+
+            Dictionary<string, object> canceled = RequireDictionary(MCPJobCommands.Cancel(
+                new Dictionary<string, object>
+                {
+                    { "jobId", jobId },
+                    { "_agentId", agentId },
+                }));
+            Assert.That(canceled["cancellationRequested"], Is.EqualTo(true));
+
+            for (int frame = 0; frame < 120; frame++)
+            {
+                yield return null;
+                snapshot = RequireDictionary(MCPJobCommands.Get(
+                    new Dictionary<string, object>
+                    {
+                        { "jobId", jobId },
+                        { "_agentId", agentId },
+                    }));
+                if (snapshot["status"].ToString() == "canceled")
+                    break;
+            }
+            Assert.That(snapshot["status"], Is.EqualTo("canceled"));
+            Assert.That(snapshot["cleanupStatus"], Is.EqualTo("available"));
         }
 
         [Test]
@@ -6046,7 +6362,10 @@ namespace UnityMCP.Editor.Tests
             List<string> routes = GetBuiltInRoutes();
             foreach (string route in new[]
                      {
+                         "editor/execute-code",
+                         "jobs/get",
                          "jobs/cancel",
+                         "jobs/cleanup",
                          "asset/import-settings/get", "asset/import-settings/set",
                          "scene/workspace",
                          "material/properties/get", "material/properties/set",
@@ -6097,7 +6416,10 @@ namespace UnityMCP.Editor.Tests
                 .Select(tool => tool["route"].ToString()).ToHashSet(StringComparer.Ordinal);
             foreach (string route in new[]
                      {
+                         "editor/execute-code",
+                         "jobs/get",
                          "jobs/cancel",
+                         "jobs/cleanup",
                          "asset/import-settings/get", "asset/import-settings/set",
                          "scene/workspace",
                          "material/properties/get", "material/properties/set",
@@ -6105,6 +6427,32 @@ namespace UnityMCP.Editor.Tests
             {
                 Assert.That(firstClassRoutes, Does.Contain(route), route);
             }
+
+            var firstClassTools =
+                ((List<Dictionary<string, object>>)firstClass["tools"])
+                .ToDictionary(tool => tool["route"].ToString());
+            var executeCodeSchema = RequireDictionary(
+                firstClassTools["editor/execute-code"]["inputSchema"]);
+            var executeCodeProperties = RequireDictionary(
+                executeCodeSchema["properties"]);
+            foreach (string property in new[]
+                     {
+                         "unityStructFormat",
+                         "idempotencyKey",
+                         "cleanupCode",
+                     })
+            {
+                Assert.That(executeCodeProperties.ContainsKey(property),
+                    Is.True, property);
+            }
+            var executeCodeOutput = RequireDictionary(
+                firstClassTools["editor/execute-code"]["outputSchema"]);
+            var executeCodeOutputProperties = RequireDictionary(
+                executeCodeOutput["properties"]);
+            Assert.That(executeCodeOutputProperties.ContainsKey("jobId"),
+                Is.True);
+            Assert.That(executeCodeOutputProperties.ContainsKey("cleanupToken"),
+                Is.True);
 
             var all = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
                 firstClassOnly: false, compact: false, includeSchema: true, limit: 500));
@@ -7429,6 +7777,46 @@ namespace UnityMCP.Editor.Tests
             var transported = RequireDictionary(MCPResponse.CompactForTransport(serialized));
             var transportedResult = RequireDictionary(transported["result"]);
             Assert.That(transportedResult, Is.EqualTo(result));
+        }
+
+        [Test]
+        public void ExecuteCodeSerialization_StructuredUnityValuesRemainTypedAcrossTransport()
+        {
+            var serialized = MCPEditorCommands.SerializeResult(
+                new Dictionary<string, object>
+                {
+                    { "rect", new Rect(1f, 2f, 3f, 4f) },
+                    { "bounds", new Bounds(new Vector3(2f, 3f, 4f),
+                        new Vector3(6f, 8f, 10f)) },
+                    { "color", new Color(0.25f, 0.5f, 0.75f, 1f) },
+                },
+                new Dictionary<string, object>
+                {
+                    { "unityStructFormat", "structured" },
+                });
+
+            Dictionary<string, object> result = RequireDictionary(serialized["result"]);
+            Dictionary<string, object> rect = RequireDictionary(result["rect"]);
+            Assert.That(rect["type"], Is.EqualTo("Rect"));
+            Assert.That(Convert.ToSingle(rect["x"]), Is.EqualTo(1f));
+            Assert.That(Convert.ToSingle(rect["height"]), Is.EqualTo(4f));
+
+            Dictionary<string, object> bounds = RequireDictionary(result["bounds"]);
+            Assert.That(bounds["type"], Is.EqualTo("Bounds"));
+            Dictionary<string, object> center = RequireDictionary(bounds["center"]);
+            Assert.That(center["type"], Is.EqualTo("Vector3"));
+            Assert.That(Convert.ToSingle(center["z"]), Is.EqualTo(4f));
+
+            Dictionary<string, object> transported =
+                RequireDictionary(MCPResponse.CompactForTransport(serialized));
+            Dictionary<string, object> transportedResult =
+                RequireDictionary(transported["result"]);
+            Dictionary<string, object> transportedRect =
+                RequireDictionary(transportedResult["rect"]);
+            Assert.That(transportedRect["type"], Is.EqualTo("Rect"));
+            Assert.That(transportedRect.ContainsKey("$unityStruct"), Is.False);
+            Assert.That(transportedRect.ContainsKey("position"), Is.False);
+            Assert.That(transportedRect.ContainsKey("size"), Is.False);
         }
 
         [Test]

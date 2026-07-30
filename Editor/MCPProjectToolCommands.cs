@@ -9,6 +9,23 @@ using UnityEngine;
 
 namespace UnityMCP.Editor
 {
+    [Flags]
+    public enum MCPProjectToolSideEffect
+    {
+        None = 0,
+        ReadsProjectState = 1 << 0,
+        WritesAssets = 1 << 1,
+        WritesScene = 1 << 2,
+        ChangesRuntimeState = 1 << 3,
+        AdvancesEditorFrames = 1 << 4,
+        AdvancesLogicTicks = 1 << 5,
+        CreatesTemporaryObjects = 1 << 6,
+        CapturesArtifacts = 1 << 7,
+        PerformsExternalIO = 1 << 8,
+        ReloadsDomain = 1 << 9,
+        ExecutesArbitraryCode = 1 << 10,
+    }
+
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
     public sealed class MCPProjectToolAttribute : Attribute
     {
@@ -19,6 +36,14 @@ namespace UnityMCP.Editor
         public string ShortName { get; set; }
 
         public string InputSchemaJson { get; set; }
+
+        public string OutputSchemaJson { get; set; }
+
+        public string CleanupToolName { get; set; }
+
+        public MCPProjectToolSideEffect SideEffects { get; set; }
+
+        public string[] ErrorCodes { get; set; }
 
         public bool ReadOnly { get; set; }
 
@@ -47,6 +72,93 @@ namespace UnityMCP.Editor
         object Execute(Dictionary<string, object> args);
     }
 
+    /// <summary>
+    /// Optional project-tool contract for work that must yield between Editor updates.
+    /// Every value required by a later step must be returned in <see cref="MCPProjectToolJobStep.State"/>.
+    /// The persistent job owner serializes that state and never relies on a tool instance surviving.
+    /// </summary>
+    public interface IMCPPersistentProjectTool : IMCPProjectTool
+    {
+        MCPProjectToolJobStep ExecuteJobStep(Dictionary<string, object> args,
+            Dictionary<string, object> state);
+    }
+
+    public sealed class MCPProjectToolJobStep
+    {
+        public bool IsComplete { get; }
+
+        public object Result { get; }
+
+        public Dictionary<string, object> State { get; }
+
+        public double? Progress { get; }
+
+        public string StatusMessage { get; }
+
+        public int DelayMilliseconds { get; }
+
+        public string CleanupToken { get; }
+
+        private MCPProjectToolJobStep(bool isComplete, object result,
+            Dictionary<string, object> state, double? progress, string statusMessage,
+            int delayMilliseconds, string cleanupToken)
+        {
+            IsComplete = isComplete;
+            Result = result;
+            State = state ?? new Dictionary<string, object>();
+            Progress = progress.HasValue
+                ? Math.Max(0d, Math.Min(1d, progress.Value))
+                : null;
+            StatusMessage = statusMessage ?? "";
+            DelayMilliseconds = Math.Max(0, Math.Min(60_000, delayMilliseconds));
+            CleanupToken = cleanupToken ?? "";
+        }
+
+        public static MCPProjectToolJobStep Complete(object result, string cleanupToken = "")
+        {
+            return new MCPProjectToolJobStep(true, result, null, 1d, "Completed.", 0,
+                cleanupToken);
+        }
+
+        public static MCPProjectToolJobStep Pending(Dictionary<string, object> state,
+            double? progress = null, string statusMessage = "", int delayMilliseconds = 0,
+            string cleanupToken = "")
+        {
+            return new MCPProjectToolJobStep(false, null, state, progress, statusMessage,
+                delayMilliseconds, cleanupToken);
+        }
+    }
+
+    public sealed class MCPProjectToolException : Exception
+    {
+        public string ErrorCode { get; }
+
+        public bool Retryable { get; }
+
+        public Dictionary<string, object> Details { get; }
+
+        public MCPProjectToolException(string errorCode, string message, bool retryable = false,
+            Dictionary<string, object> details = null) : base(message)
+        {
+            ErrorCode = string.IsNullOrWhiteSpace(errorCode) ? "project_tool_failed" : errorCode;
+            Retryable = retryable;
+            Details = details;
+        }
+    }
+
+    public static class MCPProjectToolExecutionContext
+    {
+        public static string JobId => MCPPersistentJobRunner.CurrentJobId;
+
+        public static bool IsCancellationRequested => MCPPersistentJobRunner.IsCurrentJobCancellationRequested;
+
+        public static void ThrowIfCancellationRequested()
+        {
+            if (IsCancellationRequested)
+                throw new OperationCanceledException($"Project tool job '{JobId}' was canceled.");
+        }
+    }
+
     public static class MCPProjectToolCommands
     {
         public const string DirectRoutePrefix = "project-tools/call/";
@@ -60,6 +172,12 @@ namespace UnityMCP.Editor
             "targetProjectName",
             "unityProjectPath",
             "unityProjectName",
+            "_agentId",
+            "_requestId",
+            "_jobId",
+            "idempotencyKey",
+            "runAsJob",
+            "jobAccessToken",
         };
 
         public static object List(Dictionary<string, object> args)
@@ -203,7 +321,7 @@ namespace UnityMCP.Editor
 
             var toolArgs = GetDictionary(args, "args")
                 ?? new Dictionary<string, object>();
-            foreach (string contextKey in new[] { "_agentId", "_requestId" })
+            foreach (string contextKey in new[] { "_agentId", "_requestId", "runAsJob", "idempotencyKey" })
             {
                 if (!toolArgs.ContainsKey(contextKey) && args.TryGetValue(contextKey, out object contextValue))
                     toolArgs[contextKey] = contextValue;
@@ -214,7 +332,10 @@ namespace UnityMCP.Editor
 
         private static object ExecuteTool(string toolName, Dictionary<string, object> toolArgs)
         {
-            toolArgs = RemoveProjectBindingArguments(toolArgs);
+            var executionArguments = toolArgs != null
+                ? new Dictionary<string, object>(toolArgs)
+                : new Dictionary<string, object>();
+            toolArgs = RemoveProjectBindingArguments(executionArguments);
 
             var matches = FindTools(toolName);
 
@@ -251,9 +372,119 @@ namespace UnityMCP.Editor
                     new Dictionary<string, object> { { "toolName", descriptor.ToolName } });
             }
 
+            if (descriptor.LongRunning || GetBool(executionArguments, "runAsJob"))
+            {
+                var metadata = descriptor.ToJobMetadata();
+                CopyExecutionArgument(executionArguments, metadata, "_agentId");
+                CopyExecutionArgument(executionArguments, metadata, "_requestId");
+                CopyExecutionArgument(executionArguments, metadata, "idempotencyKey");
+                toolArgs["_agentId"] = GetString(executionArguments, "_agentId") ?? "anonymous";
+                toolArgs["idempotencyKey"] = GetString(executionArguments, "idempotencyKey") ?? "";
+                return MCPPersistentJobRunner.StartProjectTool(
+                    descriptor.ToolName,
+                    toolArgs,
+                    metadata);
+            }
+
+            return InvokeTool(descriptor, toolArgs);
+        }
+
+        internal static object ExecuteJobInline(string toolName, Dictionary<string, object> toolArgs)
+        {
+            toolArgs = RemoveProjectBindingArguments(toolArgs);
+            var matches = FindTools(toolName);
+            if (matches.Count == 0)
+                return MCPResponse.Error($"Project tool '{toolName}' was not found.", "project_tool_not_found");
+            if (matches.Count > 1)
+                return MCPResponse.Error($"Project tool '{toolName}' is registered more than once.",
+                    "duplicate_project_tool");
+
+            var descriptor = matches[0];
+            if (!string.IsNullOrEmpty(descriptor.ValidationError))
+                return MCPResponse.Error(descriptor.ValidationError, "invalid_project_tool");
+            if (!descriptor.TryValidateArguments(toolArgs, out var argumentError))
+                return MCPResponse.Error(argumentError, "invalid_arguments");
+
+            return InvokeTool(descriptor, toolArgs);
+        }
+
+        internal static MCPProjectToolJobStep ExecuteJobStepInline(string toolName,
+            Dictionary<string, object> toolArgs, Dictionary<string, object> state)
+        {
+            toolArgs = RemoveProjectBindingArguments(toolArgs);
+            var matches = FindTools(toolName);
+            if (matches.Count == 0)
+            {
+                throw new MCPProjectToolException("project_tool_not_found",
+                    $"Project tool '{toolName}' was not found.");
+            }
+            if (matches.Count > 1)
+            {
+                throw new MCPProjectToolException("duplicate_project_tool",
+                    $"Project tool '{toolName}' is registered more than once.");
+            }
+
+            var descriptor = matches[0];
+            if (!string.IsNullOrEmpty(descriptor.ValidationError))
+                throw new MCPProjectToolException("invalid_project_tool", descriptor.ValidationError);
+            if (!descriptor.TryValidateArguments(toolArgs, out string argumentError))
+                throw new MCPProjectToolException("invalid_arguments", argumentError);
+
+            if (!descriptor.SupportsIncrementalJobs)
+                return MCPProjectToolJobStep.Complete(InvokeTool(descriptor, toolArgs));
+
+            MCPProjectToolJobStep step;
+            try
+            {
+                step = descriptor.InvokeJobStep(toolArgs,
+                    state ?? new Dictionary<string, object>());
+            }
+            catch (TargetInvocationException exception)
+            {
+                Exception inner = exception.InnerException ?? exception;
+                if (inner is MCPProjectToolException projectToolException)
+                    throw projectToolException;
+                throw new MCPProjectToolException("project_tool_exception", inner.Message);
+            }
+
+            if (step == null)
+            {
+                throw new MCPProjectToolException("invalid_project_tool_job_step",
+                    $"Persistent project tool '{descriptor.ToolName}' returned a null job step.");
+            }
+            if (!step.IsComplete)
+                return step;
+
+            if (!descriptor.TryValidateResult(step.Result, out string resultError))
+            {
+                throw new MCPProjectToolException("project_tool_output_schema_mismatch",
+                    resultError, false, new Dictionary<string, object>
+                    {
+                        { "toolName", descriptor.ToolName },
+                    });
+            }
+
+            return MCPProjectToolJobStep.Complete(
+                MCPResponse.Success(step.Result, new Dictionary<string, object>
+                {
+                    { "toolName", descriptor.ToolName },
+                }),
+                step.CleanupToken);
+        }
+
+        private static object InvokeTool(ProjectToolDescriptor descriptor, Dictionary<string, object> toolArgs)
+        {
             try
             {
                 object result = descriptor.Invoke(toolArgs);
+                if (!descriptor.TryValidateResult(result, out var resultError))
+                {
+                    return MCPResponse.Error(resultError, "project_tool_output_schema_mismatch", false,
+                        new Dictionary<string, object>
+                        {
+                            { "toolName", descriptor.ToolName },
+                        });
+                }
                 return MCPResponse.Success(result, new Dictionary<string, object>
                 {
                     { "toolName", descriptor.ToolName },
@@ -263,6 +494,14 @@ namespace UnityMCP.Editor
             {
                 Exception inner = ex.InnerException ?? ex;
                 Debug.LogException(inner);
+                if (inner is MCPProjectToolException projectToolException)
+                {
+                    return MCPResponse.Error(
+                        projectToolException.Message,
+                        projectToolException.ErrorCode,
+                        projectToolException.Retryable,
+                        MergeErrorDetails(projectToolException.Details, descriptor.ToolName));
+                }
                 return MCPResponse.Error(inner.Message, "project_tool_exception", false,
                     new Dictionary<string, object>
                     {
@@ -272,12 +511,37 @@ namespace UnityMCP.Editor
             catch (Exception ex)
             {
                 Debug.LogException(ex);
+                if (ex is MCPProjectToolException projectToolException)
+                {
+                    return MCPResponse.Error(
+                        projectToolException.Message,
+                        projectToolException.ErrorCode,
+                        projectToolException.Retryable,
+                        MergeErrorDetails(projectToolException.Details, descriptor.ToolName));
+                }
                 return MCPResponse.Error(ex.Message, "project_tool_exception", false,
                     new Dictionary<string, object>
                     {
                         { "toolName", descriptor.ToolName }
                     });
             }
+        }
+
+        private static Dictionary<string, object> MergeErrorDetails(
+            Dictionary<string, object> details, string toolName)
+        {
+            var merged = details != null
+                ? new Dictionary<string, object>(details)
+                : new Dictionary<string, object>();
+            merged["toolName"] = toolName;
+            return merged;
+        }
+
+        private static void CopyExecutionArgument(Dictionary<string, object> source,
+            Dictionary<string, object> destination, string key)
+        {
+            if (source != null && source.TryGetValue(key, out object value) && value != null)
+                destination[key] = value;
         }
 
         private static Dictionary<string, object> RemoveProjectBindingArguments(
@@ -333,6 +597,24 @@ namespace UnityMCP.Editor
                     tools.Add(ProjectToolDescriptor.FromType(attribute, type));
             }
 
+            foreach (ProjectToolDescriptor descriptor in tools)
+            {
+                if (string.IsNullOrWhiteSpace(descriptor.CleanupToolName))
+                    continue;
+
+                List<ProjectToolDescriptor> cleanupMatches = tools
+                    .Where(candidate => string.Equals(candidate.ToolName,
+                        descriptor.CleanupToolName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                string cleanupError = cleanupMatches.Count == 1
+                    ? cleanupMatches[0].ValidateCleanupInputContract()
+                    : cleanupMatches.Count == 0
+                        ? $"Cleanup tool '{descriptor.CleanupToolName}' was not found."
+                        : $"Cleanup tool '{descriptor.CleanupToolName}' is registered more than once.";
+                descriptor.ValidationError = CombineValidationErrors(
+                    descriptor.ValidationError, cleanupError);
+            }
+
             _cachedProjectTools = tools;
             return _cachedProjectTools;
         }
@@ -360,6 +642,15 @@ namespace UnityMCP.Editor
             }
         }
 
+        private static bool GetBool(Dictionary<string, object> args, string key)
+        {
+            if (args == null || !args.TryGetValue(key, out object value) || value == null)
+                return false;
+            if (value is bool boolValue)
+                return boolValue;
+            return bool.TryParse(value.ToString(), out bool parsed) && parsed;
+        }
+
         private static Dictionary<string, object> GetDictionary(Dictionary<string, object> args, string key)
         {
             if (args == null || !args.TryGetValue(key, out object value) || value == null)
@@ -377,6 +668,8 @@ namespace UnityMCP.Editor
             public string ValidationError;
             public string ExposureWarning;
             public Dictionary<string, object> InputSchema;
+            public Dictionary<string, object> OutputSchema;
+            public bool EnforcesOutputSchema;
             public bool ReadOnly;
             public bool MutatesAssets;
             public bool MutatesRuntime;
@@ -385,6 +678,11 @@ namespace UnityMCP.Editor
             public bool MayReloadDomain;
             public bool RequiresPlayMode;
             public bool FirstClass;
+            public string CleanupToolName;
+            public MCPProjectToolSideEffect SideEffects;
+            public List<string> ErrorCodes;
+            public bool SupportsIncrementalJobs =>
+                type != null && typeof(IMCPPersistentProjectTool).IsAssignableFrom(type);
 
             private MethodInfo method;
             private Type type;
@@ -405,6 +703,9 @@ namespace UnityMCP.Editor
                     MayReloadDomain = attribute.MayReloadDomain,
                     RequiresPlayMode = attribute.RequiresPlayMode,
                     FirstClass = attribute.FirstClass,
+                    CleanupToolName = attribute.CleanupToolName ?? "",
+                    SideEffects = attribute.SideEffects,
+                    ErrorCodes = NormalizeErrorCodes(attribute.ErrorCodes),
                     method = method
                 };
 
@@ -413,6 +714,8 @@ namespace UnityMCP.Editor
                     descriptor.ValidateOperationProfile());
                 descriptor.ValidationError = CombineValidationErrors(descriptor.ValidationError,
                     descriptor.TrySetInputSchema(attribute.InputSchemaJson));
+                descriptor.ValidationError = CombineValidationErrors(descriptor.ValidationError,
+                    descriptor.TrySetOutputSchema(attribute.OutputSchemaJson));
                 descriptor.ApplyFirstClassMetadataGate();
                 return descriptor;
             }
@@ -433,6 +736,9 @@ namespace UnityMCP.Editor
                     MayReloadDomain = attribute.MayReloadDomain,
                     RequiresPlayMode = attribute.RequiresPlayMode,
                     FirstClass = attribute.FirstClass,
+                    CleanupToolName = attribute.CleanupToolName ?? "",
+                    SideEffects = attribute.SideEffects,
+                    ErrorCodes = NormalizeErrorCodes(attribute.ErrorCodes),
                     type = type
                 };
 
@@ -441,6 +747,8 @@ namespace UnityMCP.Editor
                     descriptor.ValidateOperationProfile());
                 descriptor.ValidationError = CombineValidationErrors(descriptor.ValidationError,
                     descriptor.TrySetInputSchema(attribute.InputSchemaJson));
+                descriptor.ValidationError = CombineValidationErrors(descriptor.ValidationError,
+                    descriptor.TrySetOutputSchema(attribute.OutputSchemaJson));
                 descriptor.ApplyFirstClassMetadataGate();
                 return descriptor;
             }
@@ -462,6 +770,22 @@ namespace UnityMCP.Editor
                 return typeResult;
             }
 
+            public MCPProjectToolJobStep InvokeJobStep(Dictionary<string, object> args,
+                Dictionary<string, object> state)
+            {
+                if (!SupportsIncrementalJobs)
+                    return MCPProjectToolJobStep.Complete(Invoke(args));
+
+                var instance = Activator.CreateInstance(type) as IMCPPersistentProjectTool;
+                if (instance == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not create persistent project tool instance '{Source}'.");
+                }
+
+                return instance.ExecuteJobStep(args, state);
+            }
+
             public Dictionary<string, object> ToSummaryDictionary()
             {
                 var summary = new Dictionary<string, object>
@@ -476,6 +800,11 @@ namespace UnityMCP.Editor
                     { "mayReloadDomain", MayReloadDomain },
                     { "requiresPlayMode", RequiresPlayMode },
                     { "firstClass", FirstClass },
+                    { "sideEffects", GetSideEffectNames() },
+                    { "cleanupAvailable", string.IsNullOrEmpty(CleanupToolName) == false },
+                    { "incrementalJob", SupportsIncrementalJobs },
+                    { "errorCodes", ErrorCodes },
+                    { "hasOutputSchema", EnforcesOutputSchema },
                     { "valid", string.IsNullOrEmpty(ValidationError) }
                 };
                 if (!string.IsNullOrEmpty(ExposureWarning))
@@ -493,6 +822,7 @@ namespace UnityMCP.Editor
                     { "source", Source },
                     { "executeRoute", "project-tools/execute" },
                     { "inputSchema", InputSchema ?? CreateDefaultInputSchema() },
+                    { "outputSchema", OutputSchema ?? CreateDefaultOutputSchema() },
                     { "readOnly", ReadOnly },
                     { "mutatesAssets", MutatesAssets },
                     { "mutatesRuntime", MutatesRuntime },
@@ -501,7 +831,13 @@ namespace UnityMCP.Editor
                     { "mayReloadDomain", MayReloadDomain },
                     { "requiresPlayMode", RequiresPlayMode },
                     { "firstClass", FirstClass },
+                    { "sideEffects", GetSideEffectNames() },
+                    { "cleanupAvailable", string.IsNullOrEmpty(CleanupToolName) == false },
+                    { "cleanupToolName", CleanupToolName },
+                    { "incrementalJob", SupportsIncrementalJobs },
+                    { "errorCodes", ErrorCodes },
                     { "enforcesInputSchema", true },
+                    { "enforcesOutputSchema", EnforcesOutputSchema },
                     { "valid", string.IsNullOrEmpty(ValidationError) },
                     { "validationError", ValidationError ?? "" }
                 };
@@ -510,6 +846,36 @@ namespace UnityMCP.Editor
                 if (FirstClass)
                     descriptor["directRoute"] = GetDirectRoute(ToolName);
                 return descriptor;
+            }
+
+            public Dictionary<string, object> ToJobMetadata()
+            {
+                return new Dictionary<string, object>
+                {
+                    { "toolName", ToolName },
+                    { "sideEffects", GetSideEffectNames() },
+                    { "cleanupToolName", CleanupToolName },
+                    { "mayReloadDomain", MayReloadDomain },
+                    { "incrementalJob", SupportsIncrementalJobs },
+                };
+            }
+
+            public string ValidateCleanupInputContract()
+            {
+                Dictionary<string, object> schema = InputSchema ?? CreateDefaultInputSchema();
+                Dictionary<string, object> properties = GetSchemaProperties(schema);
+                bool allowsAdditionalProperties = !schema.TryGetValue("additionalProperties",
+                    out object additionalProperties) ||
+                    !(additionalProperties is bool additionalPropertiesFlag) ||
+                    additionalPropertiesFlag;
+                if (!allowsAdditionalProperties &&
+                    (properties == null ||
+                     !properties.ContainsKey("action") ||
+                     !properties.ContainsKey("cleanupToken")))
+                {
+                    return $"Cleanup tool '{ToolName}' must accept action and cleanupToken.";
+                }
+                return null;
             }
 
             private string TrySetInputSchema(string inputSchemaJson)
@@ -535,6 +901,32 @@ namespace UnityMCP.Editor
                 }
             }
 
+            private string TrySetOutputSchema(string outputSchemaJson)
+            {
+                if (string.IsNullOrEmpty(outputSchemaJson))
+                {
+                    OutputSchema = CreateDefaultOutputSchema();
+                    EnforcesOutputSchema = false;
+                    return null;
+                }
+
+                try
+                {
+                    OutputSchema = MiniJson.Deserialize(outputSchemaJson) as Dictionary<string, object>;
+                    if (OutputSchema == null)
+                        return "OutputSchemaJson must deserialize to a JSON object.";
+
+                    EnforcesOutputSchema = true;
+                    return ValidateOutputSchema(OutputSchema);
+                }
+                catch (Exception ex)
+                {
+                    OutputSchema = CreateDefaultOutputSchema();
+                    EnforcesOutputSchema = false;
+                    return $"OutputSchemaJson is invalid JSON: {ex.Message}";
+                }
+            }
+
             public bool TryValidateArguments(Dictionary<string, object> args, out string error)
             {
                 args = args ?? new Dictionary<string, object>();
@@ -542,6 +934,26 @@ namespace UnityMCP.Editor
                 var errors = new List<string>();
                 ValidateValueAgainstSchema(args, schema, "$", errors, true);
 
+                if (errors.Count == 0)
+                {
+                    error = null;
+                    return true;
+                }
+
+                error = string.Join(" ", errors);
+                return false;
+            }
+
+            public bool TryValidateResult(object result, out string error)
+            {
+                if (!EnforcesOutputSchema)
+                {
+                    error = null;
+                    return true;
+                }
+
+                var errors = new List<string>();
+                ValidateValueAgainstSchema(result, OutputSchema ?? CreateDefaultOutputSchema(), "$", errors, true);
                 if (errors.Count == 0)
                 {
                     error = null;
@@ -596,6 +1008,19 @@ namespace UnityMCP.Editor
                 if (FirstClass && operationKinds == 0)
                     return $"First-class project tool '{ToolName}' must explicitly declare ReadOnly, MutatesAssets, or MutatesRuntime.";
 
+                MCPProjectToolSideEffect effects = GetEffectiveSideEffects();
+                MCPProjectToolSideEffect writes = MCPProjectToolSideEffect.WritesAssets |
+                                                  MCPProjectToolSideEffect.WritesScene |
+                                                  MCPProjectToolSideEffect.ChangesRuntimeState |
+                                                  MCPProjectToolSideEffect.AdvancesEditorFrames |
+                                                  MCPProjectToolSideEffect.AdvancesLogicTicks |
+                                                   MCPProjectToolSideEffect.CreatesTemporaryObjects |
+                                                   MCPProjectToolSideEffect.PerformsExternalIO |
+                                                   MCPProjectToolSideEffect.ReloadsDomain |
+                                                   MCPProjectToolSideEffect.ExecutesArbitraryCode;
+                if (ReadOnly && (effects & writes) != 0)
+                    return $"Read-only project tool '{ToolName}' declares mutating side effects.";
+
                 return null;
             }
 
@@ -626,6 +1051,69 @@ namespace UnityMCP.Editor
                     { "properties", new Dictionary<string, object>() },
                     { "additionalProperties", true }
                 };
+            }
+
+            private static Dictionary<string, object> CreateDefaultOutputSchema()
+            {
+                return new Dictionary<string, object>
+                {
+                    { "type", "object" },
+                    { "additionalProperties", true }
+                };
+            }
+
+            private static string ValidateOutputSchema(Dictionary<string, object> schema)
+            {
+                var schemaErrors = new List<string>();
+                ValidateSchemaNode(schema, "$", schemaErrors);
+                return schemaErrors.Count == 0 ? null : string.Join(" ", schemaErrors);
+            }
+
+            private MCPProjectToolSideEffect GetEffectiveSideEffects()
+            {
+                MCPProjectToolSideEffect effects = SideEffects;
+                if (ReadOnly)
+                    effects |= MCPProjectToolSideEffect.ReadsProjectState;
+                if (MutatesAssets)
+                    effects |= MCPProjectToolSideEffect.WritesAssets;
+                if (MutatesRuntime)
+                    effects |= MCPProjectToolSideEffect.ChangesRuntimeState;
+                if (MayReloadDomain)
+                    effects |= MCPProjectToolSideEffect.ReloadsDomain;
+                return effects;
+            }
+
+            private List<string> GetSideEffectNames()
+            {
+                MCPProjectToolSideEffect effects = GetEffectiveSideEffects();
+                return Enum.GetValues(typeof(MCPProjectToolSideEffect))
+                    .Cast<MCPProjectToolSideEffect>()
+                    .Where(effect => effect != MCPProjectToolSideEffect.None && (effects & effect) == effect)
+                    .Select(effect => ToCamelCase(effect.ToString()))
+                    .ToList();
+            }
+
+            private static string ToCamelCase(string value)
+            {
+                return string.IsNullOrEmpty(value)
+                    ? value
+                    : char.ToLowerInvariant(value[0]) + value.Substring(1);
+            }
+
+            private static List<string> NormalizeErrorCodes(IEnumerable<string> errorCodes)
+            {
+                var result = new List<string>
+                {
+                    "invalid_arguments",
+                    "project_tool_exception",
+                    "project_tool_output_schema_mismatch",
+                };
+                if (errorCodes != null)
+                {
+                    result.AddRange(errorCodes.Where(code => string.IsNullOrWhiteSpace(code) == false)
+                        .Select(code => code.Trim()));
+                }
+                return result.Distinct(StringComparer.Ordinal).OrderBy(code => code, StringComparer.Ordinal).ToList();
             }
 
             private static string ValidateInputSchema(Dictionary<string, object> schema)

@@ -121,6 +121,7 @@ namespace UnityMCP.Editor
                 "compilation/errors",
                 "component/set-property",
                 "editor/play-mode",
+                "editor/execute-code",
                 "queue/info",
                 "search/scene",
                 "scene/hierarchy",
@@ -148,7 +149,9 @@ namespace UnityMCP.Editor
                 "project-tools/list",
                 "project-tools/get",
                 "project-tools/execute",
+                "jobs/get",
                 "jobs/cancel",
+                "jobs/cleanup",
                 "asset/import-settings/get",
                 "asset/import-settings/set",
                 "scene/workspace",
@@ -304,12 +307,21 @@ namespace UnityMCP.Editor
                     mayReloadDomain: true),
                 "editor/play-mode");
 
+            AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true,
+                    mutatesRuntime: true, dangerous: true, longRunning: true,
+                    mayReloadDomain: true),
+                "editor/execute-code");
+
             AddProfile(profiles, ToolProfile.FirstClass(mutatesRuntime: true, longRunning: true),
                 "profiler/memory-snapshot");
 
             AddProfile(profiles, ToolProfile.FirstClass(),
                 "queue/cancel",
                 "jobs/cancel");
+
+            AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true,
+                    mutatesRuntime: true, dangerous: true, longRunning: true),
+                "jobs/cleanup");
 
             AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true,
                     mayReloadDomain: true),
@@ -388,7 +400,7 @@ namespace UnityMCP.Editor
             int nextOffset = offset + page.Count;
             var result = new Dictionary<string, object>
             {
-                { "schemaVersion", 3 },
+                { "schemaVersion", 4 },
                 { "compact", compact },
                 { "firstClassOnly", firstClassOnly },
                 { "includeSchema", includeSchema },
@@ -428,7 +440,10 @@ namespace UnityMCP.Editor
                 { "exposure", tool["exposure"] }
             };
             if (includeSchema)
+            {
                 descriptor["inputSchema"] = tool["inputSchema"];
+                descriptor["outputSchema"] = tool["outputSchema"];
+            }
             if (tool.TryGetValue("projectToolName", out var projectToolName))
                 descriptor["projectToolName"] = projectToolName;
             return descriptor;
@@ -439,7 +454,10 @@ namespace UnityMCP.Editor
         {
             var descriptor = tool.ToDictionary(pair => pair.Key, pair => pair.Value);
             if (!includeSchema)
+            {
                 descriptor.Remove("inputSchema");
+                descriptor.Remove("outputSchema");
+            }
             return descriptor;
         }
 
@@ -508,6 +526,7 @@ namespace UnityMCP.Editor
                 { "capability", MCPCapabilityRegistry.GetCapabilityName(route) },
                 { "description", description },
                 { "inputSchema", inputSchema },
+                { "outputSchema", GetToolOutputSchema(route) },
                 { "firstClass", isFirstClass },
                 { "exposure", profile.Exposure },
                 { "preferred", profile.Preferred },
@@ -519,6 +538,7 @@ namespace UnityMCP.Editor
                 { "mayReloadDomain", profile.MayReloadDomain },
                 { "requiresPlayMode", profile.RequiresPlayMode },
                 { "annotations", profile.ToAnnotations() },
+                { "errorCodes", GetStandardErrorCodes(route) },
                 { "fallbackRoute", isFirstClass ? "" : "advanced/execute" },
             };
         }
@@ -564,6 +584,25 @@ namespace UnityMCP.Editor
                 RequiresPlayMode = requiresPlayMode,
             };
             inputSchema = AddTargetBindingSchema(inputSchema, !profile.ReadOnly);
+            inputSchema = AddProjectToolExecutionSchema(inputSchema);
+            var businessOutputSchema =
+                projectTool.TryGetValue("outputSchema", out object outputSchemaValue) &&
+                outputSchemaValue is Dictionary<string, object> outputSchemaDictionary
+                    ? outputSchemaDictionary
+                    : new Dictionary<string, object>
+                    {
+                        { "type", "object" },
+                        { "additionalProperties", true },
+                    };
+            var outputSchema = new Dictionary<string, object>
+            {
+                { "oneOf", new List<object>
+                    {
+                        businessOutputSchema,
+                        CreatePersistentJobOutputSchema(),
+                    }
+                },
+            };
 
             return new Dictionary<string, object>
             {
@@ -573,6 +612,7 @@ namespace UnityMCP.Editor
                 { "capability", "project" },
                 { "description", string.IsNullOrEmpty(description) ? $"Project MCP tool: {projectToolName}" : description },
                 { "inputSchema", inputSchema },
+                { "outputSchema", outputSchema },
                 { "projectToolName", projectToolName },
                 { "firstClass", isFirstClass },
                 { "exposure", profile.Exposure },
@@ -584,6 +624,17 @@ namespace UnityMCP.Editor
                 { "longRunning", longRunning },
                 { "mayReloadDomain", mayReloadDomain },
                 { "requiresPlayMode", requiresPlayMode },
+                { "sideEffects", projectTool.TryGetValue("sideEffects", out object sideEffects)
+                    ? sideEffects
+                    : new List<object>() },
+                { "cleanupAvailable", GetBool(projectTool, "cleanupAvailable", false) },
+                { "cleanupToolName", projectTool.TryGetValue("cleanupToolName", out object cleanupToolName)
+                    ? cleanupToolName
+                    : "" },
+                { "incrementalJob", GetBool(projectTool, "incrementalJob", false) },
+                { "errorCodes", projectTool.TryGetValue("errorCodes", out object errorCodes)
+                    ? errorCodes
+                    : GetStandardErrorCodes(route) },
                 { "annotations", profile.ToAnnotations() },
                 { "source", projectTool.TryGetValue("source", out var source) ? source : "" },
                 { "fallbackRoute", isFirstClass ? "" : "project-tools/execute" },
@@ -599,6 +650,235 @@ namespace UnityMCP.Editor
                 return boolValue;
 
             return bool.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
+        }
+
+        private static Dictionary<string, object> CreateGenericOutputSchema()
+        {
+            return new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", true },
+            };
+        }
+
+        private static Dictionary<string, object> GetToolOutputSchema(string route)
+        {
+            return route == "editor/execute-code" ||
+                   route == "jobs/get" ||
+                   route == "jobs/cancel" ||
+                   route == "jobs/cleanup"
+                ? CreatePersistentJobOutputSchema()
+                : CreateGenericOutputSchema();
+        }
+
+        private static Dictionary<string, object> CreatePersistentJobOutputSchema()
+        {
+            var properties = new Dictionary<string, object>
+            {
+                { "jobId", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "minLength", 1 },
+                    }
+                },
+                { "jobAccessToken", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                    }
+                },
+                { "jobType", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                    }
+                },
+                { "operation", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                    }
+                },
+                { "status", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "enum", new List<object>
+                            {
+                                "queued",
+                                "running",
+                                "succeeded",
+                                "failed",
+                                "canceled",
+                                "interrupted",
+                            }
+                        },
+                    }
+                },
+                { "cleanupStatus", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "enum", new List<object>
+                            {
+                                "none",
+                                "available",
+                                "queued",
+                                "running",
+                                "succeeded",
+                                "failed",
+                                "canceled",
+                                "interrupted",
+                            }
+                        },
+                    }
+                },
+                { "cleanupAvailable", new Dictionary<string, object>
+                    {
+                        { "type", "boolean" },
+                    }
+                },
+                { "cleanupDeclared", new Dictionary<string, object>
+                    {
+                        { "type", "boolean" },
+                    }
+                },
+                { "cleanupToken", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                    }
+                },
+                { "cancellationRequested", new Dictionary<string, object>
+                    {
+                        { "type", "boolean" },
+                    }
+                },
+                { "cancelMode", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "enum", new List<object> { "beforeStart", "betweenSteps" } },
+                    }
+                },
+                { "incremental", new Dictionary<string, object>
+                    {
+                        { "type", "boolean" },
+                    }
+                },
+                { "progress", new Dictionary<string, object>
+                    {
+                        { "type", new List<object> { "number", "null" } },
+                        { "minimum", 0 },
+                        { "maximum", 1 },
+                    }
+                },
+                { "statusMessage", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                    }
+                },
+                { "stepCount", new Dictionary<string, object>
+                    {
+                        { "type", "integer" },
+                        { "minimum", 0 },
+                    }
+                },
+                { "nextRunAt", new Dictionary<string, object> { { "type", "string" } } },
+                { "idempotencyKey", new Dictionary<string, object> { { "type", "string" } } },
+                { "createdAt", new Dictionary<string, object> { { "type", "string" } } },
+                { "startedAt", new Dictionary<string, object> { { "type", "string" } } },
+                { "completedAt", new Dictionary<string, object> { { "type", "string" } } },
+                { "updatedAt", new Dictionary<string, object> { { "type", "string" } } },
+                { "sideEffects", new Dictionary<string, object>
+                    {
+                        { "type", "array" },
+                        { "items", new Dictionary<string, object> { { "type", "string" } } },
+                    }
+                },
+                { "result", new Dictionary<string, object>() },
+                { "error", new Dictionary<string, object>() },
+                { "cleanupResult", new Dictionary<string, object>() },
+                { "cleanupError", new Dictionary<string, object>() },
+                { "statusRoute", new Dictionary<string, object>
+                    {
+                        { "const", "jobs/get" },
+                    }
+                },
+                { "cancelRoute", new Dictionary<string, object>
+                    {
+                        { "const", "jobs/cancel" },
+                    }
+                },
+                { "cleanupRoute", new Dictionary<string, object>
+                    {
+                        { "const", "jobs/cleanup" },
+                    }
+                },
+                { "reused", new Dictionary<string, object> { { "type", "boolean" } } },
+            };
+            return new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "properties", properties },
+                { "required", new List<object>
+                    {
+                        "jobId",
+                        "jobType",
+                        "operation",
+                        "status",
+                        "cleanupStatus",
+                        "cleanupAvailable",
+                        "cleanupDeclared",
+                        "cleanupToken",
+                        "cancellationRequested",
+                        "cancelMode",
+                        "incremental",
+                        "progress",
+                        "statusMessage",
+                        "stepCount",
+                        "nextRunAt",
+                        "idempotencyKey",
+                        "createdAt",
+                        "startedAt",
+                        "completedAt",
+                        "updatedAt",
+                        "sideEffects",
+                        "result",
+                        "error",
+                        "cleanupResult",
+                        "cleanupError",
+                        "statusRoute",
+                        "cancelRoute",
+                        "cleanupRoute",
+                    }
+                },
+                { "additionalProperties", false },
+            };
+        }
+
+        private static List<string> GetStandardErrorCodes(string route)
+        {
+            var codes = new List<string>
+            {
+                "invalid_arguments",
+                "target_project_mismatch",
+                "tool_execution_failed",
+                "response_too_large",
+            };
+            if (route == "editor/execute-code" ||
+                route == "project-tools/execute" ||
+                route != null && route.StartsWith(MCPProjectToolCommands.DirectRoutePrefix,
+                    StringComparison.Ordinal))
+            {
+                codes.Add("idempotency_conflict");
+            }
+            if (route != null && route.StartsWith("jobs/", StringComparison.Ordinal))
+            {
+                codes.AddRange(new[]
+                {
+                    "job_not_found",
+                    "job_owner_mismatch",
+                    "job_not_cancellable",
+                    "job_not_cleanable",
+                    "job_not_terminal",
+                    "job_cleanup_token_missing",
+                });
+            }
+            return codes.Distinct(StringComparer.Ordinal).OrderBy(code => code, StringComparer.Ordinal).ToList();
         }
 
         private static Dictionary<string, object> AddTargetBindingSchema(
@@ -625,6 +905,32 @@ namespace UnityMCP.Editor
                 KeyValuePair<string, object> bindingProperty = Prop("expectedProjectName", "string",
                     "Optional expected Unity project name used with expectedProjectPath as an additional target-binding check.");
                 properties[bindingProperty.Key] = bindingProperty.Value;
+            }
+            schema["properties"] = properties;
+            return schema;
+        }
+
+        private static Dictionary<string, object> AddProjectToolExecutionSchema(
+            Dictionary<string, object> inputSchema)
+        {
+            var schema = inputSchema != null
+                ? new Dictionary<string, object>(inputSchema)
+                : new Dictionary<string, object> { { "type", "object" } };
+            var properties = schema.TryGetValue("properties", out object propertiesValue) &&
+                             propertiesValue is Dictionary<string, object> existingProperties
+                ? new Dictionary<string, object>(existingProperties)
+                : new Dictionary<string, object>();
+            if (!properties.ContainsKey("runAsJob"))
+            {
+                KeyValuePair<string, object> property = Prop("runAsJob", "boolean",
+                    "Run this invocation through the persistent project-tool job owner. Long-running tools always do this.");
+                properties[property.Key] = property.Value;
+            }
+            if (!properties.ContainsKey("idempotencyKey"))
+            {
+                KeyValuePair<string, object> property = Prop("idempotencyKey", "string",
+                    "Optional project-scoped key used to reuse an existing persistent invocation.");
+                properties[property.Key] = property.Value;
             }
             schema["properties"] = properties;
             return schema;
@@ -1157,7 +1463,9 @@ namespace UnityMCP.Editor
                 case "jobs/get":
                     return "Get one persistent Unity MCP job snapshot with owner enforcement.";
                 case "jobs/cancel":
-                    return "Request owner-checked cancellation of a persistent build, test, package-test, memory-snapshot, or Addressables build job and report the actual cancellation mode.";
+                    return "Request owner- or capability-token-checked cancellation of a persistent Unity MCP job and report the actual cancellation mode.";
+                case "jobs/cleanup":
+                    return "Run the explicit persisted cleanup contract of a terminal execute-code or project-tool job. Cleanup is itself durable and status is read through jobs/get.";
                 case "material/properties/get":
                     return "Read a Material's shader, typed shader properties, textures, keywords, render queue, and instancing settings through Unity's public Material API.";
                 case "material/properties/set":
@@ -1543,11 +1851,18 @@ namespace UnityMCP.Editor
                 case "jobs/get":
                     return Schema(Props(
                         Prop("jobId", "string", "Job identifier."),
-                        Prop("jobType", "string", "Optional job type disambiguator.")), "jobId");
+                        Prop("jobType", "string", "Optional job type disambiguator."),
+                        Prop("jobAccessToken", "string", "Capability token returned when a persistent job starts. Required after the originating MCP agent disconnects.")), "jobId");
                 case "jobs/cancel":
                     return Schema(Props(
                         Prop("jobId", "string", "Persistent job identifier returned by its start route."),
-                        Prop("jobType", "string", "Optional job type disambiguator.")
+                        Prop("jobType", "string", "Optional job type disambiguator."),
+                        Prop("jobAccessToken", "string", "Capability token returned when a persistent job starts. Required after the originating MCP agent disconnects.")
+                    ), "jobId");
+                case "jobs/cleanup":
+                    return Schema(Props(
+                        Prop("jobId", "string", "Terminal persistent job identifier whose explicit cleanup contract should run."),
+                        Prop("jobAccessToken", "string", "Capability token returned when the persistent job started.")
                     ), "jobId");
                 case "vfxgraph/info":
                     return Schema(Props(
@@ -1680,7 +1995,10 @@ namespace UnityMCP.Editor
                         Prop("maxResultItems", "number", "Maximum serialized collection/object entries across the result. Defaults to 200; capped at 2000."),
                         Prop("maxResultDepth", "number", "Maximum serialized result depth. Defaults to 8; capped at 16."),
                         Prop("maxResultStringLength", "number", "Maximum characters per returned string. Defaults to 20000; capped at 200000."),
-                        Prop("includeStackTrace", "boolean", "Include a full managed stack trace when executed code throws. Defaults to false.")
+                        EnumProp("unityStructFormat", "Unity value structs in the result: compact strings or structured typed objects. Defaults to compact.", "compact", "structured"),
+                        Prop("includeStackTrace", "boolean", "Include a full managed stack trace when executed code throws. Defaults to false."),
+                        Prop("idempotencyKey", "string", "Optional project-scoped key. Repeating the same key returns the existing persistent job instead of executing code again."),
+                        Prop("cleanupCode", "string", "Optional C# method body used only by jobs/cleanup to reverse temporary state created by this job.")
                     ), "code");
                 case "profiler/enable":
                     return Schema(Props(
@@ -2086,7 +2404,9 @@ namespace UnityMCP.Editor
                 case "project-tools/execute":
                     return Schema(Props(
                         Prop("toolName", "string", "Project tool name from project-tools/list."),
-                        Prop("args", "object", "Arguments passed to the project tool as Dictionary<string, object>.")
+                        Prop("args", "object", "Arguments passed to the project tool as Dictionary<string, object>."),
+                        Prop("runAsJob", "boolean", "Run a normally synchronous project tool through the persistent job owner. Long-running tools always use a job."),
+                        Prop("idempotencyKey", "string", "Optional project-scoped idempotency key for persistent execution.")
                     ), "toolName");
                 case "uitoolkit/audit-uss-styles":
                     return Schema(Props(

@@ -2,6 +2,28 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.4.0] - 2026-07-31
+
+- Add machine-readable `outputSchema`, stable error-code, cleanup-tool, and
+  fine-grained side-effect contracts to project-tool discovery and direct
+  metadata. Side effects now distinguish asset and Scene writes, runtime
+  mutation, Logic Tick or Editor-frame advancement, temporary objects,
+  captured artifacts, external I/O, domain reloads, and arbitrary code.
+- Validate declared project-tool outputs before success and expose long-running
+  or explicitly requested project tools through the same durable Job owner.
+- Move `editor/execute-code` to persistent Jobs with owner/token-scoped
+  `jobs/get`, cooperative `jobs/cancel`, persisted cleanup through
+  `jobs/cleanup`, exact-argument `idempotencyKey` reuse, and explicit
+  interrupted state after a domain reload.
+- Add `IMCPPersistentProjectTool` and `MCPProjectToolJobStep` so long operations
+  can yield between Editor updates, persist all continuation state, report
+  progress, observe cancellation between steps, and produce a cleanup token.
+- Add `unityStructFormat=compact|structured` to execute-code. Structured mode
+  preserves typed Unity values such as vectors, colors, bounds, rays, matrices,
+  and poses without transport compaction rewriting them.
+- Treat pre-start cancellation as side-effect-free and never run cleanup for
+  code that did not cross the execution boundary.
+
 ## [5.3.5] - 2026-07-30
 
 - Classify `editor/execute-code` compilation failures with the stable

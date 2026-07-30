@@ -927,9 +927,11 @@ namespace UnityMCP.Editor
                 case "jobs/list":
                     return MCPJobHistory.List(ParseJson(body));
                 case "jobs/get":
-                    return MCPJobHistory.Get(ParseJson(body));
+                    return MCPJobCommands.Get(ParseJson(body));
                 case "jobs/cancel":
                     return MCPJobCommands.Cancel(ParseJson(body));
+                case "jobs/cleanup":
+                    return MCPJobCommands.Cleanup(ParseJson(body));
 
                 // ─── Stable Generic Route ───
                 case "advanced/execute":

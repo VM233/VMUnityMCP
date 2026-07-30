@@ -186,7 +186,14 @@ namespace UnityMCP.Editor
             if (source == null)
                 return value;
 
-            if (MCPCompactValueFormatter.TryFormatDictionary(source, out formattedValue))
+            bool preserveUnityStructure = source.ContainsKey("$unityStruct");
+            if (preserveUnityStructure)
+            {
+                source = new Dictionary<string, object>(source);
+                source.Remove("$unityStruct");
+            }
+            if (!preserveUnityStructure &&
+                MCPCompactValueFormatter.TryFormatDictionary(source, out formattedValue))
                 return formattedValue;
 
             if (isRoot && IsProjectToolSuccessEnvelope(source))
@@ -201,17 +208,20 @@ namespace UnityMCP.Editor
                 ? FindUniqueEmptyCollectionKeyMatchingCount(compacted, "count")
                 : null;
 
-            MCPCompactValueFormatter.CompactMembers(compacted);
-            RemoveDuplicateSummaryValues(compacted);
-            RemoveDuplicateErrorMessage(compacted);
-            RemoveDuplicateInstanceDetails(compacted);
-            RemoveDerivedPresenceFlags(compacted);
-            CompactSerializedArrayMetadata(compacted);
-            CompactPersistenceMetadata(compacted);
-            CompactOperationMetadata(compacted);
-            CompactCollectionAndPaginationMetadata(compacted);
-            CompactNamedResultPagination(compacted);
-            RemoveFalseTruncationFlags(compacted);
+            if (!preserveUnityStructure)
+            {
+                MCPCompactValueFormatter.CompactMembers(compacted);
+                RemoveDuplicateSummaryValues(compacted);
+                RemoveDuplicateErrorMessage(compacted);
+                RemoveDuplicateInstanceDetails(compacted);
+                RemoveDerivedPresenceFlags(compacted);
+                CompactSerializedArrayMetadata(compacted);
+                CompactPersistenceMetadata(compacted);
+                CompactOperationMetadata(compacted);
+                CompactCollectionAndPaginationMetadata(compacted);
+                CompactNamedResultPagination(compacted);
+                RemoveFalseTruncationFlags(compacted);
+            }
 
             if (isRoot)
             {
@@ -853,6 +863,117 @@ namespace UnityMCP.Editor
 
             formatted = null;
             return false;
+        }
+
+        public static bool TryStructureUnityValue(object value, out object structured)
+        {
+            switch (value)
+            {
+                case Vector2 vector2:
+                    structured = Structure("Vector2", ("x", vector2.x), ("y", vector2.y));
+                    return true;
+                case Vector2Int vector2Int:
+                    structured = Structure("Vector2Int", ("x", vector2Int.x), ("y", vector2Int.y));
+                    return true;
+                case Vector3 vector3:
+                    structured = Structure("Vector3", ("x", vector3.x), ("y", vector3.y), ("z", vector3.z));
+                    return true;
+                case Vector3Int vector3Int:
+                    structured = Structure("Vector3Int", ("x", vector3Int.x), ("y", vector3Int.y),
+                        ("z", vector3Int.z));
+                    return true;
+                case Vector4 vector4:
+                    structured = Structure("Vector4", ("x", vector4.x), ("y", vector4.y), ("z", vector4.z),
+                        ("w", vector4.w));
+                    return true;
+                case Quaternion quaternion:
+                    structured = Structure("Quaternion", ("x", quaternion.x), ("y", quaternion.y),
+                        ("z", quaternion.z), ("w", quaternion.w));
+                    return true;
+                case Rect rect:
+                    structured = Structure("Rect", ("x", rect.x), ("y", rect.y), ("width", rect.width),
+                        ("height", rect.height));
+                    return true;
+                case RectInt rectInt:
+                    structured = Structure("RectInt", ("x", rectInt.x), ("y", rectInt.y),
+                        ("width", rectInt.width), ("height", rectInt.height));
+                    return true;
+                case Bounds bounds:
+                    structured = Structure("Bounds",
+                        ("center", Structure("Vector3", ("x", bounds.center.x), ("y", bounds.center.y),
+                            ("z", bounds.center.z))),
+                        ("size", Structure("Vector3", ("x", bounds.size.x), ("y", bounds.size.y),
+                            ("z", bounds.size.z))));
+                    return true;
+                case BoundsInt boundsInt:
+                    structured = Structure("BoundsInt",
+                        ("position", Structure("Vector3Int", ("x", boundsInt.position.x), ("y", boundsInt.position.y),
+                            ("z", boundsInt.position.z))),
+                        ("size", Structure("Vector3Int", ("x", boundsInt.size.x), ("y", boundsInt.size.y),
+                            ("z", boundsInt.size.z))));
+                    return true;
+                case Color color:
+                    structured = Structure("Color", ("r", color.r), ("g", color.g), ("b", color.b), ("a", color.a));
+                    return true;
+                case Color32 color32:
+                    structured = Structure("Color32", ("r", color32.r), ("g", color32.g), ("b", color32.b),
+                        ("a", color32.a));
+                    return true;
+                case RectOffset offset:
+                    structured = Structure("RectOffset", ("left", offset.left), ("top", offset.top),
+                        ("right", offset.right), ("bottom", offset.bottom));
+                    return true;
+                case Matrix4x4 matrix:
+                    var values = new List<object>(16);
+                    for (int row = 0; row < 4; row++)
+                    {
+                        for (int column = 0; column < 4; column++)
+                            values.Add(matrix[row, column]);
+                    }
+                    structured = Structure("Matrix4x4", ("rowMajor", values));
+                    return true;
+                case Ray ray:
+                    structured = Structure("Ray",
+                        ("origin", Structure("Vector3", ("x", ray.origin.x), ("y", ray.origin.y),
+                            ("z", ray.origin.z))),
+                        ("direction", Structure("Vector3", ("x", ray.direction.x), ("y", ray.direction.y),
+                            ("z", ray.direction.z))));
+                    return true;
+                case Ray2D ray2D:
+                    structured = Structure("Ray2D",
+                        ("origin", Structure("Vector2", ("x", ray2D.origin.x), ("y", ray2D.origin.y))),
+                        ("direction", Structure("Vector2", ("x", ray2D.direction.x), ("y", ray2D.direction.y))));
+                    return true;
+                case Plane plane:
+                    structured = Structure("Plane",
+                        ("normal", Structure("Vector3", ("x", plane.normal.x), ("y", plane.normal.y),
+                            ("z", plane.normal.z))),
+                        ("distance", plane.distance));
+                    return true;
+                case Pose pose:
+                    structured = Structure("Pose",
+                        ("position", Structure("Vector3", ("x", pose.position.x), ("y", pose.position.y),
+                            ("z", pose.position.z))),
+                        ("rotation", Structure("Quaternion", ("x", pose.rotation.x), ("y", pose.rotation.y),
+                            ("z", pose.rotation.z), ("w", pose.rotation.w))));
+                    return true;
+                default:
+                    structured = null;
+                    return false;
+            }
+        }
+
+        private static Dictionary<string, object> Structure(string type,
+            params (string key, object value)[] values)
+        {
+            var result = new Dictionary<string, object>
+            {
+                { "$unityStruct", true },
+                { "type", type },
+            };
+            foreach ((string key, object value) in values)
+                result[key] = value;
+            return result;
         }
 
         public static void CompactMembers(Dictionary<string, object> dictionary)

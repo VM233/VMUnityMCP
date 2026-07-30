@@ -121,7 +121,7 @@ namespace UnityMCP.Editor
                     : $"return {expression};";
             }
 
-            var result = MCPEditorCommands.ExecuteCode(new Dictionary<string, object>
+            var result = MCPEditorCommands.ExecuteCodeInline(new Dictionary<string, object>
             {
                 { "code", code },
             });

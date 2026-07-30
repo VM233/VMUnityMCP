@@ -9,11 +9,34 @@ namespace UnityMCP.Editor
     /// </summary>
     internal static class MCPJobCommands
     {
+        public static object Get(Dictionary<string, object> args)
+        {
+            string requestedJobType = GetString(args, "jobType");
+            string jobId = GetString(args, "jobId");
+            if (MCPPersistentJobRunner.OwnsJobType(requestedJobType) ||
+                MCPPersistentJobRunner.ContainsJob(jobId))
+                return MCPPersistentJobRunner.Get(args);
+
+            object historyResult = MCPJobHistory.Get(args);
+            var history = MCPResponse.ToDictionary(historyResult);
+            if (history != null &&
+                history.TryGetValue("job", out object jobValue) &&
+                MCPResponse.ToDictionary(jobValue) is { } job &&
+                MCPPersistentJobRunner.OwnsJobType(GetString(job, "jobType")))
+            {
+                return MCPPersistentJobRunner.Get(args);
+            }
+            return historyResult;
+        }
+
         public static object Cancel(Dictionary<string, object> args)
         {
             string jobId = GetString(args, "jobId");
             if (string.IsNullOrEmpty(jobId))
                 return MCPResponse.Error("jobId is required.", "invalid_arguments");
+
+            if (MCPPersistentJobRunner.ContainsJob(jobId))
+                return MCPPersistentJobRunner.Cancel(args);
 
             string requestedJobType = GetString(args, "jobType");
             var lookupArgs = new Dictionary<string, object>
@@ -33,6 +56,9 @@ namespace UnityMCP.Editor
                 return MCPResponse.Error($"Job '{jobId}' has invalid persisted metadata.", "job_metadata_invalid");
 
             string jobType = GetString(job, "jobType");
+            if (MCPPersistentJobRunner.OwnsJobType(jobType))
+                return MCPPersistentJobRunner.Cancel(args);
+
             var cancelArgs = new Dictionary<string, object>(args ?? new Dictionary<string, object>())
             {
                 ["jobId"] = jobId,
@@ -61,6 +87,11 @@ namespace UnityMCP.Editor
                             { "status", GetString(job, "status", "unknown") },
                         });
             }
+        }
+
+        public static object Cleanup(Dictionary<string, object> args)
+        {
+            return MCPPersistentJobRunner.RequestCleanup(args);
         }
 
         private static string GetString(Dictionary<string, object> values, string key,

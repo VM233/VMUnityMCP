@@ -513,6 +513,11 @@ namespace UnityMCP.Editor
 
         public static object ExecuteCode(Dictionary<string, object> args)
         {
+            return MCPPersistentJobRunner.StartExecuteCode(args);
+        }
+
+        internal static object ExecuteCodeInline(Dictionary<string, object> args)
+        {
             string code = args != null && args.ContainsKey("code") && args["code"] != null
                 ? args["code"].ToString()
                 : "";
@@ -1107,7 +1112,9 @@ namespace UnityMCP.Editor
             var budget = new ResultSerializationBudget(
                 Math.Max(1, Math.Min(GetInt(args, "maxResultItems", 200), 2000)),
                 Math.Max(1, Math.Min(GetInt(args, "maxResultDepth", 8), 16)),
-                Math.Max(100, Math.Min(GetInt(args, "maxResultStringLength", 20000), 200000)));
+                Math.Max(100, Math.Min(GetInt(args, "maxResultStringLength", 20000), 200000)),
+                string.Equals(GetString(args, "unityStructFormat", "compact"),
+                    "structured", StringComparison.OrdinalIgnoreCase));
             object serialized = SerializeResultValue(result, 0,
                 new HashSet<object>(ReferenceEqualityComparer.Instance), budget);
             var response = new Dictionary<string, object>
@@ -1165,8 +1172,15 @@ namespace UnityMCP.Editor
             // transport boundary. Route every supported Unity value struct through the shared
             // formatter here as well, otherwise structs such as Rect are reflected into all of
             // their redundant aliases (x/position/min/left/etc.) before transport compaction.
-            if (MCPCompactValueFormatter.TryFormatUnityValue(value, out string compactUnityValue))
+            if (budget.StructuredUnityValues)
+            {
+                if (MCPCompactValueFormatter.TryStructureUnityValue(value, out object structuredUnityValue))
+                    return structuredUnityValue;
+            }
+            else if (MCPCompactValueFormatter.TryFormatUnityValue(value, out string compactUnityValue))
+            {
                 return compactUnityValue;
+            }
 
             if (value is UnityEngine.Object unityObject)
             {
@@ -1287,14 +1301,17 @@ namespace UnityMCP.Editor
             public readonly int MaxItems;
             public readonly int MaxDepth;
             public readonly int MaxStringLength;
+            public readonly bool StructuredUnityValues;
             public int SerializedItems { get; private set; }
             public bool Truncated { get; set; }
 
-            public ResultSerializationBudget(int maxItems, int maxDepth, int maxStringLength)
+            public ResultSerializationBudget(int maxItems, int maxDepth, int maxStringLength,
+                bool structuredUnityValues)
             {
                 MaxItems = maxItems;
                 MaxDepth = maxDepth;
                 MaxStringLength = maxStringLength;
+                StructuredUnityValues = structuredUnityValues;
                 _remainingItems = maxItems;
             }
 
@@ -1414,6 +1431,13 @@ namespace UnityMCP.Editor
                 return defaultValue;
 
             return int.TryParse(args[key].ToString(), out int value) ? value : defaultValue;
+        }
+
+        private static string GetString(Dictionary<string, object> args, string key, string defaultValue)
+        {
+            return args != null && args.TryGetValue(key, out object value) && value != null
+                ? value.ToString()
+                : defaultValue;
         }
 
         internal static Dictionary<string, object> BuildExecuteCodeError(
