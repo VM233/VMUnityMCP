@@ -54,6 +54,12 @@ opaque `args` object of `project-tools/execute`. A project-tool package owns
 its own settings UI, storage, schema annotations, and per-tool decision about
 which omitted arguments may use those settings.
 
+Project-tool arguments are validated recursively before invocation. The
+supported schema subset includes nested objects and arrays, primitive types,
+bounds and patterns, `enum`, `const`, and
+`allOf`/`anyOf`/`oneOf`/`not`. Extension packages should express selector
+exclusivity in their schema instead of duplicating it in the bridge.
+
 For one unambiguous primary result collection, extension packages can call
 `MCPSettingsManager.ResolvePrimaryResultLimit(...)`. The helper preserves the
 same explicit-argument -> shared user preference -> package-default order and

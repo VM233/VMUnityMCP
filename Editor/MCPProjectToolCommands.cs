@@ -712,6 +712,14 @@ namespace UnityMCP.Editor
                     }
                 }
 
+                if (schema.TryGetValue("not", out object notValue))
+                {
+                    if (notValue is Dictionary<string, object> notSchema)
+                        ValidateSchemaNode(notSchema, path + ".not", errors);
+                    else
+                        errors.Add($"{path}.not must be an object.");
+                }
+
                 if (schema.TryGetValue("pattern", out object pattern) && pattern != null)
                 {
                     try
@@ -764,6 +772,10 @@ namespace UnityMCP.Editor
                                 variantSchema, $"{path}.{keyword}[{index}]", issues);
                     }
                 }
+
+                if (schema.TryGetValue("not", out object notValue) &&
+                    notValue is Dictionary<string, object> notSchema)
+                    CollectFirstClassSchemaIssues(notSchema, path + ".not", issues);
             }
 
             private static void ValidateValueAgainstSchema(object value,
@@ -780,6 +792,10 @@ namespace UnityMCP.Editor
                     errors.Add($"{path} {typeError}");
                     return;
                 }
+
+                if (schema.TryGetValue("const", out object constantValue) &&
+                    !ValuesEqual(value, constantValue))
+                    errors.Add($"{path} must equal its const value.");
 
                 if (schema.TryGetValue("enum", out object enumValue) && enumValue is IList allowedValues)
                 {
@@ -878,6 +894,15 @@ namespace UnityMCP.Editor
 
                 ValidateAlternativeSchemas(value, schema, path, "anyOf", false, errors);
                 ValidateAlternativeSchemas(value, schema, path, "oneOf", true, errors);
+
+                if (schema.TryGetValue("not", out object notValue) &&
+                    notValue is Dictionary<string, object> notSchema)
+                {
+                    var notErrors = new List<string>();
+                    ValidateValueAgainstSchema(value, notSchema, path, notErrors, false);
+                    if (notErrors.Count == 0)
+                        errors.Add($"{path} must not match the schema in not.");
+                }
             }
 
             private static void ValidateAlternativeSchemas(
@@ -1055,6 +1080,30 @@ namespace UnityMCP.Editor
                     return string.Equals(leftString, rightString, StringComparison.Ordinal);
                 if (left is bool leftBoolean && right is bool rightBoolean)
                     return leftBoolean == rightBoolean;
+                if (left is IDictionary leftDictionary && right is IDictionary rightDictionary)
+                {
+                    if (leftDictionary.Count != rightDictionary.Count)
+                        return false;
+                    foreach (DictionaryEntry pair in leftDictionary)
+                    {
+                        if (!rightDictionary.Contains(pair.Key) ||
+                            !ValuesEqual(pair.Value, rightDictionary[pair.Key]))
+                            return false;
+                    }
+                    return true;
+                }
+                if (left is IList leftList && right is IList rightList &&
+                    !(left is string) && !(right is string))
+                {
+                    if (leftList.Count != rightList.Count)
+                        return false;
+                    for (int index = 0; index < leftList.Count; index++)
+                    {
+                        if (!ValuesEqual(leftList[index], rightList[index]))
+                            return false;
+                    }
+                    return true;
+                }
                 return left.Equals(right);
             }
 

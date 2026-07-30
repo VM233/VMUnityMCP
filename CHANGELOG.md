@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.3.4] - 2026-07-30
+
+- Enforce project-tool JSON Schema `not` and `const` constraints before
+  invocation, including recursive equality for object and array constants.
+- Validate and inspect nested `not` schemas during discovery so extension
+  packages can publish selector exclusivity as an executable contract.
+- Add regression coverage proving invalid `not` and `const` arguments fail at
+  the shared project-tool boundary.
+
 ## [5.3.3] - 2026-07-30
 
 - Move callback-based route names and handlers into one executable deferred

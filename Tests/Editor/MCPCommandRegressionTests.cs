@@ -69,6 +69,8 @@ namespace UnityMCP.Editor.Tests
         private const string RUNTIME_MUTATION_TOOL_NAME = "unity-mcp-tests/set-runtime-state";
         private const string LAZY_READ_TOOL_NAME = "unity-mcp-tests/read-lazy-state";
         private const string NESTED_SCHEMA_TOOL_NAME = "unity-mcp-tests/validate-nested-schema";
+        private const string STRICT_COMBINATOR_SCHEMA_TOOL_NAME =
+            "unity-mcp-tests/validate-strict-combinator-schema";
         private const string INCOMPLETE_FIRST_CLASS_TOOL_NAME = "unity-mcp-tests/incomplete-first-class";
         private bool projectConfigurationExisted;
         private string projectConfigurationContents;
@@ -106,6 +108,19 @@ namespace UnityMCP.Editor.Tests
             InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"config\":{\"type\":\"object\",\"description\":\"Nested validation configuration.\",\"properties\":{\"mode\":{\"type\":\"string\",\"description\":\"Validation mode.\",\"enum\":[\"safe\",\"fast\"]},\"values\":{\"type\":\"array\",\"description\":\"One or two integer values.\",\"minItems\":1,\"maxItems\":2,\"items\":{\"type\":\"integer\"}},\"choice\":{\"description\":\"String or integer choice.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}},\"required\":[\"mode\",\"values\"],\"additionalProperties\":false}},\"required\":[\"config\"],\"additionalProperties\":false}",
             ReadOnly = true)]
         private static object ValidateNestedSchemaFixture(Dictionary<string, object> args)
+        {
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "received", args }
+            };
+        }
+
+        [MCPProjectTool(STRICT_COMBINATOR_SCHEMA_TOOL_NAME,
+            Description = "Regression fixture for project-tool not and const schema validation.",
+            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"enabled\":{\"type\":\"boolean\",\"description\":\"Required enabled state.\",\"const\":true},\"blocked\":{\"type\":\"string\",\"description\":\"Forbidden marker.\"}},\"required\":[\"enabled\"],\"not\":{\"required\":[\"blocked\"]},\"additionalProperties\":false}",
+            ReadOnly = true)]
+        private static object ValidateStrictCombinatorSchemaFixture(Dictionary<string, object> args)
         {
             return new Dictionary<string, object>
             {
@@ -3634,6 +3649,44 @@ namespace UnityMCP.Editor.Tests
                     .And.Contain("at most 2 items")
                     .And.Contain("$.config.choice")
                     .And.Contain("$.config.unknown"));
+        }
+
+        [Test]
+        public void ProjectTool_EnforcesNotAndConstSchemasBeforeExecution()
+        {
+            Dictionary<string, object> Execute(Dictionary<string, object> toolArgs)
+            {
+                return RequireDictionary(MCPProjectToolCommands.Execute(
+                    new Dictionary<string, object>
+                    {
+                        { "toolName", STRICT_COMBINATOR_SCHEMA_TOOL_NAME },
+                        { "args", toolArgs }
+                    }));
+            }
+
+            var valid = Execute(new Dictionary<string, object>
+            {
+                { "enabled", true }
+            });
+            Assert.That(valid["success"], Is.EqualTo(true));
+
+            var invalidConst = Execute(new Dictionary<string, object>
+            {
+                { "enabled", false }
+            });
+            Assert.That(invalidConst["success"], Is.EqualTo(false));
+            Assert.That(invalidConst["errorCode"], Is.EqualTo("invalid_arguments"));
+            Assert.That(invalidConst["error"].ToString(),
+                Does.Contain("$.enabled").And.Contain("const"));
+
+            var invalidNot = Execute(new Dictionary<string, object>
+            {
+                { "enabled", true },
+                { "blocked", "present" }
+            });
+            Assert.That(invalidNot["success"], Is.EqualTo(false));
+            Assert.That(invalidNot["errorCode"], Is.EqualTo("invalid_arguments"));
+            Assert.That(invalidNot["error"].ToString(), Does.Contain("not"));
         }
 
         [Test]

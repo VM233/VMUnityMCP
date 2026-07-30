@@ -92,7 +92,9 @@ public static class ProjectMcpTools
 Declare exactly one operation kind: `ReadOnly`, `MutatesAssets`, or
 `MutatesRuntime`. Add `RequiresPlayMode`, `Dangerous`, `LongRunning`, or
 `MayReloadDomain` when applicable. Strict schemas should describe every
-property and reject unknown business arguments.
+property and reject unknown business arguments. The bridge recursively enforces
+the supported JSON Schema subset before invocation, including
+`allOf`/`anyOf`/`oneOf`, `not`, `const`, nested objects, and array items.
 
 The canonical client workflow is:
 
