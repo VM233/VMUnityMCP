@@ -1254,6 +1254,8 @@ namespace UnityMCP.Editor
                     return "Resolve one Unity Editor MCP instance by project path, project name, or port.";
                 case "instance/assert-project":
                     return "Assert that this MCP request reached the expected Unity project.";
+                case "editor/execute-code":
+                    return "Start an owner-scoped persistent Job that compiles and executes a C# method body in the Unity Editor, with exact-argument idempotency, bounded result serialization, optional typed Unity structs, cancellation, and explicit cleanup code.";
                 case "scene/hierarchy":
                     return "Read the active scene hierarchy, optionally returning compact matches filtered by component type.";
                 case "scene/instantiate-prefab":
