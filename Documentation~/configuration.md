@@ -41,6 +41,25 @@ The detailed UI Toolkit audit remains in
 `ProjectSettings/UnityMCPUIToolkitAudit.json`. It is a separate domain policy
 with roots, exclusions, automatic audit switches, and rule-specific values.
 
+### Project-tool package settings
+
+The built-in route policy never injects domain-specific defaults into the
+opaque `args` object of `project-tools/execute`. A project-tool package owns
+its own settings UI, storage, schema annotations, and per-tool decision about
+which omitted arguments may use those settings.
+
+For one unambiguous primary result collection, extension packages can call
+`MCPSettingsManager.ResolvePrimaryResultLimit(...)`. The helper preserves the
+same explicit-argument -> shared user preference -> package-default order and
+then applies the package's hard bounds. It does not make selectors, mutation
+fields, or multi-axis graph budgets configurable.
+
+For example, VMFramework MCP keeps team GameTag validation coverage in
+`ProjectSettings/VMFrameworkMCPSettings.json`, local inspection/trace response
+choices under `Preferences > VMFramework MCP`, and reuses the shared Unity MCP
+result preference for simple paginated reads. VMFramework content paths and
+localization tables remain owned by VMFramework GeneralSettings.
+
 ## Cross-tool settings added
 
 The optional result-limit preference applies only to a route with one clear
@@ -98,7 +117,7 @@ Every route in the manifest was checked. The result by tool family is:
 | `asset`, `texture`, `sprite`, `spriteatlas`, `material`, `serialized-object`, `scriptableobject`, `script`, `asmdef`, `taglayer` | 62 | Read-result budgets may use the preference. Importer values, presets, roots, overwrite, dedupe, reimport, refresh, raw serialization, and file mutations stay request-owned. |
 | `prefab`, `prefab-asset`, `component`, `gameobject`, `renderer`, `constraint`, `lod` | 43 | Prefab YAML response detail is a user preference; hierarchy/find budgets may use the result preference. Selectors, references, transforms, apply/revert/unpack, and transaction operations stay explicit. |
 | `scene`, `sceneview`, `physics`, `navigation`, `lighting`, `particle`, `terrain`, `scenario` | 71 | Physics read queries have a project dimension default. Scene replacement/save/discard, runtime simulation, baking, clearing, placement, scenario activation, and terrain edits stay explicit. |
-| `build`, `testing`, `jobs`, `packages`, `project-tools`, `project`, `settings`, `editorprefs`, `playerprefs` | 39 | Read pages and histories may use preferences. Build target/output/run/overwrite, test mode/filter, package ref/resolve, project-tool args, and preference mutations remain explicit. |
+| `build`, `testing`, `jobs`, `packages`, `project-tools`, `project`, `settings`, `editorprefs`, `playerprefs` | 39 | Read pages and histories may use preferences. Build target/output/run/overwrite, test mode/filter, package ref/resolve, the generic project-tool envelope, and preference mutations remain explicit. A project-tool package may resolve its own omitted domain defaults after schema validation. |
 | `ui`, `uitoolkit`, `gameview`, `screenshot`, `graphics` | 47 | Screenshot directory is a project default; bounded read results may use the preference; UI audit keeps its dedicated project policy. Capture dimensions, transports, tolerances, expected images, refresh, and runtime/editor target selection stay explicit. |
 | `animation`, `audio`, `audio-mixer`, `input`, `shadergraph`, `vfxgraph`, `timeline`, `cinemachine`, `addressables`, `localization` | 84 | Simple list pages may use the result preference. Graph/mixer/timeline multi-axis budgets, raw serialized detail, operations, package capability behavior, locale/table values, labels, addresses, and runtime overrides stay explicit. |
 
@@ -123,3 +142,8 @@ The following fields must continue to be selected per request:
 
 This boundary keeps configuration convenient without turning hidden state into
 an implicit mutation contract.
+
+Transport compaction removes empty optional containers, but preserves a sole
+empty primary collection. This keeps zero-match list/search results meaningful
+inside completed queue tickets while still omitting redundant empty warning or
+diagnostic arrays from otherwise informative responses.

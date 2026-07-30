@@ -2014,12 +2014,27 @@ namespace UnityMCP.Editor.Tests
                 MCPToolConfigurationPolicy.ApplyDefaults(
                     "asset/list", explicitArguments);
                 Assert.That(explicitArguments["limit"], Is.EqualTo(9));
+                Assert.That(
+                    MCPSettingsManager.ResolvePrimaryResultLimit(
+                        new Dictionary<string, object>(), "limit", 100, 1, 5000),
+                    Is.EqualTo(37));
+                Assert.That(
+                    MCPSettingsManager.ResolvePrimaryResultLimit(
+                        new Dictionary<string, object> { { "limit", 11 } },
+                        "limit", 100, 1, 5000),
+                    Is.EqualTo(11));
 
                 var mutationArguments =
                     new Dictionary<string, object>();
                 MCPToolConfigurationPolicy.ApplyDefaults(
                     "asset/delete", mutationArguments);
                 Assert.That(mutationArguments, Is.Empty);
+
+                MCPSettingsManager.OverrideDefaultResultLimit = false;
+                Assert.That(
+                    MCPSettingsManager.ResolvePrimaryResultLimit(
+                        null, "maxIssues", 500, 1, 5000),
+                    Is.EqualTo(500));
             }
             finally
             {
@@ -6818,7 +6833,8 @@ namespace UnityMCP.Editor.Tests
                     { "filters", new Dictionary<string, object>() },
                 }));
 
-            Assert.That(assetSearch, Is.Empty);
+            Assert.That(assetSearch.Keys, Is.EquivalentTo(new[] { "assets" }));
+            Assert.That((IList)assetSearch["assets"], Is.Empty);
 
             var diagnostics = RequireDictionary(MCPResponse.CompactForTransport(
                 new Dictionary<string, object>
@@ -6841,6 +6857,39 @@ namespace UnityMCP.Editor.Tests
             var warning = RequireDictionary(deprecatedWarnings[0]);
             Assert.That(warning["code"], Is.EqualTo("CS0618"));
             Assert.That(warning.ContainsKey("related"), Is.False);
+        }
+
+        [Test]
+        public void TransportCompaction_PreservesEmptyPrimaryCollectionInsideCompletedTicket()
+        {
+            var source = new Dictionary<string, object>
+            {
+                { "ticketId", 43L },
+                { "actionName", "project-tools/execute" },
+                { "status", "Completed" },
+                {
+                    "result",
+                    MCPResponse.Success(
+                        new Dictionary<string, object>
+                        {
+                            { "gamePrefabs", new List<object>() },
+                            { "count", 0 },
+                            { "offset", 0 },
+                            { "limit", 100 },
+                            { "total", 0 },
+                        },
+                        new Dictionary<string, object>
+                        {
+                            { "toolName", "vmframework/find-game-prefab" },
+                        })
+                },
+            };
+
+            var ticket = RequireDictionary(MCPResponse.CompactForTransport(source));
+            var result = RequireDictionary(ticket["result"]);
+
+            Assert.That(result.Keys, Is.EquivalentTo(new[] { "gamePrefabs" }));
+            Assert.That((IList)result["gamePrefabs"], Is.Empty);
         }
 
         [Test]

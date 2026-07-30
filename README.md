@@ -1,159 +1,69 @@
 # VM Unity MCP
 
-VM Unity MCP is an independently maintained Unity Editor MCP bridge published by VM233. It provides structured, queue-safe tools for scenes, assets, UI Toolkit, packages, builds, tests, project-defined workflows, and Editor diagnostics.
+VM Unity MCP is an independently maintained Unity Editor bridge for structured,
+queue-safe MCP automation. It provides route-specific tools for Unity assets,
+scenes, UI Toolkit, packages, builds, tests, diagnostics, and project-defined
+workflows.
 
-This project was originally derived from [AnkleBreaker Studio's Unity MCP Plugin](https://github.com/AnkleBreaker-Studio/unity-mcp-plugin) and retains its full license and attribution requirements. **Powered by AnkleBreaker MCP.** VM Unity MCP now develops and releases from a standalone repository rather than a GitHub fork.
-
-Related original projects:
-
-- [Original Unity MCP Plugin](https://github.com/AnkleBreaker-Studio/unity-mcp-plugin)
-- [Unity MCP Server](https://github.com/AnkleBreaker-Studio/unity-mcp-server)
+This project was originally derived from
+[AnkleBreaker Studio's Unity MCP Plugin](https://github.com/AnkleBreaker-Studio/unity-mcp-plugin)
+and retains its license and attribution requirements. **Powered by AnkleBreaker
+MCP.**
 
 ## Install
 
-In Unity Package Manager, choose **Add package from git URL...** and enter:
+In Unity Package Manager, choose **Add package from git URL...**:
 
 ```text
 https://github.com/VM233/VMUnityMCP.git
 ```
 
-For a reproducible project dependency, pin a specific commit:
+Pin a commit for reproducible projects:
 
 ```text
 https://github.com/VM233/VMUnityMCP.git#<commit-hash>
 ```
 
-The bridge runs inside the Unity Editor on `127.0.0.1`, usually port `7890`. Verify it with:
+The Editor package is one side of the connection. Run a compatible MCP server,
+such as [VM233/unity-mcp-server](https://github.com/VM233/unity-mcp-server),
+from the MCP client. The bridge listens on `127.0.0.1`; automatic ports use
+`7890-7899` initially.
 
-```text
-http://127.0.0.1:7890/api/ping
-```
+## Capability model
 
-## Capabilities
+The public MCP surface is generated from live Editor metadata rather than a
+hand-maintained README list. This prevents installed Unity packages, Unity
+versions, and the currently selected project from producing stale concrete
+tools.
 
-| Area | MCP tool name | HTTP route | Purpose |
-|------|---------------|------------|---------|
-| Fallback entrypoint | `unity_advanced_execute` | `advanced/execute` | Fallback route for commands that do not have a concrete tool yet. Prefer route-specific `unity_*` tools first. |
-| MCP diagnostics | `unity_mcp_health` | `mcp/health` | Inspect bridge state, queue state, sessions, process memory, recent actions, and slow requests. |
-| MCP diagnostics | `unity_mcp_set_autostart` | `mcp/set-autostart` | Enable or disable bridge auto-start for the current Unity Editor instance. |
-| Editor stability | `unity_wait_editor_idle` | `wait/editor-idle` | Wait for compilation, package refresh, domain reload, and asset import to settle before issuing the next command. |
-| Testing | `unity_testing_list_tests` | `testing/list-tests` | List discoverable EditMode or PlayMode tests with filters. |
-| Testing | `unity_testing_run_tests` | `testing/run-tests` | Start a Unity Test Runner job. |
-| Testing | `unity_testing_get_job` | `testing/get-job` | Poll test progress and detailed results. |
-| Package testing | `unity_testing_run_package_tests` | `testing/run-package-tests` | Temporarily enable Git package tests, run them across domain reloads, and restore the package manifest exactly. |
-| Package testing | `unity_testing_get_package_job` | `testing/get-package-job` | Poll the persistent package test workflow and its final test result. |
-| Localization | `unity_localization_upsert_entry` | `localization/upsert-entry` | Prevalidate and upsert one or more String, Smart String, or Asset Table entries with `execution.mode` controlling immediate or frame-batched execution. |
-| Multi-editor safety | `unity_instance_current` | `instance/current` | Return the current Editor MCP instance identity, including project path and port. |
-| Multi-editor safety | `unity_instance_list` | `instance/list` | List registered Editor MCP instances across open Unity projects. |
-| Multi-editor safety | `unity_instance_resolve` | `instance/resolve` | Resolve exactly one Editor MCP instance by project path, project name, or port. |
-| Multi-editor safety | `unity_instance_assert_project` | `instance/assert-project` | Verify that a request reached the expected Unity project. |
-| Prefab asset editing | `unity_prefab_asset_add_component` | `prefab-asset/add-component` | Add a component after waiting for a newly compiled script type to become available; returns prefab YAML diff by default. |
-| Prefab asset editing | `unity_prefab_asset_configure_component` | `prefab-asset/configure-component` | Ensure one component exists and atomically configure serialized properties and ObjectReferences in one prefab save. |
-| Prefab asset editing | `unity_prefab_asset_add_gameobject` | `prefab-asset/add-gameobject` | Create a child GameObject inside a prefab asset. |
-| Prefab asset editing | `unity_prefab_asset_transaction_edit` | `prefab-asset/transaction-edit` | Apply ordered prefab edits in one load/save transaction with `execution.mode` controlling immediate or frame-batched execution. |
-| Prefab asset editing | `unity_prefab_asset_instantiate_child_prefab` | `prefab-asset/instantiate-child-prefab` | Instantiate one prefab asset as a child inside another prefab asset. |
-| Prefab asset editing | `unity_prefab_asset_move_gameobject` | `prefab-asset/move-gameobject` | Move or reorder a GameObject inside a prefab asset without opening Prefab Mode manually. |
-| Prefab asset editing | `unity_prefab_asset_move_component` | `prefab-asset/move-component` | Atomically move a component between GameObjects while preserving its serialized data and remapping references to the moved component. |
-| Prefab asset editing | `unity_prefab_asset_remove_component` | `prefab-asset/remove-component` | Remove a component from a GameObject inside a prefab asset. |
-| Prefab asset editing | `unity_prefab_asset_remove_gameobject` | `prefab-asset/remove-gameobject` | Remove a child GameObject from inside a prefab asset. |
-| Prefab asset editing | `unity_prefab_asset_set_property` | `prefab-asset/set-property` | Set a serialized property on a component inside a prefab asset. |
-| Prefab asset editing | `unity_prefab_asset_set_reference` | `prefab-asset/set-reference` | Set an ObjectReference property on a component inside a prefab asset. |
-| Prefab asset search | `unity_prefab_asset_find` | `prefab-asset/find` | Find prefab children by name/path, component type, and serialized property value. |
-| Prefab asset search | `unity_prefab_asset_hierarchy` | `prefab-asset/hierarchy` | Read a prefab asset hierarchy directly from disk. |
-| Prefab asset search | `unity_prefab_asset_get_properties` | `prefab-asset/get-properties` | Read serialized component properties inside a prefab asset. |
-| Scene editing | `unity_scene_instantiate_prefab` | `scene/instantiate-prefab` | Instantiate a prefab asset into the currently open scene. |
-| Scene workspace | `unity_scene_workspace` | `scene/workspace` | List loaded scenes, open additively or singly, close with an explicit dirty-scene policy, and set the active scene. |
-| Safe assets | `unity_asset_refresh` | `asset/refresh` | Start a reload-safe AssetDatabase refresh and return a refresh job ID. |
-| Safe assets | `unity_asset_get_refresh_job` | `asset/get-refresh-job` | Poll a reload-safe AssetDatabase refresh through compilation or domain reload. |
-| Safe assets | `unity_asset_import` | `asset/import` | Preflight and import external assets with shared TextureImporter defaults, decoded-pixel/file-byte deduplication, frame-batched execution, per-item results, and rollback. |
-| Safe assets | `unity_asset_import_settings_get` | `asset/import-settings/get` | Read semantic TextureImporter, ModelImporter, or AudioImporter settings and optional platform overrides. |
-| Safe assets | `unity_asset_import_settings_set` | `asset/import-settings/set` | Validate and update semantic importer settings with dry-run and one controlled reimport. |
-| Safe assets | `unity_asset_import_unitypackage` | `asset/import-unitypackage` | Start a reload-safe, non-interactive `.unitypackage` import; poll `unity_jobs_get` until callback-confirmed completion, with packaged `.meta` GUIDs preserved. |
-| Safe assets | `unity_asset_rename` | `asset/rename` | Rename an asset through `AssetDatabase.RenameAsset`, preserving `.meta`, GUID, references, and Single Sprite internal names. |
-| Safe assets | `unity_asset_move` | `asset/move` | Preflight and move one or more assets, preserving `.meta` GUIDs, synchronizing Single Sprite internal names when filenames change, and rolling back completed moves when configured to stop on failure. |
-| Scene references | `unity_component_set_reference` | `component/set-reference` | Assign one or more ObjectReference properties with `execution.mode` and shared target defaults. |
-| Serialization | `unity_serialized_object_get` | `serialized-object/get` | Read serialized properties from a scene object, component, or asset. |
-| Serialization | `unity_serialized_object_set` | `serialized-object/set` | Set one serialized property on a scene object, component, or asset. |
-| Materials | `unity_material_properties_get` | `material/properties/get` | Read typed, paginated shader properties, textures, keywords, and render settings from a Material asset. |
-| Materials | `unity_material_properties_set` | `material/properties/set` | Atomically validate and update typed shader properties, textures, keywords, and render settings. |
-| Physics | `unity_physics_raycast` | `physics/raycast` | Raycast through either Physics or Physics2D with `dimension=3D|2D` and bounded multi-hit results. |
-| Physics | `unity_physics_overlap_sphere` | `physics/overlap-sphere` | Run a 3D sphere or 2D circle overlap through one route contract. |
-| Physics | `unity_physics_overlap_box` | `physics/overlap-box` | Run a 3D or 2D box overlap through one route contract. |
-| Console inspection | `unity_console_query` | `console/query` | Filter recent console entries by time, log type, message, source stack frame, full stack text, or only entries after the last Play transition. |
-| Compilation inspection | `unity_compilation_errors` | `compilation/errors` | Return tracked Unity compilation errors and warnings, always including a separate deprecated-warning summary even when filtering for errors. |
-| Animator editing | `unity_animation_transition_info` | `animation/transition-info` | Read full Animator transition details, including conditions, exit time, duration, offset, and interruption settings. |
-| Animator editing | `unity_animation_update_state` | `animation/update-state` | Modify an existing Animator state, including motion, speed, tag, position, write defaults, and default state. |
-| Animator editing | `unity_animation_update_transition` | `animation/update-transition` | Modify an existing transition and add, update, remove, or replace transition conditions. |
-| Animator editing | `unity_animation_connect_states` | `animation/connect-states` | Create directed pairwise transitions between a list of Animator states. |
-| UI Toolkit assets | `unity_uitoolkit_asset_inspect` | `uitoolkit/asset-inspect` | Inspect UXML/USS assets for VisualElement names, type matches, unconditional class defaults, contextual selectors, and pseudo-state rules. |
-| UI Toolkit static audit | `unity_uitoolkit_audit_uss_styles` | `uitoolkit/audit-uss-styles` | Find selectors that serve one authored element without a reusable, pseudo-state, generated-child, or runtime-class contract, plus declarations that repeat the same winning value from the loaded PanelSettings theme or another loaded stylesheet. |
-| UI Toolkit static audit | `unity_uitoolkit_audit_uxml_layout` | `uitoolkit/audit-uxml-layout` | Find authored `tooltip` attributes, unconsumed authored element names, fully fixed flex partitions that should leave one flexible remainder, fixed cross-axis content wrappers inside single-axis ScrollViews, layout-only manually centered containers, removable single-child centering wrappers, visually inert centered-label stretching or growth, repeated inline layout variants, and inline declarations already supplied by a loaded USS default, including implicit UI Toolkit classes. |
-| UI Toolkit runtime | `unity_uitoolkit_runtime_documents` | `uitoolkit/runtime-documents` | List runtime UIDocuments and their root visual element metadata. |
-| UI Toolkit runtime | `unity_uitoolkit_runtime_tree` | `uitoolkit/runtime-tree` | Read a UIDocument visual tree, including optional style and bounds data. |
-| UI Toolkit runtime | `unity_uitoolkit_runtime_query` | `uitoolkit/runtime-query` | Query runtime VisualElements by tree path, VisualElementPath name list, name, class, type, or text. |
-| UI Toolkit runtime | `unity_uitoolkit_runtime_style` | `uitoolkit/runtime-style` | Read inline style, resolved style, bounds, and background asset metadata for a runtime element. |
-| UI Toolkit runtime | `unity_uitoolkit_runtime_repaint` | `uitoolkit/runtime-repaint` | Repaint a runtime UIDocument or one selected VisualElement. |
-| UI Toolkit runtime | `unity_uitoolkit_refresh` | `uitoolkit/refresh` | Refresh UI Toolkit assets, repaint panels, and return after stable editor frames. |
-| UI Toolkit runtime | `unity_uitoolkit_assert_layout` | `uitoolkit/assert-layout` | Assert runtime layout constraints such as no-gap/no-overlap edge touching, edge alignment, center alignment, containment, and expected size. |
-| UI Toolkit visual QA | `unity_uitoolkit_locate_element` | `uitoolkit/locate-element` | Locate an Editor or runtime UI Toolkit element and return bounds, crop rect, and context for later screenshots or pixel checks. |
-| UI Toolkit visual QA | `unity_uitoolkit_capture_element` | `uitoolkit/capture-element` | Capture a UI Toolkit element by locating it in an Editor window or runtime UIDocument and cropping its containing window screenshot. |
-| UI Toolkit visual QA | `unity_uitoolkit_compare_element` | `uitoolkit/compare-element` | Capture a UI Toolkit element and compare the crop with a reference image, optionally writing a diff image. |
-| UI Toolkit visual QA | `unity_uitoolkit_generated_children` | `uitoolkit/generated-children` | Inspect generated UI Toolkit children such as arrows, checkmarks, scrollers, TabView internals, and unnamed `unity-*` subparts. |
-| UI Toolkit visual QA | `unity_uitoolkit_resource_audit` | `uitoolkit/resource-audit` | Audit target elements and descendants for resolved background assets, highlighted-state misuse, and missing or forbidden assets. |
-| UI Builder | `unity_uitoolkit_builder_preview` | `uitoolkit/builder-preview` | Open a UXML asset, enable Match Game View when visible content overflows the canvas, wait for a stable preview, and optionally capture the UI Builder window. |
-| Screenshot utilities | `unity_screenshot_crop` | `screenshot/crop` | Crop a screenshot or image file to a PNG for focused visual inspection. |
-| Screenshot utilities | `unity_screenshot_scene` | `screenshot/scene` | Capture the Scene View once and return a file, base64 PNG, or both. |
-| Graphics utilities | `unity_graphics_asset_preview` | `graphics/asset-preview` | Render Unity's preview for a prefab or other supported asset as a base64 PNG. |
-| Graphics utilities | `unity_graphics_image_alpha_bounds` | `graphics/image-alpha-bounds` | Inspect a PNG or texture asset and return visible alpha pixel bounds plus transparent margins. |
-| Graphics utilities | `unity_graphics_rect_gap` | `graphics/rect-gap` | Measure a gap or overlap between two rectangles along selected edges. |
-| Graphics utilities | `unity_graphics_annotate_rects` | `graphics/annotate-rects` | Draw rectangle borders onto screenshots or images for visual verification reports. |
-| Graphics utilities | `unity_graphics_compare_images` | `graphics/compare-images` | Compare two screenshots or crop regions, return difference bounds and samples, and optionally write a highlighted diff image. |
-| Sprite pipeline | `unity_sprite_sheet_info` | `sprite/sheet-info` | Inspect a sliced sprite sheet and return texture and sprite metadata. |
-| Sprite pipeline | `unity_sprite_replace_and_slice` | `sprite/replace-and-slice` | Replace a sprite sheet PNG and slice it into numbered sprites while preserving sprite IDs by name. |
-| Sprite pipeline | `unity_sprite_slice_sheet` | `sprite/slice-sheet` | Slice an existing sprite sheet into numbered sprites. |
-| Sprite pipeline | `unity_sprite_update_animation_clip` | `sprite/update-animation-clip` | Rebuild a SpriteRenderer sprite animation curve from a sheet's sprites. |
-| Sprite pipeline | `unity_sprite_replace_slice_update_clip` | `sprite/replace-slice-update-clip` | Replace a sheet, slice it, and update an AnimationClip in one call. |
-| Texture pipeline | `unity_texture_apply_sprite_preset` | `texture/apply-sprite-preset` | Apply high-level TextureImporter/Sprite settings, including pixel sprite preset, PPU, pivot, border, and reference settings. |
-| Texture pipeline | `unity_texture_info` | `texture/info` | Inspect texture dimensions and TextureImporter settings, including sprite PPU, pivot, and border. |
-| Texture pipeline | `unity_texture_set_import` | `texture/set-import` | Configure TextureImporter type and settings, including Sprite and NormalMap, then reimport once. |
-| Texture pipeline | `unity_texture_find_duplicates` | `texture/find-duplicates` | Audit project image assets for identical decoded pixels or file bytes across one or more folders. |
-| Texture pipeline | `unity_texture_import_image` | `texture/import-image` | Import an image from a URL or local file into Assets, dedupe by hash, and apply sprite import settings. |
-| Texture pipeline | `unity_texture_check_ui_import_settings` | `texture/check-ui-import-settings` | Check UI pixel-art image import settings, including pixel sprite defaults plus optional expected dimensions, border, and max texture size. |
-| Player Build | `unity_build_start` | `build/start` | Start a persistent Player Build job and optionally run the built player. |
-| Player Build | `unity_build_get_job` | `build/get-job` | Poll the Player Build job for its final BuildReport and optional run result. |
-| Build Profiles (Unity 6) | `unity_build_profile` | `build/profile` | Inspect paginated Build Profiles or transact active profile, scenes, defines, and supported profile properties. |
-| VFX Graph (optional) | `unity_vfxgraph_info` | `vfxgraph/info` | Inspect bounded VFX systems, exposed properties, slots, and connections; raw serialized data is opt-in. |
-| VFX Graph (optional) | `unity_vfxgraph_transaction` | `vfxgraph/transaction` | Preflight and apply serialized VFX Graph object edits through stable asset-graph selectors. |
-| Audio Mixer | `unity_audio_mixer_info` | `audio-mixer/info` | Inspect bounded Mixer groups, snapshots, effects, parameters, and exposed parameters. |
-| Audio Mixer | `unity_audio_mixer_transaction` | `audio-mixer/transaction` | Preflight and edit Mixer groups, snapshots, effects, routing, values, and exposed parameters. |
-| Addressables (optional) | `unity_addressables_info` | `addressables/info` | Inspect paginated groups, entries, labels, schemas, and current settings. |
-| Addressables (optional) | `unity_addressables_transaction` | `addressables/transaction` | Preflight and apply ordered group, entry, address, and label operations. |
-| Addressables (optional) | `unity_addressables_build` | `addressables/build` | Start a persistent Addressables content build job. |
-| Timeline (optional) | `unity_timeline_info` | `timeline/info` | Inspect bounded tracks, clips, markers, bindings, and exposed references; raw serialization is opt-in. |
-| Timeline (optional) | `unity_timeline_transaction` | `timeline/transaction` | Preflight and apply Timeline asset-graph edits with optional bounded post-state. |
-| Cinemachine (optional) | `unity_cinemachine_info` | `cinemachine/info` | List paginated Cinemachine cameras and semantic target/lens/component state across loaded scenes. |
-| Cinemachine (optional) | `unity_cinemachine_transaction` | `cinemachine/transaction` | Preflight and edit enabled state, priority, targets, lens values, and component properties. |
-| Package management | `unity_packages_update_git` | `packages/update-git` | Update a Git package through a deferred route; same-commit updates skip Unity Package Manager resolve by default. |
-| Package management | `unity_packages_add` | `packages/add` | Add a registry, Git, local, or tarball package through Unity Package Manager. |
-| Package management | `unity_packages_remove` | `packages/remove` | Remove an installed package without blocking the Editor main thread. |
-| Package management | `unity_packages_search` | `packages/search` | Search the package registry with bounded pagination. |
-| Asset workspace | `unity_asset_create_folder` | `asset/create-folder` | Ensure an Assets folder hierarchy, with dry-run support. |
-| Asset workspace | `unity_asset_copy` | `asset/copy` | Copy one or more Unity assets with overwrite snapshots and rollback. |
-| Asset workspace | `unity_asset_dependencies` | `asset/dependencies` | Read paginated incoming and outgoing asset references. |
-| Asset workspace | `unity_asset_transaction` | `asset/transaction` | Apply folder, copy, move, delete, and serialized edits as a rollback-capable transaction. |
-| UI Toolkit authoring | `unity_uitoolkit_edit_uxml` | `uitoolkit/edit-uxml` | Edit UXML elements, attributes, classes, hierarchy, and text structurally. |
-| UI Toolkit authoring | `unity_uitoolkit_edit_uss` | `uitoolkit/edit-uss` | Upsert/remove USS selectors and declarations structurally. |
-| UI Toolkit authoring | `unity_uitoolkit_authoring_transaction` | `uitoolkit/authoring-transaction` | Apply multi-file UXML/USS edits with rollback. |
-| Jobs | `unity_jobs_list` | `jobs/list` | List paginated job history owned by the calling agent. |
-| Jobs | `unity_jobs_get` | `jobs/get` | Read one owned historical job snapshot. |
-| Jobs | `unity_jobs_cancel` | `jobs/cancel` | Request cancellation of an owned Player Build, Unity test, package-test, Memory Profiler snapshot, or Addressables build job. |
-| Project extensions | `unity_project_tools_list` | `project-tools/list` | List compact project-tool names, descriptions, and behavior flags without parameter schemas. |
-| Project extensions | `unity_project_tools_get` | `project-tools/get` | Get the complete descriptor and input schema for one project tool. |
-| Project extensions | `unity_project_tools_execute` | `project-tools/execute` | Execute a project tool by `toolName` after inspecting its schema. |
+| Area | Contract |
+|---|---|
+| Discovery | `_meta/capabilities` reports package/version-gated integrations. `_meta/tools` provides the compact route catalog for server synchronization. |
+| Common tools | The companion server exposes a bounded, release-managed set of concrete `unity_*` tools with route-owned schemas. |
+| Specialized routes | Lower-frequency routes remain available through lazy metadata or `unity_advanced_execute`. |
+| Project extensions | `unity_project_tools_list`, `unity_project_tools_get`, and `unity_project_tools_execute` discover and execute project/package-defined tools without leaking one project's catalog into another project. |
+| Multi-instance safety | Instance discovery, explicit port selection, expected-project binding, and per-agent queue ownership prevent cross-project mutation. |
+| Long work | Builds, tests, refreshes, package tests, snapshots, and Addressables builds use persistent jobs or tickets; owned cancel routes are cooperative. |
+| Optional packages | Localization, Shader Graph, VFX Graph, Addressables, Timeline, Cinemachine, and Build Profiles publish only when their capability is available. |
 
-## Project Extensions
+Major route families include:
 
-Project-specific batch tools can live in the Unity project instead of this package. Put an Editor script in the project and mark a static method with `MCPProjectToolAttribute`:
+- scene workspaces, GameObjects, components, Prefabs, materials, importers, and
+  serialized assets;
+- UI Toolkit authoring, static audits, runtime inspection, screenshots, and
+  visual comparison;
+- Animator, Audio Mixer, VFX Graph, Shader Graph, Timeline, Cinemachine,
+  Addressables, Localization, Physics 2D/3D, terrain, lighting, and navigation;
+- Console, compilation, debugger, Profiler, testing, builds, packages, jobs,
+  queue diagnostics, and Editor execution.
+
+Use live tool metadata for exact names and schemas. Do not copy a tool list from
+this README into a client manifest.
+
+## Project extensions
+
+Project-specific workflows can live in an Editor assembly in the project or in
+another package:
 
 ```csharp
 using System.Collections.Generic;
@@ -161,109 +71,124 @@ using UnityMCP.Editor;
 
 public static class ProjectMcpTools
 {
-    [MCPProjectTool("battleidle/add-property",
-        Description = "Create and register a BattleIdle property.",
-        InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]}",
-        MutatesAssets = true,
-        FirstClass = true)]
-    public static object AddProperty(Dictionary<string, object> args)
+    [MCPProjectTool("example/add-content",
+        Description = "Create and register one example content asset.",
+        InputSchemaJson =
+            "{\"type\":\"object\",\"properties\":{" +
+            "\"id\":{\"type\":\"string\",\"description\":\"Content id.\"}" +
+            "},\"required\":[\"id\"],\"additionalProperties\":false}",
+        MutatesAssets = true)]
+    public static object AddContent(Dictionary<string, object> args)
     {
-        // Project-specific AssetDatabase / prefab / settings edits go here.
-        return new { success = true };
+        return new { id = args["id"], created = true };
     }
 }
 ```
 
-Project tools may opt into first-class concrete exposure from the Editor bridge with `FirstClass = true`, using a fully described schema:
+Declare exactly one operation kind: `ReadOnly`, `MutatesAssets`, or
+`MutatesRuntime`. Add `RequiresPlayMode`, `Dangerous`, `LongRunning`, or
+`MayReloadDomain` when applicable. Strict schemas should describe every
+property and reject unknown business arguments.
+
+The canonical client workflow is:
+
+```json
+{ "offset": 0, "limit": 100 }
+```
+
+through `project-tools/list`, then:
+
+```json
+{ "toolName": "example/add-content" }
+```
+
+through `project-tools/get`, then:
 
 ```json
 {
-  "route": "project-tools/call/battleidle/add-property",
-  "toolName": "unity_pt_battle_add_prop",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "id": {
-        "type": "string",
-        "description": "Property identifier to add."
-      }
-    },
-    "required": ["id"]
-  }
+  "toolName": "example/add-content",
+  "args": { "id": "example_item" }
 }
 ```
 
-Declare the behavior explicitly: use exactly one of `ReadOnly = true`, `MutatesAssets = true`, or `MutatesRuntime = true`. A first-class project tool must declare one of these operation kinds, a non-empty tool description, descriptions for every input property, and `items` schemas for arrays. Incomplete metadata is demoted safely to the three-stage catalog and returned with an `exposureWarning`. Tools without `FirstClass = true` stay out of the Editor bridge's first-class surface and use the same three-stage discovery contract as the rest of the project catalog. The companion Node MCP server intentionally keeps all project-defined tools behind list/get/execute so switching between open Unity projects cannot leak one project's concrete tools into another project's session.
+through `project-tools/execute`.
 
-First list compact summaries:
+`project-tools/list` intentionally omits schemas. The Node server intentionally
+keeps all project-defined tools behind this three-stage contract because a
+single MCP session can switch between open Unity projects.
 
-```json
-{
-  "offset": 0,
-  "limit": 100
-}
-```
+Project-tool packages can reuse
+`MCPSettingsManager.ResolvePrimaryResultLimit(...)` for a single primary
+collection. It preserves the shared Unity MCP user preference while keeping
+explicit values and package-specific hard caps authoritative. Domain-specific
+packages should own their own Project Settings and Preferences rather than
+adding unrelated fields to Unity MCP.
 
-Then request the selected tool's full schema:
+## Configuration
 
-```json
-{
-  "toolName": "battleidle/add-property"
-}
-```
+Default precedence is:
 
-Finally execute it:
+1. explicit tool argument;
+2. team-owned Project Settings;
+3. local Preferences;
+4. built-in default.
 
-```json
-{
-  "toolName": "battleidle/add-property",
-  "args": {
-    "id": "gold_amount"
-  }
-}
-```
+Team settings are stored in `ProjectSettings/UnityMCPSettings.json` and edited
+under **Project Settings > Unity MCP**:
 
-`project-tools/list` never returns `inputSchema`; only `project-tools/get` returns the detailed descriptor. Concrete `project-tools/call/...` routes are reserved for tools that explicitly opt into first-class exposure; `project-tools/get` plus `project-tools/execute` is the canonical workflow for the remaining project catalog.
+- project context;
+- additional namespaces for `editor/execute-code`;
+- default Physics query dimension;
+- screenshot output directory.
 
-## Notes
+Operator settings are edited under **Preferences > Unity MCP**:
 
-- Use the upstream README for the general feature list and MCP setup flow.
-- `_meta/tools` defaults to compact first-class metadata, 50 tools per page, and no schemas. Use `includeSchema=true`, `offset`, `limit`, and optional `category` as needed; request `includeMetadataIssues=true` only when auditing catalog metadata.
-- `_meta/capabilities` declares VFX Graph, Localization, Shader Graph, Addressables, Timeline, Cinemachine, and Unity 6 Build Profiles independently, including package names and detected versions. Package-specific routes publish lazily only while their capability is available.
-- Graph and integration info routes use semantic result limits and truncation metadata. VFX Graph, Timeline, and Audio Mixer raw serialized output is omitted unless explicitly requested.
-- Transaction routes preflight their complete ordered operation list before mutation and support `dryRun` where applicable. Unknown fields and ambiguous name/type selectors are rejected instead of being guessed.
-- `jobs/cancel` is workflow-aware and cooperative: queued work is canceled before it starts where possible; running APIs are canceled only when Unity exposes a safe cancellation mechanism. Poll the owning job route for the terminal result.
-- `scene/open` retains its compact single-scene compatibility contract. Use `scene/workspace` for additive loading, close, active-scene switching, or explicit save/discard policies.
-- Importer tools expose stable semantic fields rather than `SerializedObject` internals. Physics queries select 2D or 3D through `dimension` and cap returned hits with `maxResults`.
-- Team-owned MCP defaults live in `ProjectSettings/UnityMCPSettings.json` and are edited under **Project Settings > Unity MCP**. They cover project context, Execute Code namespaces, the default Physics query dimension, and the screenshot directory. Explicit tool arguments always win.
-- Machine/operator choices live under **Preferences > Unity MCP**: bridge startup and ports, the automatic port range, MPPM startup, optional primary-result-limit override, Prefab YAML diff detail, Action/Job history sizes, and locally enabled tool categories.
-- Configure namespaces used by every `editor/execute-code` call under **Project Settings > Unity MCP > Execute Code**. Keep one namespace per line; the `usings` request field remains available for one-off imports. Existing EditorPrefs values migrate when the project file is first written.
-- Successful wire responses omit the redundant inner `success=true`. Project-tool success envelopes are unwrapped, exact collection counts and completed-pagination aliases are omitted, and false truncation flags are absent. A partial page keeps only its collection, total, and `nextOffset`.
-- Wire-only Unity values use compact scalar forms such as `position: "(1,2)"`, `rect: "(1,2)-(4,5),size:(3,3)"`, `bounds: "(0,0,0)-(2,4,6),size:(2,4,6)"`, `color: "rgba(1,0.5,0,1)"`, and `margin: "LTRB(1,2,3,4)"`. Equivalent dictionary shapes, execute-code values, complete reflected `Rect` aliases, and dimension pairs inside larger results are compacted centrally; internally queued command data remains structured.
-- Normal command replies do not repeat instance identity. Use the instance routes when project/port details are needed; wrong-project errors still keep the actual path, name, and port.
-- Error payloads keep `success=false`, `error`, `errorCode`, and `retryable`; an identical `message` alias is omitted.
-- Compilation diagnostics return `isCompiling`, `counts.errors`, `counts.warnings`, `entries`, and the independently surfaced `deprecatedWarnings`. Totals appear only when an entry list was actually truncated.
-- Queue tickets keep atomic status snapshots through Unity domain reloads. Queued work and interrupted reads resume with the same ticket; transport wait timeouts never overwrite the persisted business state. `prefab-asset/add-component` also persists its pre-refresh/mutation phase and reconciles the prefab before resuming. Other interrupted mutations return `UncertainAfterReload` and require target reconciliation before a new request. Stable idempotency keys prevent retry submissions from duplicating work.
-- For multiple Unity projects open at once, select or resolve the target instance before mutation. The MCP server forwards its path/name automatically, and the Editor rejects unbound mutations with `target_project_required` or mismatches with `wrong_unity_project`.
-- Project binding fields such as `expectedProjectPath` and `expectedProjectName` are transport metadata. The bridge validates them before dispatch and does not forward them into a project tool's strict business-argument schema.
-- `unity_wait_editor_idle` waits for both consecutive idle editor frames and a continuous idle time window (`stableMs`, default `500`) to avoid returning before a delayed compile or asset import starts. Its timeout measures active Editor time and pauses while the AppDomain is reloading.
-- Planned domain reloads keep the instance registry entry with `isReloading=true`; a successful bridge restart replaces it with a ready entry, while a real server stop or Editor quit still unregisters immediately.
-- `mcp/health` is intended for diagnosing editor slowdown caused by MCP usage. It reports the effective configuration but omits recent action details unless `includeRecentActions=true`; use `mcp/set-autostart` to prevent the bridge from coming back automatically after reload.
-- `texture/import-image` is the preferred route for Figma/exported UI images: pass `sourceUrl` or `sourcePath`, `targetPath` or `targetFolder` + `assetName`, then use `preset=pixel-sprite` and `border` when needed.
-- For UI visual QA, use `uitoolkit/locate-element` first to confirm the measured semantic target, then `uitoolkit/capture-element` or `uitoolkit/compare-element` for local crops. Use `uitoolkit/generated-children` when controls such as `TabView`, `DropdownField`, `Scroller`, or `ToggleButtonGroup` may be drawing default child indicators.
-- The UI Toolkit static audits are explicit read-only tools in every project. Automatic import and filesystem-write warnings are opt-in through `ProjectSettings/UnityMCPUIToolkitAudit.json`, so installing the package does not impose an authoring policy on unrelated projects. The configuration accepts `automaticAudit.ussSingleUseStyles`, `automaticAudit.uxmlLayoutContracts`, the default-on `rules.uxmlTooltipAttributes`, the optional `pixelGrid.enabled` and positive `pixelGrid.step`, `assetRoots`, `runtimeSourceRoots`, and `excludePaths`. The tooltip rule is also available under **Project Settings > Unity MCP > UI Toolkit Audit**. Pixel-grid auditing is off unless a project enables it, and checks structural offsets, margin/gap spacing, and padding in both USS declarations and UXML inline styles. The UXML audit reports every authored `tooltip` attribute while that rule is enabled. The USS audit also reports advanced text generation without auto sizing, ineffective text alignment on shrink-wrapped Labels centered by a sole-child parent, and inheritable text styles unnecessarily owned by those child Labels. Reasoned local exceptions use `/* uss-audit: allow-single-use <reason> */`, `/* uss-audit: allow-redundant-declaration <reason> */`, `/* uss-audit: allow-off-grid-pixels <reason> */`, `/* uss-audit: allow-text-style-contract <reason> */`, `<!-- uxml-layout-audit: allow-manual-center <reason> -->`, `<!-- uxml-layout-audit: allow-repeated-inline <reason> -->`, `<!-- uxml-layout-audit: allow-redundant-inline <reason> -->`, `<!-- uxml-layout-audit: allow-inert-text-stretch <reason> -->`, `<!-- uxml-layout-audit: allow-inert-text-grow <reason> -->`, `<!-- uxml-layout-audit: allow-single-child-centering-wrapper <reason> -->`, `<!-- uxml-layout-audit: allow-fixed-scroll-cross-axis-size <reason> -->`, `<!-- uxml-layout-audit: allow-unconsumed-element-name <reason> -->`, `<!-- uxml-layout-audit: allow-fixed-flex-partition <reason> -->`, `<!-- uxml-layout-audit: allow-off-grid-pixels <reason> -->`, and `<!-- uxml-layout-audit: allow-tooltip <reason> -->`.
-- Prefab asset mutation tools omit `prefabFileDiff` by default to keep replies compact. Pass `includePrefabFileDiff=true`, or enable the personal default under **Preferences > Unity MCP > Tool Responses**, and request `prefabFileDiffMode=minimal/full` when line details are required. Use `unity_prefab_asset_transaction_edit` for multi-step edits.
-- The complete configuration ownership and 405-route audit is in [Documentation~/configuration.md](Documentation~/configuration.md). A regression-tested route-manifest fingerprint forces this audit to be revisited when tools are added or renamed.
-- Prefab saves retry transient Windows file locks, including Win32 error 1224. YAML normalization and diff capture are auxiliary; `prefab-asset/set-property` reports persistence only after Unity serialized readback confirms the requested value.
-- `uitoolkit/builder-preview` opens and screenshots UI Builder. Its GPU-composited viewport is captured from the temporarily raised on-screen window because Win32 `PrintWindow` only returns the shell. Unity does not expose a stable public UI Builder zoom API, so the route records requested zoom values but does not use reflection to force the viewport zoom.
-- Runtime `uitoolkit/capture-element` crops from the Game View render texture, keeping UI panel coordinates aligned with pixels and avoiding black GPU surfaces in Editor-window captures.
-- `build/start` returns a job ID before `BuildPipeline.BuildPlayer` begins. Poll `build/get-job`; the terminal result contains the authoritative BuildReport, so do not force an AssetDatabase refresh after a successful build. Keep `overwrite=true` for repeat tests so output folders do not accumulate.
-- `asset/refresh` likewise returns a job ID. Poll `asset/get-refresh-job`; if scripts trigger a domain reload, the persisted workflow resumes after the Editor becomes idle instead of losing the active MCP response.
-- `unity_packages_update_git` defaults to `skipIfResolved=true`. When the requested ref is a commit hash already recorded in `packages-lock.json`, the tool returns `skipped=true` without asking Unity Package Manager to resolve again. Pass `force=true` to force a resolve.
-- This fork intentionally keeps the package smaller by removing local documentation images.
-- The package is still the Unity Editor side only. You need an MCP server/client setup to call the tools from an assistant.
-- Package updates can take time if Unity needs to fetch from GitHub. Pinning commits keeps project state reproducible.
+- bridge startup and manual/automatic ports;
+- MPPM startup;
+- optional primary-result-limit override;
+- optional Prefab YAML diff detail;
+- Action and Job history sizes;
+- locally enabled tool categories.
 
-## License
+Safety caps, paths/selectors, mutation operations, overwrite/save/discard
+choices, build/test targets, raw diagnostic expansion, and destructive
+confirmation remain explicit or invariant.
 
-This fork follows the upstream license. See [LICENSE](LICENSE).
+The full ownership matrix and authoritative built-in route audit are in
+[Documentation~/configuration.md](Documentation~/configuration.md).
+
+## Response and safety conventions
+
+- Successful responses omit redundant `success=true`; errors keep a stable
+  error code and retryability.
+- Completed pagination aliases and exact duplicate counts are removed on the
+  wire. A sole empty primary collection is preserved so a zero-match result
+  cannot disappear from a completed ticket.
+- Prefab mutations return semantic results without YAML diffs initially.
+  Request `includePrefabFileDiff=true` or enable the personal preference when
+  line detail is needed.
+- Potentially large raw graph, stack, serialized, and metadata diagnostics are
+  opt-in.
+- Mutating requests validate the expected project before dispatch. Stable
+  idempotency keys and persistent queue snapshots protect reload-sensitive
+  workflows.
+- Use `unity_wait_editor_idle` after compilation, package changes, refreshes, or
+  domain reloads before issuing dependent work.
+
+## Development and validation
+
+The package contains EditMode regression tests for route authority, metadata,
+schemas, configuration precedence, queue/reload behavior, response compaction,
+and tool families. Use the persistent `testing/run-package-tests` workflow when
+testing a Git package inside a consumer project.
+
+When tool metadata changes, synchronize and test the companion Node server,
+then reconnect the MCP client before judging its cached concrete tool list.
+
+## License and related projects
+
+- [VM Unity MCP server](https://github.com/VM233/unity-mcp-server)
+- [Original Unity MCP Plugin](https://github.com/AnkleBreaker-Studio/unity-mcp-plugin)
+- [Original Unity MCP Server](https://github.com/AnkleBreaker-Studio/unity-mcp-server)
+
+See [LICENSE](LICENSE) for the complete terms and attribution.

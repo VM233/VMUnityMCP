@@ -2,6 +2,17 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.3.1] - 2026-07-30
+
+- Add a public primary-result resolver so project-tool packages can reuse the
+  shared Unity MCP preference without duplicating precedence or bypassing their
+  own hard caps.
+- Preserve a sole empty primary collection during wire compaction so zero-match
+  project-tool and list results remain visible inside completed queue tickets.
+- Replace the drift-prone hand-maintained README tool table with the live
+  capability/discovery contract and document package-owned project-tool
+  configuration boundaries.
+
 ## [5.3.0] - 2026-07-30
 
 - Replace pseudo-project EditorPrefs with versionable `ProjectSettings/UnityMCPSettings.json` for project context, Execute Code namespaces, Physics query dimension, and screenshot output, with non-destructive migration on first write.

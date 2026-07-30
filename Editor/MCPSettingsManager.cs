@@ -150,6 +150,42 @@ namespace UnityMCP.Editor
                 Math.Max(1, Math.Min(500, value)));
         }
 
+        /// <summary>
+        /// Resolve one primary result-collection budget for a project-tool package.
+        /// An explicit argument wins; otherwise the shared user override is used
+        /// when enabled, followed by the caller's built-in default. The supplied
+        /// hard bounds remain package invariants.
+        /// </summary>
+        public static int ResolvePrimaryResultLimit(
+            IDictionary<string, object> args,
+            string argumentName,
+            int builtInDefault,
+            int minimum,
+            int maximum)
+        {
+            if (string.IsNullOrWhiteSpace(argumentName))
+                throw new ArgumentException("argumentName is required.", nameof(argumentName));
+            if (minimum > maximum)
+                throw new ArgumentOutOfRangeException(nameof(minimum),
+                    "minimum cannot be greater than maximum.");
+
+            int value;
+            if (args != null &&
+                args.TryGetValue(argumentName, out object explicitValue) &&
+                explicitValue != null)
+            {
+                value = Convert.ToInt32(explicitValue);
+            }
+            else
+            {
+                value = OverrideDefaultResultLimit
+                    ? DefaultResultLimit
+                    : builtInDefault;
+            }
+
+            return Math.Max(minimum, Math.Min(maximum, value));
+        }
+
         public static bool IncludePrefabFileDiffByDefault
         {
             get => EditorPrefs.GetBool(

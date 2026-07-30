@@ -197,6 +197,9 @@ namespace UnityMCP.Editor
             foreach (KeyValuePair<string, object> pair in source)
                 compacted[pair.Key] = CompactValue(
                     pair.Value, isQueueTicketEnvelope && pair.Key == "result");
+            string emptyPrimaryCollectionKey = isRoot
+                ? FindUniqueEmptyCollectionKeyMatchingCount(compacted, "count")
+                : null;
 
             MCPCompactValueFormatter.CompactMembers(compacted);
             RemoveDuplicateSummaryValues(compacted);
@@ -219,7 +222,7 @@ namespace UnityMCP.Editor
                     compacted.Remove("stateConfirmed");
             }
 
-            RemoveEmptyContainers(compacted);
+            RemoveEmptyContainers(compacted, isRoot, emptyPrimaryCollectionKey);
             return compacted;
         }
 
@@ -583,11 +586,15 @@ namespace UnityMCP.Editor
                 dictionary.Remove(key);
         }
 
-        private static void RemoveEmptyContainers(Dictionary<string, object> dictionary)
+        private static void RemoveEmptyContainers(Dictionary<string, object> dictionary,
+            bool preserveRootResult, string emptyPrimaryCollectionKey)
         {
             var removableKeys = new List<string>();
             foreach (KeyValuePair<string, object> pair in dictionary)
             {
+                if (pair.Key == emptyPrimaryCollectionKey)
+                    continue;
+
                 if (pair.Value is IList list && list.Count == 0)
                 {
                     removableKeys.Add(pair.Key);
@@ -598,8 +605,39 @@ namespace UnityMCP.Editor
                     removableKeys.Add(pair.Key);
             }
 
+            if (preserveRootResult &&
+                removableKeys.Count == 1 &&
+                dictionary.Count == 1)
+            {
+                // An empty primary collection is still the semantic result of a
+                // search/list call. Keep one collection so a completed queue
+                // ticket cannot collapse into metadata with no result at all.
+                removableKeys.RemoveAt(0);
+            }
+
             foreach (string key in removableKeys)
                 dictionary.Remove(key);
+        }
+
+        private static string FindUniqueEmptyCollectionKeyMatchingCount(
+            Dictionary<string, object> dictionary, string countKey)
+        {
+            if (!dictionary.TryGetValue(countKey, out object countValue) ||
+                !TryGetInteger(countValue, out long count) ||
+                count != 0)
+                return null;
+
+            string match = null;
+            foreach (KeyValuePair<string, object> pair in dictionary)
+            {
+                if (!(pair.Value is IList list) || list.Count != 0)
+                    continue;
+                if (match != null)
+                    return null;
+                match = pair.Key;
+            }
+
+            return match;
         }
 
         private static void RemoveMatchingCount(
