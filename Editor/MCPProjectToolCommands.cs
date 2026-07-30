@@ -611,7 +611,7 @@ namespace UnityMCP.Editor
                     : cleanupMatches.Count == 0
                         ? $"Cleanup tool '{descriptor.CleanupToolName}' was not found."
                         : $"Cleanup tool '{descriptor.CleanupToolName}' is registered more than once.";
-                descriptor.ValidationError = CombineValidationErrors(
+                descriptor.ValidationError = ProjectToolDescriptor.CombineValidationErrors(
                     descriptor.ValidationError, cleanupError);
             }
 
@@ -1595,7 +1595,7 @@ namespace UnityMCP.Editor
                 return left.Equals(right);
             }
 
-            private static string CombineValidationErrors(string first, string second)
+            internal static string CombineValidationErrors(string first, string second)
             {
                 if (string.IsNullOrEmpty(first))
                     return second;

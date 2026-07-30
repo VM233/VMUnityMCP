@@ -3244,6 +3244,18 @@ namespace UnityMCP.Editor
             });
         }
 
+        private static KeyValuePair<string, object> EnumProp(string name,
+            string description, params string[] values)
+        {
+            return new KeyValuePair<string, object>(name,
+                new Dictionary<string, object>
+                {
+                    { "type", "string" },
+                    { "description", description },
+                    { "enum", values.Cast<object>().ToList() },
+                });
+        }
+
         private static KeyValuePair<string, object> ArrayProp(
             string name,
             string itemType,
