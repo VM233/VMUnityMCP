@@ -7478,7 +7478,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void TransportCompaction_PreservesEmptyPrimaryCollectionInsideCompletedTicket()
+        public void TransportCompaction_PreservesCompleteProjectToolSchemaInsideCompletedTicket()
         {
             var source = new Dictionary<string, object>
             {
@@ -7506,8 +7506,15 @@ namespace UnityMCP.Editor.Tests
             var ticket = RequireDictionary(MCPResponse.CompactForTransport(source));
             var result = RequireDictionary(ticket["result"]);
 
-            Assert.That(result.Keys, Is.EquivalentTo(new[] { "gamePrefabs" }));
+            Assert.That(result.Keys, Is.EquivalentTo(new[]
+            {
+                "gamePrefabs", "count", "offset", "limit", "total",
+            }));
             Assert.That((IList)result["gamePrefabs"], Is.Empty);
+            Assert.That(result["count"], Is.EqualTo(0));
+            Assert.That(result["offset"], Is.EqualTo(0));
+            Assert.That(result["limit"], Is.EqualTo(100));
+            Assert.That(result["total"], Is.EqualTo(0));
         }
 
         [Test]
