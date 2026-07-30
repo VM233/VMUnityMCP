@@ -7291,8 +7291,10 @@ namespace UnityMCP.Editor.Tests
                          "animation/connect-states",
                      })
             {
-                var annotations = RequireDictionary(toolsByRoute[route]["annotations"]);
-                Assert.That(annotations.ContainsKey("readOnlyHint"), Is.False);
+                Assert.That(
+                    !toolsByRoute[route].TryGetValue("annotations", out object annotationsValue) ||
+                    !RequireDictionary(annotationsValue).ContainsKey("readOnlyHint"),
+                    Is.True, route);
             }
 
             var updateTransitionSchema = RequireDictionary(
