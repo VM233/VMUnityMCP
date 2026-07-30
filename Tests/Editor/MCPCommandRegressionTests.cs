@@ -7518,6 +7518,39 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void BridgeResponsePreparation_TransformsProjectToolSchemaExactlyOnce()
+        {
+            var source = new Dictionary<string, object>
+            {
+                { "ticketId", 44L },
+                { "actionName", "project-tools/execute" },
+                { "status", "Completed" },
+                {
+                    "result",
+                    MCPResponse.Success(
+                        new Dictionary<string, object>
+                        {
+                            { "items", new List<object>() },
+                            { "count", 0 },
+                        },
+                        new Dictionary<string, object>
+                        {
+                            { "toolName", "fixture/schema-shape" },
+                        })
+                },
+            };
+
+            var ticket = RequireDictionary(
+                MCPBridgeServer.PrepareJsonResponseForTransport(200, source));
+            var result = RequireDictionary(ticket["result"]);
+
+            Assert.That(result.Keys,
+                Is.EquivalentTo(new[] { "items", "count" }));
+            Assert.That((IList)result["items"], Is.Empty);
+            Assert.That(result["count"], Is.EqualTo(0));
+        }
+
+        [Test]
         public void TransportCompaction_DoesNotTreatOrdinaryNestedResultsAsResponseRoots()
         {
             var compacted = RequireDictionary(MCPResponse.CompactForTransport(

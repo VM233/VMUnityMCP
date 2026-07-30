@@ -1861,10 +1861,7 @@ namespace UnityMCP.Editor
         {
             response.StatusCode = statusCode;
             response.ContentType = "application/json";
-            data = MCPResponse.CompactForTransport(data);
-            if (statusCode >= 400 || MCPResponse.TryGetError(data, out _, out _, out _))
-                data = MCPResponse.NormalizeError(data, statusCode == 408 ? "timeout" : "error", statusCode == 408);
-            data = MCPResponse.CompactForTransport(data);
+            data = PrepareJsonResponseForTransport(statusCode, data);
             string json = MiniJson.Serialize(data);
             byte[] buffer = Encoding.UTF8.GetBytes(json);
 
@@ -1892,6 +1889,20 @@ namespace UnityMCP.Editor
             response.ContentLength64 = buffer.Length;
             response.OutputStream.Write(buffer, 0, buffer.Length);
             response.OutputStream.Close();
+        }
+
+        internal static object PrepareJsonResponseForTransport(int statusCode,
+            object data)
+        {
+            if (statusCode >= 400 ||
+                MCPResponse.TryGetError(data, out _, out _, out _))
+            {
+                data = MCPResponse.NormalizeError(data,
+                    statusCode == 408 ? "timeout" : "error",
+                    statusCode == 408);
+            }
+
+            return MCPResponse.CompactForTransport(data);
         }
 
         internal static object ExecutePersistedRoute(string path, string method, string body)

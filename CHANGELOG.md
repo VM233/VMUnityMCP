@@ -27,6 +27,9 @@ All notable changes to this package will be documented in this file.
   transport, including required empty collections, counts, and flags, so the
   public `structuredContent` continues to satisfy its advertised
   `outputSchema`.
+- Normalize and compact each HTTP response exactly once; repeated compaction
+  could otherwise erase a project tool's preserved schema shape after its
+  internal envelope had already been removed.
 
 ## [5.3.5] - 2026-07-30
 
