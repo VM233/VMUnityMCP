@@ -400,19 +400,17 @@ namespace UnityMCP.Editor
             int nextOffset = offset + page.Count;
             var result = new Dictionary<string, object>
             {
-                { "schemaVersion", 4 },
-                { "compact", compact },
-                { "firstClassOnly", firstClassOnly },
-                { "includeSchema", includeSchema },
-                { "offset", offset },
-                { "limit", limit },
-                { "returnedTools", page.Count },
-                { "totalTools", tools.Count },
-                { "hasMore", nextOffset < tools.Count },
-                { "nextOffset", nextOffset < tools.Count ? (object)nextOffset : null },
+                { "schemaVersion", MCPContractMetadata.ToolMetadataSchemaVersion },
             };
             if (!string.IsNullOrEmpty(category))
                 result["category"] = category;
+            if (offset > 0)
+                result["offset"] = offset;
+            if (nextOffset < tools.Count)
+            {
+                result["nextOffset"] = nextOffset;
+                result["totalTools"] = tools.Count;
+            }
 
             if (compact)
             {
@@ -435,10 +433,18 @@ namespace UnityMCP.Editor
                 { "route", tool["route"] },
                 { "toolName", tool["toolName"] },
                 { "description", tool["description"] },
-                { "annotations", tool["annotations"] },
-                { "firstClass", IsFirstClassTool(tool) },
-                { "exposure", tool["exposure"] }
             };
+            if (tool.TryGetValue("tags", out object tags))
+                MCPContractMetadata.SetTags(descriptor, tags as IEnumerable<string>);
+            if (tool.TryGetValue("sideEffects", out object sideEffects))
+                MCPContractMetadata.AddOptionalList(descriptor, "sideEffects", sideEffects as System.Collections.IEnumerable);
+            if (tool.ContainsKey("projectToolName") &&
+                tool.TryGetValue("errorCodes", out object errorCodes))
+                MCPContractMetadata.AddOptionalList(descriptor, "errorCodes", errorCodes as System.Collections.IEnumerable);
+            if (tool.TryGetValue("annotations", out object annotations) &&
+                annotations is IDictionary<string, object> annotationDictionary &&
+                annotationDictionary.Count > 0)
+                descriptor["annotations"] = annotations;
             if (includeSchema)
             {
                 descriptor["inputSchema"] = tool["inputSchema"];
@@ -490,8 +496,7 @@ namespace UnityMCP.Editor
 
         private static bool IsFirstClassTool(Dictionary<string, object> tool)
         {
-            return string.Equals(tool.TryGetValue("exposure", out var exposure) ? exposure?.ToString() : "",
-                "first-class", StringComparison.Ordinal);
+            return MCPContractMetadata.HasTag(tool, MCPContractMetadata.Tag.FirstClass);
         }
 
         private static List<string> GetRegisteredRouteList()
@@ -518,7 +523,8 @@ namespace UnityMCP.Editor
                 GetToolInputSchema(route), !profile.ReadOnly);
             MCPToolConfigurationPolicy.AnnotateInputSchema(route, inputSchema);
             bool isFirstClass = string.Equals(profile.Exposure, ExposureFirstClass, StringComparison.Ordinal);
-            return new Dictionary<string, object>
+            bool isFallback = string.Equals(profile.Exposure, ExposureFallback, StringComparison.Ordinal);
+            var metadata = new Dictionary<string, object>
             {
                 { "route", route },
                 { "toolName", toolName },
@@ -527,20 +533,28 @@ namespace UnityMCP.Editor
                 { "description", description },
                 { "inputSchema", inputSchema },
                 { "outputSchema", GetToolOutputSchema(route) },
-                { "firstClass", isFirstClass },
-                { "exposure", profile.Exposure },
-                { "preferred", profile.Preferred },
-                { "readOnly", profile.ReadOnly },
-                { "mutatesAssets", profile.MutatesAssets },
-                { "mutatesRuntime", profile.MutatesRuntime },
-                { "dangerous", profile.Dangerous },
-                { "longRunning", profile.LongRunning },
-                { "mayReloadDomain", profile.MayReloadDomain },
-                { "requiresPlayMode", profile.RequiresPlayMode },
-                { "annotations", profile.ToAnnotations() },
                 { "errorCodes", GetStandardErrorCodes(route) },
-                { "fallbackRoute", isFirstClass ? "" : "advanced/execute" },
             };
+            MCPContractMetadata.SetTags(metadata, MCPContractMetadata.BuildToolTags(
+                readOnly: profile.ReadOnly,
+                dangerous: profile.Dangerous,
+                longRunning: profile.LongRunning,
+                requiresPlayMode: profile.RequiresPlayMode,
+                firstClass: isFirstClass,
+                fallback: isFallback));
+            MCPContractMetadata.AddOptionalList(metadata, "sideEffects",
+                MCPContractMetadata.BuildSideEffects(
+                    null,
+                    readOnly: profile.ReadOnly,
+                    mutatesAssets: profile.MutatesAssets,
+                    mutatesRuntime: profile.MutatesRuntime,
+                    mayReloadDomain: profile.MayReloadDomain));
+            Dictionary<string, object> annotations = profile.ToAnnotations();
+            if (annotations.Count > 0)
+                metadata["annotations"] = annotations;
+            if (!isFirstClass)
+                metadata["fallbackRoute"] = "advanced/execute";
+            return metadata;
         }
 
         private static Dictionary<string, object> BuildProjectToolMetadata(string route,
@@ -562,15 +576,22 @@ namespace UnityMCP.Editor
                 ? shortNameValue?.ToString()
                 : "";
             string toolName = ProjectToolNameToToolName(projectToolName, shortName);
-            bool explicitMutatesAssets = GetBool(projectTool, "mutatesAssets", false);
-            bool mutatesRuntime = GetBool(projectTool, "mutatesRuntime", false);
-            bool readOnly = GetBool(projectTool, "readOnly", false);
-            bool mutatesAssets = explicitMutatesAssets;
-            bool dangerous = GetBool(projectTool, "dangerous", false);
-            bool longRunning = GetBool(projectTool, "longRunning", false);
-            bool mayReloadDomain = GetBool(projectTool, "mayReloadDomain", false);
-            bool requiresPlayMode = GetBool(projectTool, "requiresPlayMode", false);
-            bool isFirstClass = GetBool(projectTool, "firstClass", false);
+            var tags = MCPContractMetadata.ReadTags(projectTool);
+            var sideEffectValues = projectTool.TryGetValue("sideEffects", out object declaredSideEffects)
+                ? declaredSideEffects as System.Collections.IEnumerable
+                : null;
+            var sideEffects = MCPContractMetadata.BuildSideEffects(sideEffectValues);
+            bool readOnly = tags.Contains(MCPContractMetadata.Tag.ReadOnly, StringComparer.Ordinal);
+            bool mutatesAssets =
+                sideEffects.Contains("writesAssets", StringComparer.Ordinal) ||
+                sideEffects.Contains("writesScene", StringComparer.Ordinal);
+            bool mutatesRuntime = sideEffects.Contains("changesRuntimeState", StringComparer.Ordinal);
+            bool dangerous = tags.Contains(MCPContractMetadata.Tag.Dangerous, StringComparer.Ordinal);
+            bool longRunning = tags.Contains(MCPContractMetadata.Tag.LongRunning, StringComparer.Ordinal);
+            bool mayReloadDomain = sideEffects.Contains("reloadsDomain", StringComparer.Ordinal);
+            bool requiresPlayMode =
+                tags.Contains(MCPContractMetadata.Tag.RequiresPlayMode, StringComparer.Ordinal);
+            bool isFirstClass = tags.Contains(MCPContractMetadata.Tag.FirstClass, StringComparer.Ordinal);
             var profile = new ToolProfile
             {
                 Exposure = isFirstClass ? ExposureFirstClass : ExposureLazy,
@@ -604,7 +625,7 @@ namespace UnityMCP.Editor
                 },
             };
 
-            return new Dictionary<string, object>
+            var metadata = new Dictionary<string, object>
             {
                 { "route", route },
                 { "toolName", toolName },
@@ -614,42 +635,22 @@ namespace UnityMCP.Editor
                 { "inputSchema", inputSchema },
                 { "outputSchema", outputSchema },
                 { "projectToolName", projectToolName },
-                { "firstClass", isFirstClass },
-                { "exposure", profile.Exposure },
-                { "preferred", profile.Preferred },
-                { "readOnly", readOnly },
-                { "mutatesAssets", mutatesAssets },
-                { "mutatesRuntime", mutatesRuntime },
-                { "dangerous", dangerous },
-                { "longRunning", longRunning },
-                { "mayReloadDomain", mayReloadDomain },
-                { "requiresPlayMode", requiresPlayMode },
-                { "sideEffects", projectTool.TryGetValue("sideEffects", out object sideEffects)
-                    ? sideEffects
-                    : new List<object>() },
-                { "cleanupAvailable", GetBool(projectTool, "cleanupAvailable", false) },
-                { "cleanupToolName", projectTool.TryGetValue("cleanupToolName", out object cleanupToolName)
-                    ? cleanupToolName
-                    : "" },
-                { "incrementalJob", GetBool(projectTool, "incrementalJob", false) },
-                { "errorCodes", projectTool.TryGetValue("errorCodes", out object errorCodes)
-                    ? errorCodes
-                    : GetStandardErrorCodes(route) },
-                { "annotations", profile.ToAnnotations() },
-                { "source", projectTool.TryGetValue("source", out var source) ? source : "" },
-                { "fallbackRoute", isFirstClass ? "" : "project-tools/execute" },
             };
-        }
-
-        private static bool GetBool(Dictionary<string, object> dictionary, string key, bool fallback)
-        {
-            if (dictionary == null || !dictionary.TryGetValue(key, out var value) || value == null)
-                return fallback;
-
-            if (value is bool boolValue)
-                return boolValue;
-
-            return bool.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
+            MCPContractMetadata.SetTags(metadata, tags);
+            MCPContractMetadata.AddOptionalList(metadata, "sideEffects", sideEffects);
+            if (projectTool.TryGetValue("errorCodes", out object errorCodes))
+                MCPContractMetadata.AddOptionalList(metadata, "errorCodes",
+                    errorCodes as System.Collections.IEnumerable);
+            Dictionary<string, object> annotations = profile.ToAnnotations();
+            if (annotations.Count > 0)
+                metadata["annotations"] = annotations;
+            if (projectTool.TryGetValue("cleanupToolName", out object cleanupToolName))
+                MCPContractMetadata.AddOptionalString(metadata, "cleanupToolName", cleanupToolName?.ToString());
+            if (projectTool.TryGetValue("source", out var source))
+                MCPContractMetadata.AddOptionalString(metadata, "source", source?.ToString());
+            if (!isFirstClass)
+                metadata["fallbackRoute"] = "project-tools/execute";
+            return metadata;
         }
 
         private static Dictionary<string, object> CreateGenericOutputSchema()
@@ -711,12 +712,18 @@ namespace UnityMCP.Editor
                         },
                     }
                 },
+                { "tags", new Dictionary<string, object>
+                    {
+                        { "type", "array" },
+                        { "items", new Dictionary<string, object> { { "type", "string" } } },
+                        { "uniqueItems", true },
+                    }
+                },
                 { "cleanupStatus", new Dictionary<string, object>
                     {
                         { "type", "string" },
                         { "enum", new List<object>
                             {
-                                "none",
                                 "available",
                                 "queued",
                                 "running",
@@ -728,40 +735,14 @@ namespace UnityMCP.Editor
                         },
                     }
                 },
-                { "cleanupAvailable", new Dictionary<string, object>
-                    {
-                        { "type", "boolean" },
-                    }
-                },
-                { "cleanupDeclared", new Dictionary<string, object>
-                    {
-                        { "type", "boolean" },
-                    }
-                },
                 { "cleanupToken", new Dictionary<string, object>
                     {
                         { "type", "string" },
                     }
                 },
-                { "cancellationRequested", new Dictionary<string, object>
-                    {
-                        { "type", "boolean" },
-                    }
-                },
-                { "cancelMode", new Dictionary<string, object>
-                    {
-                        { "type", "string" },
-                        { "enum", new List<object> { "beforeStart", "betweenSteps" } },
-                    }
-                },
-                { "incremental", new Dictionary<string, object>
-                    {
-                        { "type", "boolean" },
-                    }
-                },
                 { "progress", new Dictionary<string, object>
                     {
-                        { "type", new List<object> { "number", "null" } },
+                        { "type", "number" },
                         { "minimum", 0 },
                         { "maximum", 1 },
                     }
@@ -774,7 +755,7 @@ namespace UnityMCP.Editor
                 { "stepCount", new Dictionary<string, object>
                     {
                         { "type", "integer" },
-                        { "minimum", 0 },
+                        { "minimum", 1 },
                     }
                 },
                 { "nextRunAt", new Dictionary<string, object> { { "type", "string" } } },
@@ -793,22 +774,6 @@ namespace UnityMCP.Editor
                 { "error", new Dictionary<string, object>() },
                 { "cleanupResult", new Dictionary<string, object>() },
                 { "cleanupError", new Dictionary<string, object>() },
-                { "statusRoute", new Dictionary<string, object>
-                    {
-                        { "const", "jobs/get" },
-                    }
-                },
-                { "cancelRoute", new Dictionary<string, object>
-                    {
-                        { "const", "jobs/cancel" },
-                    }
-                },
-                { "cleanupRoute", new Dictionary<string, object>
-                    {
-                        { "const", "jobs/cleanup" },
-                    }
-                },
-                { "reused", new Dictionary<string, object> { { "type", "boolean" } } },
             };
             return new Dictionary<string, object>
             {
@@ -820,30 +785,8 @@ namespace UnityMCP.Editor
                         "jobType",
                         "operation",
                         "status",
-                        "cleanupStatus",
-                        "cleanupAvailable",
-                        "cleanupDeclared",
-                        "cleanupToken",
-                        "cancellationRequested",
-                        "cancelMode",
-                        "incremental",
-                        "progress",
-                        "statusMessage",
-                        "stepCount",
-                        "nextRunAt",
-                        "idempotencyKey",
                         "createdAt",
-                        "startedAt",
-                        "completedAt",
                         "updatedAt",
-                        "sideEffects",
-                        "result",
-                        "error",
-                        "cleanupResult",
-                        "cleanupError",
-                        "statusRoute",
-                        "cancelRoute",
-                        "cleanupRoute",
                     }
                 },
                 { "additionalProperties", false },
@@ -958,28 +901,39 @@ namespace UnityMCP.Editor
         internal static bool IsRouteReadOnly(string route)
         {
             if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
-                return GetBool(projectTool, "readOnly", false);
+                return MCPContractMetadata.HasTag(projectTool, MCPContractMetadata.Tag.ReadOnly);
             return GetToolProfile(route).ReadOnly;
         }
 
         internal static bool RouteMutatesAssets(string route)
         {
             if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
-                return GetBool(projectTool, "mutatesAssets", false);
+            {
+                var sideEffects = projectTool.TryGetValue("sideEffects", out object value)
+                    ? value as System.Collections.IEnumerable
+                    : null;
+                return MCPContractMetadata.HasString(sideEffects, "writesAssets") ||
+                       MCPContractMetadata.HasString(sideEffects, "writesScene");
+            }
             return GetToolProfile(route).MutatesAssets;
         }
 
         internal static bool RouteMutatesRuntime(string route)
         {
             if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
-                return GetBool(projectTool, "mutatesRuntime", false);
+            {
+                var sideEffects = projectTool.TryGetValue("sideEffects", out object value)
+                    ? value as System.Collections.IEnumerable
+                    : null;
+                return MCPContractMetadata.HasString(sideEffects, "changesRuntimeState");
+            }
             return GetToolProfile(route).MutatesRuntime;
         }
 
         internal static bool RouteIsDangerous(string route)
         {
             if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
-                return GetBool(projectTool, "dangerous", false);
+                return MCPContractMetadata.HasTag(projectTool, MCPContractMetadata.Tag.Dangerous);
             return GetToolProfile(route).Dangerous;
         }
 
@@ -993,14 +947,19 @@ namespace UnityMCP.Editor
         internal static bool RouteMayReloadDomain(string route)
         {
             if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
-                return GetBool(projectTool, "mayReloadDomain", false);
+            {
+                var sideEffects = projectTool.TryGetValue("sideEffects", out object value)
+                    ? value as System.Collections.IEnumerable
+                    : null;
+                return MCPContractMetadata.HasString(sideEffects, "reloadsDomain");
+            }
             return GetToolProfile(route).MayReloadDomain;
         }
 
         internal static bool RouteIsLongRunning(string route)
         {
             if (MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out var projectTool))
-                return GetBool(projectTool, "longRunning", false);
+                return MCPContractMetadata.HasTag(projectTool, MCPContractMetadata.Tag.LongRunning);
             return GetToolProfile(route).LongRunning;
         }
 
@@ -1010,12 +969,12 @@ namespace UnityMCP.Editor
             foreach (var tool in tools)
             {
                 string route = tool.TryGetValue("route", out var routeObj) ? routeObj?.ToString() : "";
-                string exposure = tool.TryGetValue("exposure", out var exposureObj) ? exposureObj?.ToString() : "";
                 string description = tool.TryGetValue("description", out var descObj) ? descObj?.ToString() : "";
                 bool hasProfile = ToolProfiles.ContainsKey(route) ||
                                   MCPProjectToolCommands.TryGetToolDetailForDirectRoute(route, out _);
 
-                if (!hasProfile && string.Equals(exposure, ExposureFirstClass, StringComparison.Ordinal))
+                if (!hasProfile &&
+                    MCPContractMetadata.HasTag(tool, MCPContractMetadata.Tag.FirstClass))
                 {
                     issues.Add(new Dictionary<string, object>
                     {

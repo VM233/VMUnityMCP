@@ -93,8 +93,6 @@ namespace UnityMCP.Editor
                         "performsExternalIO",
                         "reloadsDomain",
                     } },
-                    { "cleanupToolName", "" },
-                    { "mayReloadDomain", true },
                 });
         }
 
@@ -152,7 +150,7 @@ namespace UnityMCP.Editor
                         }
 
                         var reused = BuildPublicJob(existing, includeAccessToken: true);
-                        reused["reused"] = true;
+                        MCPContractMetadata.AddTag(reused, MCPContractMetadata.Tag.Reused);
                         return reused;
                     }
                 }
@@ -163,7 +161,8 @@ namespace UnityMCP.Editor
                 bool cleanupAvailable = !string.IsNullOrWhiteSpace(cleanupCode);
                 bool cleanupDeclared = cleanupAvailable ||
                                        !string.IsNullOrWhiteSpace(cleanupToolName);
-                bool incremental = GetBool(metadata, "incrementalJob", false);
+                bool incremental = MCPContractMetadata.HasTag(
+                    metadata, MCPContractMetadata.Tag.IncrementalJob);
                 var job = new Dictionary<string, object>
                 {
                     { "jobId", Guid.NewGuid().ToString("N") },
@@ -193,7 +192,6 @@ namespace UnityMCP.Editor
                     { "sideEffects", CloneJsonValue(metadata.TryGetValue("sideEffects", out object effects)
                         ? effects
                         : new List<object>()) },
-                    { "mayReloadDomain", GetBool(metadata, "mayReloadDomain", false) },
                     { "result", null },
                     { "error", null },
                     { "cleanupResult", null },
@@ -204,9 +202,7 @@ namespace UnityMCP.Editor
                 Save();
                 Record(job);
 
-                var started = BuildPublicJob(job, includeAccessToken: true);
-                started["reused"] = false;
-                return started;
+                return BuildPublicJob(job, includeAccessToken: true);
             }
         }
 
@@ -340,7 +336,7 @@ namespace UnityMCP.Editor
                     cleanupStatus == CleanupSucceededStatus)
                 {
                     var existing = BuildPublicJob(job, includeAccessToken: false);
-                    existing["reused"] = true;
+                    MCPContractMetadata.AddTag(existing, MCPContractMetadata.Tag.Reused);
                     return existing;
                 }
 
@@ -351,9 +347,7 @@ namespace UnityMCP.Editor
                 Save();
                 Record(job);
 
-                var queued = BuildPublicJob(job, includeAccessToken: false);
-                queued["reused"] = false;
-                return queued;
+                return BuildPublicJob(job, includeAccessToken: false);
             }
         }
 
@@ -664,40 +658,62 @@ namespace UnityMCP.Editor
                 { "jobType", GetString(job, "jobType") },
                 { "operation", GetString(job, "operation") },
                 { "status", GetString(job, "status") },
-                { "cleanupStatus", GetString(job, "cleanupStatus", CleanupNoneStatus) },
-                { "cleanupAvailable", GetString(job, "cleanupStatus", CleanupNoneStatus) != CleanupNoneStatus },
-                { "cleanupDeclared", GetBool(job, "cleanupDeclared", false) },
-                { "cleanupToken", GetString(job, "cleanupToken") },
-                { "cancellationRequested", GetBool(job, "cancellationRequested", false) },
-                { "cancelMode", GetBool(job, "incremental", false) ? "betweenSteps" : "beforeStart" },
-                { "incremental", GetBool(job, "incremental", false) },
-                { "progress", job.TryGetValue("progress", out object progress) ? progress : null },
-                { "statusMessage", GetString(job, "statusMessage") },
-                { "stepCount", GetInt(job, "stepCount", 0) },
-                { "nextRunAt", GetString(job, "nextRunAt") },
-                { "idempotencyKey", GetString(job, "idempotencyKey") },
                 { "createdAt", GetString(job, "createdAt") },
-                { "startedAt", GetString(job, "startedAt") },
-                { "completedAt", GetString(job, "completedAt") },
                 { "updatedAt", GetString(job, "updatedAt") },
-                { "sideEffects", CloneJsonValue(job.TryGetValue("sideEffects", out object sideEffects)
-                    ? sideEffects
-                    : new List<object>()) },
-                { "result", CloneJsonValue(job.TryGetValue("result", out object result) ? result : null) },
-                { "error", CloneJsonValue(job.TryGetValue("error", out object error) ? error : null) },
-                { "cleanupResult", CloneJsonValue(job.TryGetValue("cleanupResult", out object cleanupResult)
-                    ? cleanupResult
-                    : null) },
-                { "cleanupError", CloneJsonValue(job.TryGetValue("cleanupError", out object cleanupError)
-                    ? cleanupError
-                    : null) },
-                { "statusRoute", "jobs/get" },
-                { "cancelRoute", "jobs/cancel" },
-                { "cleanupRoute", "jobs/cleanup" },
             };
+
+            string cleanupStatus = GetString(job, "cleanupStatus", CleanupNoneStatus);
+            bool cleanupDeclared = GetBool(job, "cleanupDeclared", false);
+            bool incremental = GetBool(job, "incremental", false);
+            bool cancellationRequested = GetBool(job, "cancellationRequested", false);
+            var tags = new List<string>();
+            if (cleanupDeclared)
+                tags.Add(MCPContractMetadata.Tag.CleanupDeclared);
+            if (cleanupStatus != CleanupNoneStatus)
+                tags.Add(MCPContractMetadata.Tag.CleanupAvailable);
+            if (incremental)
+                tags.Add(MCPContractMetadata.Tag.IncrementalJob);
+            if (cancellationRequested)
+                tags.Add(MCPContractMetadata.Tag.CancellationRequested);
+            MCPContractMetadata.SetTags(response, tags);
+
+            if (cleanupStatus != CleanupNoneStatus)
+                response["cleanupStatus"] = cleanupStatus;
+            MCPContractMetadata.AddOptionalString(response, "cleanupToken",
+                GetString(job, "cleanupToken"));
+            if (job.TryGetValue("progress", out object progress) && progress != null)
+                response["progress"] = CloneJsonValue(progress);
+            MCPContractMetadata.AddOptionalString(response, "statusMessage",
+                GetString(job, "statusMessage"));
+            int stepCount = GetInt(job, "stepCount", 0);
+            if (stepCount > 0)
+                response["stepCount"] = stepCount;
+            MCPContractMetadata.AddOptionalString(response, "nextRunAt",
+                GetString(job, "nextRunAt"));
+            MCPContractMetadata.AddOptionalString(response, "idempotencyKey",
+                GetString(job, "idempotencyKey"));
+            MCPContractMetadata.AddOptionalString(response, "startedAt",
+                GetString(job, "startedAt"));
+            MCPContractMetadata.AddOptionalString(response, "completedAt",
+                GetString(job, "completedAt"));
+            if (job.TryGetValue("sideEffects", out object sideEffects))
+                MCPContractMetadata.AddOptionalList(response, "sideEffects",
+                    sideEffects as IEnumerable);
+            AddOptionalValue(response, "result", job);
+            AddOptionalValue(response, "error", job);
+            AddOptionalValue(response, "cleanupResult", job);
+            AddOptionalValue(response, "cleanupError", job);
             if (includeAccessToken)
-                response["jobAccessToken"] = GetString(job, "jobAccessToken");
+                MCPContractMetadata.AddOptionalString(response, "jobAccessToken",
+                    GetString(job, "jobAccessToken"));
             return response;
+        }
+
+        private static void AddOptionalValue(Dictionary<string, object> target,
+            string key, Dictionary<string, object> source)
+        {
+            if (source.TryGetValue(key, out object value) && value != null)
+                target[key] = CloneJsonValue(value);
         }
 
         private static bool CanAccess(Dictionary<string, object> job, Dictionary<string, object> args)

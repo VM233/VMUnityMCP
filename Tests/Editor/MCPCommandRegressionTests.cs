@@ -1680,7 +1680,7 @@ namespace UnityMCP.Editor.Tests
 
             Assert.That(started["jobType"], Is.EqualTo("execute-code"));
             Assert.That(started["status"], Is.EqualTo("queued"));
-            Assert.That(started["cancelMode"], Is.EqualTo("beforeStart"));
+            Assert.That(HasTag(started, "incrementalJob"), Is.False);
             string jobId = started["jobId"].ToString();
 
             Dictionary<string, object> reused = RequireDictionary(
@@ -1692,7 +1692,7 @@ namespace UnityMCP.Editor.Tests
                     { "_agentId", agentId },
                 }));
             Assert.That(reused["jobId"], Is.EqualTo(jobId));
-            Assert.That(reused["reused"], Is.EqualTo(true));
+            Assert.That(HasTag(reused, "reused"), Is.True);
 
             Dictionary<string, object> snapshot = null;
             for (int frame = 0; frame < 120; frame++)
@@ -1738,8 +1738,9 @@ namespace UnityMCP.Editor.Tests
                 }));
 
             Assert.That(canceled["status"], Is.EqualTo("canceled"));
-            Assert.That(canceled["cleanupStatus"], Is.EqualTo("none"));
-            Assert.That(canceled["cleanupDeclared"], Is.EqualTo(false));
+            Assert.That(canceled.ContainsKey("cleanupStatus"), Is.False);
+            Assert.That(HasTag(canceled, "cleanupDeclared"), Is.False);
+            Assert.That(HasTag(canceled, "cancellationRequested"), Is.True);
 
             Dictionary<string, object> cleanup = RequireDictionary(
                 MCPJobCommands.Cleanup(new Dictionary<string, object>
@@ -1929,7 +1930,7 @@ namespace UnityMCP.Editor.Tests
                      })
             {
                 var tool = tools.Single(item => item["route"].ToString() == route);
-                Assert.That(tool["firstClass"], Is.EqualTo(true), route);
+                Assert.That(HasTag(tool, "firstClass"), Is.True, route);
                 Assert.That(tool["inputSchema"], Is.InstanceOf<Dictionary<string, object>>(), route);
             }
 
@@ -1945,7 +1946,7 @@ namespace UnityMCP.Editor.Tests
             var refreshJobProperties = RequireDictionary(refreshJobSchema["properties"]);
             Assert.That(refreshJobProperties.ContainsKey("timeoutMs"), Is.True);
 
-            foreach (var tool in tools.Where(item => !(bool)item["readOnly"]))
+            foreach (var tool in tools.Where(item => !HasTag(item, "readOnly")))
             {
                 var schema = RequireDictionary(tool["inputSchema"]);
                 var properties = RequireDictionary(schema["properties"]);
@@ -1963,7 +1964,7 @@ namespace UnityMCP.Editor.Tests
             var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
 
             var playModeTool = tools.Single(item => item["route"].ToString() == "editor/play-mode");
-            Assert.That(playModeTool["firstClass"], Is.EqualTo(true));
+            Assert.That(HasTag(playModeTool, "firstClass"), Is.True);
             Assert.That(playModeTool["toolName"], Is.EqualTo("unity_play_mode"));
             var playModeSchema = RequireDictionary(playModeTool["inputSchema"]);
             var playModeProperties = RequireDictionary(playModeSchema["properties"]);
@@ -1977,13 +1978,13 @@ namespace UnityMCP.Editor.Tests
             var profilerTools = (List<Dictionary<string, object>>)profilerToolsResult["tools"];
             Assert.That(profilerTools, Is.Not.Empty);
             Assert.That(profilerTools.All(tool =>
-                tool["firstClass"].Equals(false) && tool["exposure"].ToString() == "lazy"), Is.True);
+                !HasTag(tool, "firstClass") && !HasTag(tool, "fallback")), Is.True);
             Assert.That(profilerTools.All(tool =>
                 tool["inputSchema"] is Dictionary<string, object>), Is.True);
 
             var snapshotStatusTool = profilerTools.Single(item =>
                 item["route"].ToString() == "profiler/memory-snapshot-status");
-            Assert.That(snapshotStatusTool["readOnly"], Is.EqualTo(true));
+            Assert.That(HasTag(snapshotStatusTool, "readOnly"), Is.True);
             var snapshotStatusSchema = RequireDictionary(snapshotStatusTool["inputSchema"]);
             var snapshotStatusProperties = RequireDictionary(snapshotStatusSchema["properties"]);
             Assert.That(snapshotStatusProperties.Keys, Does.Contain("jobId"));
@@ -3203,10 +3204,10 @@ namespace UnityMCP.Editor.Tests
                      })
             {
                 var tool = tools.Single(item => item["route"].ToString() == route);
-                Assert.That(tool["firstClass"], Is.EqualTo(false), route);
-                Assert.That(tool["exposure"], Is.EqualTo("lazy"), route);
-                Assert.That(tool["readOnly"], Is.EqualTo(true), route);
-                Assert.That(tool["longRunning"], Is.EqualTo(true), route);
+                Assert.That(HasTag(tool, "firstClass"), Is.False, route);
+                Assert.That(HasTag(tool, "fallback"), Is.False, route);
+                Assert.That(HasTag(tool, "readOnly"), Is.True, route);
+                Assert.That(HasTag(tool, "longRunning"), Is.True, route);
                 Assert.That(tool["toolName"],
                     Is.EqualTo("unity_" + route.Replace('/', '_').Replace('-', '_')), route);
 
@@ -3581,7 +3582,7 @@ namespace UnityMCP.Editor.Tests
             var screenshot = screenshotTools.Single(tool =>
                 tool["route"].ToString() == "screenshot/game");
 
-            Assert.That(screenshot["requiresPlayMode"], Is.EqualTo(true));
+            Assert.That(HasTag(screenshot, "requiresPlayMode"), Is.True);
             Assert.That(screenshot["description"].ToString(),
                 Does.Contain("suppress and restore Game View Gizmos and Stats by default"));
             var inputSchema =
@@ -3726,19 +3727,18 @@ namespace UnityMCP.Editor.Tests
         {
             var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
                 .Single(tool => tool["toolName"].ToString() == RUNTIME_MUTATION_TOOL_NAME);
-            Assert.That(descriptor["readOnly"], Is.EqualTo(false));
-            Assert.That(descriptor["mutatesAssets"], Is.EqualTo(false));
-            Assert.That(descriptor["mutatesRuntime"], Is.EqualTo(true));
-            Assert.That(descriptor["requiresPlayMode"], Is.EqualTo(true));
+            Assert.That(HasTag(descriptor, "readOnly"), Is.False);
+            Assert.That(HasSideEffect(descriptor, "writesAssets"), Is.False);
+            Assert.That(HasSideEffect(descriptor, "changesRuntimeState"), Is.True);
+            Assert.That(HasTag(descriptor, "requiresPlayMode"), Is.True);
 
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
                 firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
             var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
             var tool = tools.Single(item =>
                 item["route"].ToString() == "project-tools/call/" + RUNTIME_MUTATION_TOOL_NAME);
-            Assert.That(tool["firstClass"], Is.EqualTo(true));
-            Assert.That(tool["mutatesRuntime"], Is.EqualTo(true));
-            Assert.That(tool["exposure"], Is.EqualTo("first-class"));
+            Assert.That(HasTag(tool, "firstClass"), Is.True);
+            Assert.That(HasSideEffect(tool, "changesRuntimeState"), Is.True);
         }
 
         [Test]
@@ -3746,8 +3746,8 @@ namespace UnityMCP.Editor.Tests
         {
             var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
                 .Single(tool => tool["toolName"].ToString() == LAZY_READ_TOOL_NAME);
-            Assert.That(descriptor["readOnly"], Is.EqualTo(true));
-            Assert.That(descriptor["firstClass"], Is.EqualTo(false));
+            Assert.That(HasTag(descriptor, "readOnly"), Is.True);
+            Assert.That(HasTag(descriptor, "firstClass"), Is.False);
 
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
                 firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
@@ -3761,8 +3761,8 @@ namespace UnityMCP.Editor.Tests
         {
             var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
                 .Single(tool => tool["toolName"].ToString() == INCOMPLETE_FIRST_CLASS_TOOL_NAME);
-            Assert.That(descriptor["firstClass"], Is.EqualTo(false));
-            Assert.That(descriptor["valid"], Is.EqualTo(true));
+            Assert.That(HasTag(descriptor, "firstClass"), Is.False);
+            Assert.That(HasTag(descriptor, "invalid"), Is.False);
             Assert.That(descriptor["exposureWarning"].ToString(),
                 Does.Contain("needs a description").And.Contain("items schema"));
 
@@ -3882,7 +3882,7 @@ namespace UnityMCP.Editor.Tests
             var summary = summaries.Single(tool => tool["toolName"].ToString() == LAZY_READ_TOOL_NAME);
 
             Assert.That(listResult.ContainsKey("count"), Is.False);
-            Assert.That(Convert.ToInt32(listResult["returnedTools"]), Is.EqualTo(summaries.Count));
+            Assert.That(listResult.ContainsKey("returnedTools"), Is.False);
             Assert.That(summary["description"], Is.EqualTo("Regression fixture for an explicitly lazy project tool."));
             Assert.That(summary.ContainsKey("inputSchema"), Is.False);
             Assert.That(summary.ContainsKey("source"), Is.False);
@@ -3900,7 +3900,7 @@ namespace UnityMCP.Editor.Tests
             Assert.That(detail.ContainsKey("route"), Is.False);
             Assert.That(detail.ContainsKey("directRoute"), Is.False);
             Assert.That(detail["executeRoute"], Is.EqualTo("project-tools/execute"));
-            Assert.That(detail["enforcesInputSchema"], Is.EqualTo(true));
+            Assert.That(detail.ContainsKey("enforcesInputSchema"), Is.False);
 
             var metadata = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
                 firstClassOnly: true, compact: true, includeSchema: true, limit: 200));
@@ -3984,15 +3984,14 @@ namespace UnityMCP.Editor.Tests
 
             Dictionary<string, object> started = Start(7);
             Assert.That(started["status"], Is.EqualTo("queued"));
-            Assert.That(started["incremental"], Is.EqualTo(true));
-            Assert.That(started["cancelMode"], Is.EqualTo("betweenSteps"));
-            Assert.That(started["cleanupDeclared"], Is.EqualTo(true));
+            Assert.That(HasTag(started, "incrementalJob"), Is.True);
+            Assert.That(HasTag(started, "cleanupDeclared"), Is.True);
             string jobId = started["jobId"].ToString();
             string accessToken = started["jobAccessToken"].ToString();
 
             Dictionary<string, object> reused = Start(7);
             Assert.That(reused["jobId"], Is.EqualTo(jobId));
-            Assert.That(reused["reused"], Is.EqualTo(true));
+            Assert.That(HasTag(reused, "reused"), Is.True);
 
             Dictionary<string, object> conflict = Start(8);
             Assert.That(conflict["success"], Is.EqualTo(false));
@@ -4001,8 +4000,8 @@ namespace UnityMCP.Editor.Tests
             Dictionary<string, object> descriptor = MCPProjectToolCommands
                 .GetToolDetails(validOnly: true)
                 .Single(tool => tool["toolName"].ToString() == PERSISTENT_PROJECT_TOOL_NAME);
-            Assert.That(descriptor["incrementalJob"], Is.EqualTo(true));
-            Assert.That(descriptor["enforcesOutputSchema"], Is.EqualTo(true));
+            Assert.That(HasTag(descriptor, "incrementalJob"), Is.True);
+            Assert.That(HasTag(descriptor, "outputSchema"), Is.True);
             CollectionAssert.Contains((ICollection)descriptor["sideEffects"], "changesRuntimeState");
             CollectionAssert.Contains((ICollection)descriptor["sideEffects"], "createsTemporaryObjects");
             CollectionAssert.Contains((ICollection)descriptor["errorCodes"], "fixture_failed");
@@ -4105,7 +4104,7 @@ namespace UnityMCP.Editor.Tests
                     { "jobId", jobId },
                     { "_agentId", agentId },
                 }));
-            Assert.That(canceled["cancellationRequested"], Is.EqualTo(true));
+            Assert.That(HasTag(canceled, "cancellationRequested"), Is.True);
 
             for (int frame = 0; frame < 120; frame++)
             {
@@ -6453,6 +6452,17 @@ namespace UnityMCP.Editor.Tests
                 Is.True);
             Assert.That(executeCodeOutputProperties.ContainsKey("cleanupToken"),
                 Is.True);
+            Assert.That(executeCodeOutputProperties.ContainsKey("tags"), Is.True);
+            foreach (string retiredField in new[]
+                     {
+                         "cleanupAvailable", "cleanupDeclared",
+                         "cancellationRequested", "cancelMode", "incremental",
+                         "statusRoute", "cancelRoute", "cleanupRoute", "reused",
+                     })
+            {
+                Assert.That(executeCodeOutputProperties.ContainsKey(retiredField),
+                    Is.False, retiredField);
+            }
 
             var all = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
                 firstClassOnly: false, compact: false, includeSchema: true, limit: 500));
@@ -6466,8 +6476,8 @@ namespace UnityMCP.Editor.Tests
             {
                 if (!tools.TryGetValue(route, out Dictionary<string, object> tool))
                     continue;
-                Assert.That(tool["firstClass"], Is.EqualTo(false), route);
-                Assert.That(tool["exposure"], Is.EqualTo("lazy"), route);
+                Assert.That(HasTag(tool, "firstClass"), Is.False, route);
+                Assert.That(HasTag(tool, "fallback"), Is.False, route);
             }
         }
 
@@ -6891,10 +6901,12 @@ namespace UnityMCP.Editor.Tests
         public void ToolMetadata_DefaultIsCompactPaginatedAndSchemaFree()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools());
-            Assert.That(System.Convert.ToInt32(result["schemaVersion"]), Is.EqualTo(4));
-            Assert.That(result["compact"], Is.EqualTo(true));
-            Assert.That(result["firstClassOnly"], Is.EqualTo(true));
-            Assert.That(System.Convert.ToInt32(result["returnedTools"]), Is.LessThanOrEqualTo(50));
+            Assert.That(System.Convert.ToInt32(result["schemaVersion"]), Is.EqualTo(5));
+            Assert.That(result.ContainsKey("compact"), Is.False);
+            Assert.That(result.ContainsKey("firstClassOnly"), Is.False);
+            Assert.That(result.ContainsKey("includeSchema"), Is.False);
+            Assert.That(result.ContainsKey("returnedTools"), Is.False);
+            Assert.That(result.ContainsKey("hasMore"), Is.False);
             Assert.That(result.ContainsKey("routes"), Is.False);
             Assert.That(result.ContainsKey("mcpTools"), Is.False);
             Assert.That(MiniJson.Serialize(result).Length, Is.LessThan(100000));
@@ -7011,6 +7023,31 @@ namespace UnityMCP.Editor.Tests
             var tools = (List<Dictionary<string, object>>)result["tools"];
             Assert.That(tools.All(tool => !tool.ContainsKey("name")), Is.True);
             Assert.That(tools.All(tool => !tool.ContainsKey("legacyToolName")), Is.True);
+            string[] retiredBooleanMetadata =
+            {
+                "readOnly", "mutatesAssets", "mutatesRuntime", "dangerous",
+                "longRunning", "mayReloadDomain", "requiresPlayMode",
+                "firstClass", "preferred", "cleanupAvailable", "incrementalJob",
+                "hasOutputSchema", "enforcesInputSchema", "enforcesOutputSchema", "valid",
+            };
+            foreach (Dictionary<string, object> tool in tools)
+            {
+                Assert.That(retiredBooleanMetadata.All(key => !tool.ContainsKey(key)),
+                    Is.True, tool["route"].ToString());
+                if (tool.TryGetValue("tags", out object tags))
+                {
+                    Assert.That(tags, Is.InstanceOf<IList>());
+                    Assert.That(((IList)tags).Cast<object>().All(tag =>
+                        !string.IsNullOrWhiteSpace(tag?.ToString())), Is.True);
+                }
+            }
+
+            foreach (Dictionary<string, object> tool in
+                     MCPProjectToolCommands.GetToolDetails(validOnly: false))
+            {
+                Assert.That(retiredBooleanMetadata.All(key => !tool.ContainsKey(key)),
+                    Is.True, tool["toolName"].ToString());
+            }
 
             var routes = GetBuiltInRoutes();
             Assert.That(routes, Does.Not.Contain("_meta/routes"));
@@ -7054,7 +7091,9 @@ namespace UnityMCP.Editor.Tests
             Assert.That(json, Does.Not.Contain("\"uidocumentInstanceId\""));
             foreach (var tool in tools)
             {
-                var annotations = RequireDictionary(tool["annotations"]);
+                if (!tool.TryGetValue("annotations", out object annotationsValue))
+                    continue;
+                var annotations = RequireDictionary(annotationsValue);
                 Assert.That(annotations.ContainsKey("title"), Is.False);
                 Assert.That(annotations.Values.OfType<bool>().All(value => value), Is.True);
             }
@@ -7070,7 +7109,7 @@ namespace UnityMCP.Editor.Tests
                 item["route"].ToString() == "prefab-asset/configure-component");
 
             Assert.That(tool["toolName"], Is.EqualTo("unity_prefab_asset_configure_component"));
-            Assert.That(tool["firstClass"], Is.EqualTo(true));
+            Assert.That(HasTag(tool, "firstClass"), Is.True);
             var schema = RequireDictionary(tool["inputSchema"]);
             CollectionAssert.AreEquivalent(new[] { "assetPath", "componentType" },
                 (List<string>)schema["required"]);
@@ -7089,8 +7128,8 @@ namespace UnityMCP.Editor.Tests
             var tools = (List<Dictionary<string, object>>)result["tools"];
             var tool = tools.Single(item => item["route"].ToString() == "prefab-asset/add-gameobject");
 
-            Assert.That(tool["firstClass"], Is.EqualTo(false));
-            Assert.That(tool["exposure"], Is.EqualTo("lazy"));
+            Assert.That(HasTag(tool, "firstClass"), Is.False);
+            Assert.That(HasTag(tool, "fallback"), Is.False);
             var schema = RequireDictionary(tool["inputSchema"]);
             var properties = RequireDictionary(schema["properties"]);
             Assert.That(properties.Keys, Does.Contain("layer"));
@@ -7109,8 +7148,8 @@ namespace UnityMCP.Editor.Tests
             var tool = tools.Single(item =>
                 item["route"].ToString() == "prefab-asset/add-component");
 
-            Assert.That(tool["firstClass"], Is.EqualTo(false));
-            Assert.That(tool["exposure"], Is.EqualTo("lazy"));
+            Assert.That(HasTag(tool, "firstClass"), Is.False);
+            Assert.That(HasTag(tool, "fallback"), Is.False);
             Assert.That(tool["description"].ToString(),
                 Does.Contain("optionally initialize").And.Contain("serialized state"));
 
@@ -7151,9 +7190,8 @@ namespace UnityMCP.Editor.Tests
                 var tool = toolsByRoute[expected.Route];
                 Assert.That(tool["toolName"], Is.EqualTo(expected.ToolName));
                 bool shouldBeFirstClass = expected.Route == "asset/import";
-                Assert.That(tool["firstClass"], Is.EqualTo(shouldBeFirstClass));
-                Assert.That(tool["exposure"],
-                    Is.EqualTo(shouldBeFirstClass ? "first-class" : "lazy"));
+                Assert.That(HasTag(tool, "firstClass"), Is.EqualTo(shouldBeFirstClass));
+                Assert.That(HasTag(tool, "fallback"), Is.False);
 
                 var schema = RequireDictionary(tool["inputSchema"]);
                 var properties = RequireDictionary(schema["properties"]);
@@ -7199,11 +7237,11 @@ namespace UnityMCP.Editor.Tests
             var tool = tools.Single(item => item["route"].ToString() == "asset/import-unitypackage");
 
             Assert.That(tool["toolName"], Is.EqualTo("unity_asset_import_unitypackage"));
-            Assert.That(tool["firstClass"], Is.EqualTo(false));
-            Assert.That(tool["exposure"], Is.EqualTo("lazy"));
-            Assert.That(tool["mutatesAssets"], Is.EqualTo(true));
-            Assert.That(tool["longRunning"], Is.EqualTo(true));
-            Assert.That(tool["mayReloadDomain"], Is.EqualTo(true));
+            Assert.That(HasTag(tool, "firstClass"), Is.False);
+            Assert.That(HasTag(tool, "fallback"), Is.False);
+            Assert.That(HasSideEffect(tool, "writesAssets"), Is.True);
+            Assert.That(HasTag(tool, "longRunning"), Is.True);
+            Assert.That(HasSideEffect(tool, "reloadsDomain"), Is.True);
 
             var schema = RequireDictionary(tool["inputSchema"]);
             CollectionAssert.AreEquivalent(new[] { "packagePath" }, (List<string>)schema["required"]);
@@ -7234,8 +7272,8 @@ namespace UnityMCP.Editor.Tests
                     $"{expected.Route} must publish discoverable metadata.");
                 var tool = toolsByRoute[expected.Route];
                 Assert.That(tool["toolName"], Is.EqualTo(expected.ToolName));
-                Assert.That(tool["firstClass"], Is.EqualTo(false));
-                Assert.That(tool["exposure"], Is.EqualTo("lazy"));
+                Assert.That(HasTag(tool, "firstClass"), Is.False);
+                Assert.That(HasTag(tool, "fallback"), Is.False);
 
                 var schema = RequireDictionary(tool["inputSchema"]);
                 var properties = RequireDictionary(schema["properties"]);
@@ -8230,6 +8268,22 @@ namespace UnityMCP.Editor.Tests
         {
             Assert.That(value, Is.TypeOf<Dictionary<string, object>>());
             return (Dictionary<string, object>)value;
+        }
+
+        private static bool HasTag(Dictionary<string, object> metadata, string tag)
+        {
+            return metadata.TryGetValue("tags", out object value) &&
+                   value is IEnumerable values &&
+                   values.Cast<object>().Any(item =>
+                       string.Equals(item?.ToString(), tag, StringComparison.Ordinal));
+        }
+
+        private static bool HasSideEffect(Dictionary<string, object> metadata, string sideEffect)
+        {
+            return metadata.TryGetValue("sideEffects", out object value) &&
+                   value is IEnumerable values &&
+                   values.Cast<object>().Any(item =>
+                       string.Equals(item?.ToString(), sideEffect, StringComparison.Ordinal));
         }
 
         private static List<string> GetBuiltInRoutes()

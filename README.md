@@ -107,6 +107,14 @@ the concrete effect classes, `ErrorCodes` for domain failures, and
 `CleanupToolName` only when the operation produces a token owned by that cleanup
 tool.
 
+These booleans are authoring inputs, not public response fields. Discovery
+serializes positive capabilities as a sorted `tags` array, for example
+`["dangerous", "longRunning"]`; absence means false. Concrete effects such as
+`writesAssets`, `changesRuntimeState`, or `reloadsDomain` are reported once in
+`sideEffects`. Empty tags/effects, empty cleanup names, valid-state aliases, and
+standard project-tool error codes are omitted. `project-tools/get` includes
+only tool-specific extra `errorCodes`.
+
 `LongRunning=true` and an explicit `runAsJob=true` both return a persistent Job.
 Class-based tools can implement `IMCPPersistentProjectTool` to yield a
 `MCPProjectToolJobStep` between Editor updates. Every continuation value must be
@@ -197,6 +205,11 @@ The full ownership matrix and authoritative built-in route audit are in
   `jobs/cancel` before execution or between incremental steps; and use
   `jobs/cleanup` only when the Job reports an available cleanup contract.
   Reusing an `idempotencyKey` with different arguments is rejected.
+- Job capability and positive state flags use the same presence-only `tags`
+  contract (`incrementalJob`, `cleanupDeclared`, `cleanupAvailable`,
+  `cancellationRequested`, and `reused`). Fields that do not yet have a value
+  are omitted; `status`, timestamps, progress, results, and errors remain
+  explicit runtime facts.
 - Execute-code uses compact Unity value strings by default. Pass
   `unityStructFormat="structured"` for typed objects with stable fields.
 - Completed pagination aliases and exact duplicate counts are removed on the

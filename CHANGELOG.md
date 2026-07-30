@@ -2,6 +2,23 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.5.0] - 2026-07-31
+
+- Replace public tool-capability booleans with one presence-only `tags` array.
+  A missing tag now means false; exact mutations remain in `sideEffects`.
+- Remove redundant exposure, validity, schema-enforcement, cleanup, and
+  operation-kind aliases from project-tool list/get and `_meta/tools`.
+  Invalid tools expose the `invalid` tag plus `validationError`.
+- Publish only tool-specific `errorCodes`; the three standard project-tool
+  failure codes remain part of the shared contract instead of repeating on
+  every descriptor.
+- Compact discovery pagination to `nextOffset` only when another page exists,
+  and omit request echoes, derived counts, false `hasMore`, and null offsets.
+- Compact persistent Job snapshots with presence-only lifecycle tags and
+  optional fields. Null results, empty timestamps, false state flags, derived
+  routes, and derived cancel modes are no longer repeated.
+- Advance live tool metadata to schema version 5.
+
 ## [5.4.0] - 2026-07-31
 
 - Add machine-readable `outputSchema`, stable error-code, cleanup-tool, and

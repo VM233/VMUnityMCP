@@ -188,16 +188,18 @@ namespace UnityMCP.Editor
             var tools = allTools.Skip(offset).Take(limit).ToList();
             int nextOffset = offset + tools.Count;
 
-            return new Dictionary<string, object>
+            var result = new Dictionary<string, object>
             {
                 { "tools", tools },
-                { "returnedTools", tools.Count },
-                { "totalTools", allTools.Count },
-                { "offset", offset },
-                { "limit", limit },
-                { "hasMore", nextOffset < allTools.Count },
-                { "nextOffset", nextOffset < allTools.Count ? (object)nextOffset : null }
             };
+            if (offset > 0)
+                result["offset"] = offset;
+            if (nextOffset < allTools.Count)
+            {
+                result["nextOffset"] = nextOffset;
+                result["totalTools"] = allTools.Count;
+            }
+            return result;
         }
 
         public static object Get(Dictionary<string, object> args)
@@ -792,21 +794,21 @@ namespace UnityMCP.Editor
                 {
                     { "toolName", ToolName },
                     { "description", Description },
-                    { "readOnly", ReadOnly },
-                    { "mutatesAssets", MutatesAssets },
-                    { "mutatesRuntime", MutatesRuntime },
-                    { "dangerous", Dangerous },
-                    { "longRunning", LongRunning },
-                    { "mayReloadDomain", MayReloadDomain },
-                    { "requiresPlayMode", RequiresPlayMode },
-                    { "firstClass", FirstClass },
-                    { "sideEffects", GetSideEffectNames() },
-                    { "cleanupAvailable", string.IsNullOrEmpty(CleanupToolName) == false },
-                    { "incrementalJob", SupportsIncrementalJobs },
-                    { "errorCodes", ErrorCodes },
-                    { "hasOutputSchema", EnforcesOutputSchema },
-                    { "valid", string.IsNullOrEmpty(ValidationError) }
                 };
+                MCPContractMetadata.SetTags(summary, MCPContractMetadata.BuildToolTags(
+                    readOnly: ReadOnly,
+                    dangerous: Dangerous,
+                    longRunning: LongRunning,
+                    requiresPlayMode: RequiresPlayMode,
+                    firstClass: FirstClass,
+                    cleanup: string.IsNullOrEmpty(CleanupToolName) == false,
+                    incrementalJob: SupportsIncrementalJobs,
+                    outputSchema: EnforcesOutputSchema,
+                    invalid: string.IsNullOrEmpty(ValidationError) == false));
+                MCPContractMetadata.AddOptionalList(summary, "sideEffects", GetSideEffectNames());
+                MCPContractMetadata.AddOptionalList(summary, "errorCodes", GetAdditionalErrorCodes());
+                MCPContractMetadata.AddOptionalString(summary, "cleanupToolName", CleanupToolName);
+                MCPContractMetadata.AddOptionalString(summary, "validationError", ValidationError);
                 if (!string.IsNullOrEmpty(ExposureWarning))
                     summary["exposureWarning"] = ExposureWarning;
                 return summary;
@@ -817,47 +819,44 @@ namespace UnityMCP.Editor
                 var descriptor = new Dictionary<string, object>
                 {
                     { "toolName", ToolName },
-                    { "shortName", ShortName },
                     { "description", Description },
-                    { "source", Source },
-                    { "executeRoute", "project-tools/execute" },
+                    { "executeRoute", FirstClass ? GetDirectRoute(ToolName) : "project-tools/execute" },
                     { "inputSchema", InputSchema ?? CreateDefaultInputSchema() },
                     { "outputSchema", OutputSchema ?? CreateDefaultOutputSchema() },
-                    { "readOnly", ReadOnly },
-                    { "mutatesAssets", MutatesAssets },
-                    { "mutatesRuntime", MutatesRuntime },
-                    { "dangerous", Dangerous },
-                    { "longRunning", LongRunning },
-                    { "mayReloadDomain", MayReloadDomain },
-                    { "requiresPlayMode", RequiresPlayMode },
-                    { "firstClass", FirstClass },
-                    { "sideEffects", GetSideEffectNames() },
-                    { "cleanupAvailable", string.IsNullOrEmpty(CleanupToolName) == false },
-                    { "cleanupToolName", CleanupToolName },
-                    { "incrementalJob", SupportsIncrementalJobs },
-                    { "errorCodes", ErrorCodes },
-                    { "enforcesInputSchema", true },
-                    { "enforcesOutputSchema", EnforcesOutputSchema },
-                    { "valid", string.IsNullOrEmpty(ValidationError) },
-                    { "validationError", ValidationError ?? "" }
                 };
+                MCPContractMetadata.AddOptionalString(descriptor, "shortName", ShortName);
+                MCPContractMetadata.AddOptionalString(descriptor, "source", Source);
+                MCPContractMetadata.SetTags(descriptor, MCPContractMetadata.BuildToolTags(
+                    readOnly: ReadOnly,
+                    dangerous: Dangerous,
+                    longRunning: LongRunning,
+                    requiresPlayMode: RequiresPlayMode,
+                    firstClass: FirstClass,
+                    cleanup: string.IsNullOrEmpty(CleanupToolName) == false,
+                    incrementalJob: SupportsIncrementalJobs,
+                    outputSchema: EnforcesOutputSchema,
+                    invalid: string.IsNullOrEmpty(ValidationError) == false));
+                MCPContractMetadata.AddOptionalList(descriptor, "sideEffects", GetSideEffectNames());
+                MCPContractMetadata.AddOptionalList(descriptor, "errorCodes", GetAdditionalErrorCodes());
+                MCPContractMetadata.AddOptionalString(descriptor, "cleanupToolName", CleanupToolName);
+                MCPContractMetadata.AddOptionalString(descriptor, "validationError", ValidationError);
                 if (!string.IsNullOrEmpty(ExposureWarning))
                     descriptor["exposureWarning"] = ExposureWarning;
-                if (FirstClass)
-                    descriptor["directRoute"] = GetDirectRoute(ToolName);
                 return descriptor;
             }
 
             public Dictionary<string, object> ToJobMetadata()
             {
-                return new Dictionary<string, object>
+                var metadata = new Dictionary<string, object>
                 {
                     { "toolName", ToolName },
-                    { "sideEffects", GetSideEffectNames() },
-                    { "cleanupToolName", CleanupToolName },
-                    { "mayReloadDomain", MayReloadDomain },
-                    { "incrementalJob", SupportsIncrementalJobs },
                 };
+                MCPContractMetadata.AddOptionalList(metadata, "sideEffects", GetSideEffectNames());
+                MCPContractMetadata.AddOptionalString(metadata, "cleanupToolName", CleanupToolName);
+                MCPContractMetadata.SetTags(metadata, MCPContractMetadata.BuildToolTags(
+                    cleanup: string.IsNullOrEmpty(CleanupToolName) == false,
+                    incrementalJob: SupportsIncrementalJobs));
+                return metadata;
             }
 
             public string ValidateCleanupInputContract()
@@ -1090,6 +1089,16 @@ namespace UnityMCP.Editor
                     .Cast<MCPProjectToolSideEffect>()
                     .Where(effect => effect != MCPProjectToolSideEffect.None && (effects & effect) == effect)
                     .Select(effect => ToCamelCase(effect.ToString()))
+                    .ToList();
+            }
+
+            private List<string> GetAdditionalErrorCodes()
+            {
+                return ErrorCodes
+                    .Where(code =>
+                        !string.Equals(code, "invalid_arguments", StringComparison.Ordinal) &&
+                        !string.Equals(code, "project_tool_exception", StringComparison.Ordinal) &&
+                        !string.Equals(code, "project_tool_output_schema_mismatch", StringComparison.Ordinal))
                     .ToList();
             }
 
