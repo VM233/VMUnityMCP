@@ -2,6 +2,20 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.3.2] - 2026-07-30
+
+- Make `prefab-asset/add-component` honor its optional initial `properties`
+  map through the same `SerializedObject` assignment path used by prefab
+  transactions, including nested lists and arrays.
+- Verify the newly added component and configured fields by serialized
+  readback after saving; invalid initial fields fail atomically without
+  leaving a partially configured component.
+- Reconcile a reload-interrupted add without duplicating the component, then
+  reapply and verify its requested initial properties before reporting
+  success.
+- Publish the `properties` map in the route-owned schema so lazy MCP clients
+  no longer treat supported initialization data as an undeclared argument.
+
 ## [5.3.1] - 2026-07-30
 
 - Add a public primary-result resolver so project-tool packages can reuse the

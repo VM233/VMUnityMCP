@@ -4029,6 +4029,81 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void AddComponent_AppliesAndPersistsInitialListProperties()
+        {
+            CreateTestPrefab();
+
+            var result = RequireDictionary(MCPPrefabAssetCommands.AddComponent(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Source" },
+                    { "componentType", typeof(PrefabComponentListFieldsFixture).FullName },
+                    { "properties", CreatePrefabComponentListFieldProperties() },
+                }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["persisted"], Is.EqualTo(true));
+            Assert.That(result["persistenceVerifiedBy"], Is.EqualTo("serialized-readback"));
+            CollectionAssert.AreEquivalent(
+                new[] { "bindObjectsNames", "containerPaths" },
+                (List<string>)result["configuredProperties"]);
+
+            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+            try
+            {
+                var component = root.transform.Find("Source")
+                    .GetComponent<PrefabComponentListFieldsFixture>();
+                Assert.That(component, Is.Not.Null);
+                CollectionAssert.AreEqual(
+                    new[] { "Bind Level Ability Container" },
+                    component.bindObjectsNames);
+                Assert.That(component.containerPaths, Has.Count.EqualTo(1));
+                CollectionAssert.AreEqual(
+                    new[] { "LevelAbilities" },
+                    component.containerPaths[0].names);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        [Test]
+        public void AddComponent_InvalidInitialPropertyDoesNotPersistComponent()
+        {
+            CreateTestPrefab();
+
+            var result = RequireDictionary(MCPPrefabAssetCommands.AddComponent(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Source" },
+                    { "componentType", typeof(PrefabComponentListFieldsFixture).FullName },
+                    { "properties", new Dictionary<string, object>
+                        {
+                            { "missingListField", new List<object> { "value" } },
+                        }
+                    },
+                }));
+
+            Assert.That(result["success"], Is.EqualTo(false));
+            Assert.That(result["errorCode"], Is.EqualTo("prefab_add_component_failed"));
+            Assert.That(result["error"].ToString(), Does.Contain("missingListField"));
+
+            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+            try
+            {
+                Assert.That(root.transform.Find("Source")
+                    .GetComponent<PrefabComponentListFieldsFixture>(), Is.Null);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        [Test]
         public void AddComponentDeferred_ReconcilesSavedMutationAfterReloadWithoutDuplicatingIt()
         {
             CreateTestPrefab();
@@ -4070,6 +4145,67 @@ namespace UnityMCP.Editor.Tests
             try
             {
                 Assert.That(root.transform.Find("Source").GetComponents<BoxCollider>(), Has.Length.EqualTo(1));
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        [Test]
+        public void AddComponentDeferred_ReconcilesAndPersistsInitialListPropertiesAfterReload()
+        {
+            CreateTestPrefab();
+            var added = RequireDictionary(MCPPrefabAssetCommands.AddComponent(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Source" },
+                    { "componentType", typeof(PrefabComponentListFieldsFixture).FullName },
+                }));
+            Assert.That(added["success"], Is.EqualTo(true));
+
+            object deferredResult = null;
+            MCPPrefabAssetCommands.AddComponentDeferred(new Dictionary<string, object>
+            {
+                { "assetPath", PREFAB_PATH },
+                { "prefabPath", "Source" },
+                { "componentType", typeof(PrefabComponentListFieldsFixture).FullName },
+                { "properties", CreatePrefabComponentListFieldProperties() },
+                { "refreshAssets", false },
+                { "typeResolveStableMs", 0 },
+                { "_resumeCount", 1 },
+                { "_resumeProgress", new Dictionary<string, object>
+                    {
+                        { "phase", "mutation-prepared" },
+                        { "baselineComponentCount", 0 },
+                        { "startedAtUtc", DateTime.UtcNow.AddSeconds(-1).ToString("O") },
+                        { "deadlineUtc", DateTime.UtcNow.AddSeconds(20).ToString("O") },
+                    }
+                },
+            }, value => deferredResult = value, _ => { });
+
+            var reconciled = RequireDictionary(deferredResult);
+            Assert.That(reconciled["success"], Is.EqualTo(true));
+            Assert.That(reconciled["reconciledAfterReload"], Is.EqualTo(true));
+            Assert.That(reconciled["persisted"], Is.EqualTo(true));
+            CollectionAssert.AreEquivalent(
+                new[] { "bindObjectsNames", "containerPaths" },
+                (List<string>)reconciled["configuredProperties"]);
+
+            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+            try
+            {
+                var components = root.transform.Find("Source")
+                    .GetComponents<PrefabComponentListFieldsFixture>();
+                Assert.That(components, Has.Length.EqualTo(1));
+                CollectionAssert.AreEqual(
+                    new[] { "Bind Level Ability Container" },
+                    components[0].bindObjectsNames);
+                Assert.That(components[0].containerPaths, Has.Count.EqualTo(1));
+                CollectionAssert.AreEqual(
+                    new[] { "LevelAbilities" },
+                    components[0].containerPaths[0].names);
             }
             finally
             {
@@ -6507,6 +6643,31 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ToolMetadata_LazyPrefabAddComponentExposesInitialSerializedProperties()
+        {
+            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
+                category: "prefab-asset"));
+            var tools = (List<Dictionary<string, object>>)result["tools"];
+            var tool = tools.Single(item =>
+                item["route"].ToString() == "prefab-asset/add-component");
+
+            Assert.That(tool["firstClass"], Is.EqualTo(false));
+            Assert.That(tool["exposure"], Is.EqualTo("lazy"));
+            Assert.That(tool["description"].ToString(),
+                Does.Contain("optionally initialize").And.Contain("serialized state"));
+
+            var schema = RequireDictionary(tool["inputSchema"]);
+            var properties = RequireDictionary(schema["properties"]);
+            Assert.That(properties.Keys, Does.Contain("properties"));
+            var initialProperties = RequireDictionary(properties["properties"]);
+            Assert.That(initialProperties["type"], Is.EqualTo("object"));
+            Assert.That(initialProperties["additionalProperties"], Is.EqualTo(true));
+            Assert.That(initialProperties["description"].ToString(),
+                Does.Contain("before the new component is saved"));
+        }
+
+        [Test]
         public void ToolMetadata_ExposesAssetImportDirectlyAndTextureToolsLazily()
         {
             var assetResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
@@ -7453,6 +7614,27 @@ namespace UnityMCP.Editor.Tests
             {
                 Object.DestroyImmediate(root);
             }
+        }
+
+        private static Dictionary<string, object> CreatePrefabComponentListFieldProperties()
+        {
+            return new Dictionary<string, object>
+            {
+                {
+                    "bindObjectsNames",
+                    new List<object> { "Bind Level Ability Container" }
+                },
+                {
+                    "containerPaths",
+                    new List<object>
+                    {
+                        new Dictionary<string, object>
+                        {
+                            { "names", new List<object> { "LevelAbilities" } },
+                        },
+                    }
+                },
+            };
         }
 
         private static void AddComponentToTestPrefab<T>() where T : Component

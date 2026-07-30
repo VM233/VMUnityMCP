@@ -955,7 +955,7 @@ namespace UnityMCP.Editor
                 case "scene/workspace":
                     return "List loaded scenes, open a scene additively or singly, close a loaded scene with an explicit dirty-scene policy, or set the active scene.";
                 case "prefab-asset/add-component":
-                    return "Add a component to a prefab asset after waiting for a newly compiled script type to become available.";
+                    return "Add and optionally initialize a component on a prefab asset, then verify its serialized state after saving. Waits for a newly compiled script type when needed.";
                 case "prefab-asset/configure-component":
                     return "Ensure and configure one component on a prefab asset GameObject, including serialized properties and ObjectReferences, in one atomic save.";
                 case "prefab-asset/add-gameobject":
@@ -1844,6 +1844,7 @@ namespace UnityMCP.Editor
                         Prop("assetPath", "string", "Prefab asset path to edit."),
                         Prop("prefabPath", "string", "Path of the GameObject inside the prefab. Empty means root."),
                         Prop("componentType", "string", "Component type name or full name."),
+                        JsonValueMapProp("properties", "Optional serialized property names/paths mapped to initial JSON values. Values are applied before the new component is saved."),
                         Prop("waitForType", "boolean", "Wait for compilation/import until the component type is available. Defaults to true."),
                         Prop("typeResolveTimeoutMs", "number", "Maximum type wait time in milliseconds. Defaults to 30000."),
                         Prop("typeResolveStableMs", "number", "Continuous idle time after type resolution before editing. Defaults to 500."),
@@ -2690,7 +2691,7 @@ namespace UnityMCP.Editor
                 Prop("componentType", "string", "Component type name or full name."),
                 Prop("componentIndex", "number", "Component index when multiple components of the same type exist. Defaults to 0."),
                 Prop("addIfMissing", "boolean", "Add the component when componentIndex equals the current component count. Defaults to true."),
-                Prop("properties", "object", "Serialized property names/paths mapped to JSON values."),
+                JsonValueMapProp("properties", "Serialized property names/paths mapped to JSON values."),
                 Prop("waitForTypes", "boolean", "Wait for referenced component types before editing. Defaults to true."),
                 Prop("typeResolveTimeoutMs", "number", "Maximum type wait time in milliseconds. Defaults to 30000."),
                 Prop("typeResolveStableMs", "number", "Continuous idle time after type resolution before editing. Defaults to 500."),
@@ -2952,6 +2953,17 @@ namespace UnityMCP.Editor
             return new KeyValuePair<string, object>(name, new Dictionary<string, object>
             {
                 { "description", description },
+            });
+        }
+
+        private static KeyValuePair<string, object> JsonValueMapProp(
+            string name, string description)
+        {
+            return new KeyValuePair<string, object>(name, new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "description", description },
+                { "additionalProperties", true },
             });
         }
 

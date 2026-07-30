@@ -167,6 +167,11 @@ The full ownership matrix and authoritative built-in route audit are in
 - Prefab mutations return semantic results without YAML diffs initially.
   Request `includePrefabFileDiff=true` or enable the personal preference when
   line detail is needed.
+- `prefab-asset/add-component` accepts an optional `properties` map and applies
+  it before the first save. Success is returned only after serialized
+  readback confirms both the new component and its requested initial values;
+  use `prefab-asset/configure-component` for idempotent ensure/update work or
+  ObjectReference wiring.
 - Potentially large raw graph, stack, serialized, and metadata diagnostics are
   opt-in.
 - Mutating requests validate the expected project before dispatch. Stable

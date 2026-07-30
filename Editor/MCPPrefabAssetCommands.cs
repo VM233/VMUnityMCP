@@ -329,18 +329,35 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
+            bool saveAttempted = false;
+            bool persisted = false;
             try
             {
-                var go = FindInPrefab(root, prefabPath);
-                if (go == null)
-                    return new { error = $"GameObject '{prefabPath}' not found in prefab" };
+                if (!TryAddPrefabComponent(root, args, out var go, out var component,
+                        out int componentIndex, out var changedProperties, out var expectedValues,
+                        out string addError))
+                {
+                    return MCPResponse.Error(
+                        $"Failed to add component: {addError}",
+                        "prefab_add_component_failed");
+                }
 
-                Type type = MCPComponentCommands.FindType(componentType);
-                if (type == null)
-                    return new { error = $"Type '{componentType}' not found" };
+                saveAttempted = true;
+                if (SavePrefabAssetNormalized(root, assetPath,
+                        BuildExplicitYamlPropertyRoots(changedProperties.ToArray())) == null)
+                {
+                    throw new InvalidOperationException(
+                        $"SaveAsPrefabAsset returned null for '{assetPath}'.");
+                }
 
-                var component = go.AddComponent(type);
-                SavePrefabAssetNormalized(root, assetPath);
+                if (!TryVerifyPrefabComponentConfiguration(assetPath, prefabPath,
+                        component.GetType(), componentIndex, expectedValues, out string verificationError))
+                {
+                    throw new InvalidOperationException(
+                        $"Prefab save could not be verified by serialized readback: {verificationError}.");
+                }
+
+                persisted = true;
 
                 var result = new Dictionary<string, object>
                 {
@@ -349,17 +366,26 @@ namespace UnityMCP.Editor
                     { "gameObject", go.name },
                     { "component", component.GetType().Name },
                     { "fullType", component.GetType().FullName },
+                    { "componentIndex", componentIndex },
+                    { "configuredProperties", changedProperties },
+                    { "configuredPropertyCount", changedProperties.Count },
+                    { "persisted", true },
+                    { "persistenceVerifiedBy", "serialized-readback" },
                 };
                 AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
                 return result;
             }
             catch (Exception ex)
             {
-                return new { error = $"Failed to add component: {ex.Message}" };
+                return MCPResponse.Error(
+                    $"Failed to add component: {ex.GetBaseException().Message}",
+                    "prefab_add_component_failed");
             }
             finally
             {
                 PrefabUtility.UnloadPrefabContents(root);
+                if (saveAttempted && !persisted)
+                    RestoreAssetSnapshot(beforeSnapshot);
             }
         }
 
@@ -440,9 +466,20 @@ namespace UnityMCP.Editor
 
                                 if (persistedCount == baselineComponentCount + 1)
                                 {
+                                    if (!TryEnsurePrefabComponentConfiguration(assetPath, prefabPath,
+                                            resolvedType, baselineComponentCount, args,
+                                            out var configuredProperties, out string configurationError))
+                                    {
+                                        complete(MCPResponse.Error(
+                                            $"Could not reconcile the saved prefab component after " +
+                                            $"Domain Reload: {configurationError}",
+                                            "prefab_add_component_reconciliation_failed"));
+                                        return;
+                                    }
+
                                     complete(BuildReconciledAddComponentResult(args, prefabName,
                                         gameObjectName, resolvedType, baselineComponentCount,
-                                        persistedCount));
+                                        persistedCount, configuredProperties));
                                     return;
                                 }
 
@@ -608,8 +645,9 @@ namespace UnityMCP.Editor
 
         private static Dictionary<string, object> BuildReconciledAddComponentResult(
             Dictionary<string, object> args, string prefabName, string gameObjectName, Type componentType,
-            int componentCountBefore, int componentCountAfter)
+            int componentCountBefore, int componentCountAfter, List<string> configuredProperties)
         {
+            configuredProperties ??= new List<string>();
             var result = new Dictionary<string, object>
             {
                 { "success", true },
@@ -619,6 +657,11 @@ namespace UnityMCP.Editor
                 { "prefabPath", GetString(args, "prefabPath") },
                 { "component", componentType.Name },
                 { "fullType", componentType.FullName },
+                { "componentIndex", componentCountBefore },
+                { "configuredProperties", configuredProperties },
+                { "configuredPropertyCount", configuredProperties.Count },
+                { "persisted", true },
+                { "persistenceVerifiedBy", "serialized-readback" },
                 { "componentCountBefore", componentCountBefore },
                 { "componentCountAfter", componentCountAfter },
                 { "reconciledAfterReload", true },
@@ -628,6 +671,93 @@ namespace UnityMCP.Editor
                     MCPSettingsManager.IncludePrefabFileDiffByDefault))
                 result["prefabFileDiffUnavailable"] = "reconciled-after-domain-reload";
             return result;
+        }
+
+        private static bool TryEnsurePrefabComponentConfiguration(string assetPath,
+            string prefabPath, Type componentType, int componentIndex,
+            Dictionary<string, object> args, out List<string> configuredProperties,
+            out string error)
+        {
+            configuredProperties = new List<string>();
+            error = "";
+            var properties = GetDictionary(args, "properties");
+            if (properties == null || properties.Count == 0)
+            {
+                return TryVerifyPrefabComponentConfiguration(assetPath, prefabPath,
+                    componentType, componentIndex, new Dictionary<string, object>(), out error);
+            }
+
+            var beforeSnapshot = CaptureAssetText(assetPath);
+            GameObject root = null;
+            bool saveAttempted = false;
+            bool persisted = false;
+            try
+            {
+                root = PrefabUtility.LoadPrefabContents(assetPath);
+                if (root == null)
+                {
+                    error = $"Failed to load prefab at '{assetPath}'";
+                    return false;
+                }
+
+                var gameObject = FindInPrefab(root, prefabPath);
+                if (gameObject == null)
+                {
+                    error = $"GameObject '{prefabPath}' not found in prefab";
+                    return false;
+                }
+
+                var components = gameObject.GetComponents(componentType);
+                if (componentIndex < 0 || componentIndex >= components.Length)
+                {
+                    error = $"Component '{componentType.FullName}' at index {componentIndex} " +
+                            $"was not found; persisted count is {components.Length}";
+                    return false;
+                }
+
+                var component = components[componentIndex];
+                if (!TryApplySerializedProperties(component, properties, configuredProperties,
+                        out error))
+                {
+                    return false;
+                }
+
+                var expectedValues = new Dictionary<string, object>();
+                if (!TryCaptureSerializedProperties(component, configuredProperties,
+                        expectedValues, out error))
+                {
+                    return false;
+                }
+
+                saveAttempted = true;
+                if (SavePrefabAssetNormalized(root, assetPath,
+                        BuildExplicitYamlPropertyRoots(configuredProperties.ToArray())) == null)
+                {
+                    error = $"SaveAsPrefabAsset returned null for '{assetPath}'";
+                    return false;
+                }
+
+                if (!TryVerifyPrefabComponentConfiguration(assetPath, prefabPath,
+                        componentType, componentIndex, expectedValues, out error))
+                {
+                    return false;
+                }
+
+                persisted = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.GetBaseException().Message;
+                return false;
+            }
+            finally
+            {
+                if (root != null)
+                    PrefabUtility.UnloadPrefabContents(root);
+                if (saveAttempted && !persisted)
+                    RestoreAssetSnapshot(beforeSnapshot);
+            }
         }
 
         /// <summary>
@@ -3069,7 +3199,8 @@ namespace UnityMCP.Editor
             foreach (var operation in operations)
             {
                 string operationType = GetOperationType(operation);
-                if (operationType != "setproperty" && operationType != "setreference" &&
+                if (operationType != "addcomponent" && operationType != "setproperty" &&
+                    operationType != "setreference" &&
                     operationType != "configurecomponent" && operationType != "arrayinsert" &&
                     operationType != "arrayremove" && operationType != "arrayset" &&
                     operationType != "arrayclear")
@@ -3081,7 +3212,8 @@ namespace UnityMCP.Editor
                     foreach (string propertyName in properties.Keys)
                         roots.UnionWith(BuildExplicitYamlPropertyRoots(propertyName));
                 }
-                else if (operationType != "configurecomponent")
+                else if (operationType != "addcomponent" &&
+                         operationType != "configurecomponent")
                 {
                     roots.UnionWith(BuildExplicitYamlPropertyRoots(GetString(operation, "propertyName")));
                 }
@@ -3368,34 +3500,8 @@ namespace UnityMCP.Editor
             int operationIndex, out Dictionary<string, object> summary, out string error)
         {
             summary = null;
-            error = "";
-            string prefabPath = GetString(operation, "prefabPath");
-            string componentType = GetString(operation, "componentType");
-            if (string.IsNullOrEmpty(componentType))
-            {
-                error = $"Operation {operationIndex}: componentType is required";
-                return false;
-            }
-
-            var go = FindInPrefab(root, prefabPath);
-            if (go == null)
-            {
-                error = $"Operation {operationIndex}: GameObject '{prefabPath}' not found in prefab";
-                return false;
-            }
-
-            Type type = MCPComponentCommands.FindType(componentType);
-            if (type == null)
-            {
-                error = $"Operation {operationIndex}: Type '{componentType}' not found";
-                return false;
-            }
-
-            var component = go.AddComponent(type);
-            var changedProperties = new List<string>();
-            var properties = GetDictionary(operation, "properties");
-            if (properties != null &&
-                !TryApplySerializedProperties(component, properties, changedProperties, out error))
+            if (!TryAddPrefabComponent(root, operation, out var go, out var component,
+                    out int componentIndex, out var changedProperties, out _, out error))
             {
                 error = $"Operation {operationIndex}: {error}";
                 return false;
@@ -3403,8 +3509,62 @@ namespace UnityMCP.Editor
 
             summary = BuildBatchSummary(operationIndex, "addComponent", go, component);
             summary["prefabPath"] = GetPrefabPath(root, go);
+            summary["componentIndex"] = componentIndex;
             summary["properties"] = changedProperties;
             return true;
+        }
+
+        private static bool TryAddPrefabComponent(GameObject root,
+            Dictionary<string, object> operation, out GameObject gameObject, out Component component,
+            out int componentIndex, out List<string> changedProperties,
+            out Dictionary<string, object> expectedValues, out string error)
+        {
+            gameObject = null;
+            component = null;
+            componentIndex = -1;
+            changedProperties = new List<string>();
+            expectedValues = new Dictionary<string, object>();
+            error = "";
+
+            string prefabPath = GetString(operation, "prefabPath");
+            string componentType = GetString(operation, "componentType");
+            if (string.IsNullOrEmpty(componentType))
+            {
+                error = "componentType is required";
+                return false;
+            }
+
+            gameObject = FindInPrefab(root, prefabPath);
+            if (gameObject == null)
+            {
+                error = $"GameObject '{prefabPath}' not found in prefab";
+                return false;
+            }
+
+            Type type = MCPComponentCommands.FindType(componentType);
+            if (type == null)
+            {
+                error = $"Type '{componentType}' not found";
+                return false;
+            }
+
+            componentIndex = gameObject.GetComponents(type).Length;
+            component = gameObject.AddComponent(type);
+            if (component == null)
+            {
+                error = $"Failed to add component '{componentType}'";
+                return false;
+            }
+
+            var properties = GetDictionary(operation, "properties");
+            if (properties != null &&
+                !TryApplySerializedProperties(component, properties, changedProperties, out error))
+            {
+                return false;
+            }
+
+            return TryCaptureSerializedProperties(component, changedProperties, expectedValues,
+                out error);
         }
 
         private static bool TryBatchConfigureComponent(GameObject root, Dictionary<string, object> operation,
@@ -4017,6 +4177,126 @@ namespace UnityMCP.Editor
             MCPComponentCommands.SetSerializedValue(prop, value);
             serialized.ApplyModifiedProperties();
             return true;
+        }
+
+        private static bool TryCaptureSerializedProperties(Component component,
+            IEnumerable<string> propertyNames, Dictionary<string, object> values, out string error)
+        {
+            error = "";
+            if (component == null)
+            {
+                error = "Component is missing";
+                return false;
+            }
+
+            var serialized = new SerializedObject(component);
+            serialized.UpdateIfRequiredOrScript();
+            foreach (string propertyName in propertyNames ?? Enumerable.Empty<string>())
+            {
+                var property = serialized.FindProperty(propertyName);
+                if (property == null)
+                {
+                    error =
+                        $"Property '{propertyName}' not found on '{component.GetType().Name}' after assignment";
+                    return false;
+                }
+
+                values[propertyName] = MCPComponentCommands.GetSerializedValue(
+                    property, 16, 10000);
+            }
+
+            return true;
+        }
+
+        private static bool TryVerifyPrefabComponentConfiguration(string assetPath,
+            string prefabPath, Type componentType, int componentIndex,
+            Dictionary<string, object> expectedValues, out string error)
+        {
+            error = "";
+            try
+            {
+                var prefabRoot = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                if (prefabRoot == null)
+                {
+                    error = $"Prefab '{assetPath}' could not be loaded";
+                    return false;
+                }
+
+                var gameObject = FindInPrefab(prefabRoot, prefabPath);
+                if (gameObject == null)
+                {
+                    error = $"GameObject '{prefabPath}' was not found";
+                    return false;
+                }
+
+                var components = gameObject.GetComponents(componentType);
+                if (componentIndex < 0 || componentIndex >= components.Length)
+                {
+                    error = $"Component '{componentType.FullName}' at index {componentIndex} " +
+                            $"was not found; persisted count is {components.Length}";
+                    return false;
+                }
+
+                var serialized = new SerializedObject(components[componentIndex]);
+                serialized.UpdateIfRequiredOrScript();
+                foreach (var pair in expectedValues)
+                {
+                    var property = serialized.FindProperty(pair.Key);
+                    if (property == null)
+                    {
+                        error =
+                            $"Property '{pair.Key}' was not found on persisted component";
+                        return false;
+                    }
+
+                    object actualValue = MCPComponentCommands.GetSerializedValue(
+                        property, 16, 10000);
+                    if (SerializedValuesEquivalent(pair.Value, actualValue))
+                        continue;
+
+                    error = $"Property '{pair.Key}' did not match. Expected " +
+                            $"{MiniJson.Serialize(pair.Value)}, read {MiniJson.Serialize(actualValue)}";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.GetBaseException().Message;
+                return false;
+            }
+        }
+
+        private static bool SerializedValuesEquivalent(object expected, object actual)
+        {
+            return MiniJson.Serialize(NormalizeSerializedValueForComparison(expected)) ==
+                   MiniJson.Serialize(NormalizeSerializedValueForComparison(actual));
+        }
+
+        private static object NormalizeSerializedValueForComparison(object value)
+        {
+            if (value is Dictionary<string, object> dictionary)
+            {
+                var normalized = new Dictionary<string, object>();
+                foreach (var pair in dictionary.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                {
+                    if (pair.Key == "instanceId")
+                        continue;
+                    normalized[pair.Key] = NormalizeSerializedValueForComparison(pair.Value);
+                }
+                return normalized;
+            }
+
+            if (value is System.Collections.IList list && !(value is string))
+            {
+                var normalized = new List<object>();
+                foreach (object item in list)
+                    normalized.Add(NormalizeSerializedValueForComparison(item));
+                return normalized;
+            }
+
+            return value;
         }
 
         private static bool TryResolveBatchReference(GameObject root, SerializedProperty property,
