@@ -148,6 +148,12 @@ namespace UnityMCP.Editor
                 "project-tools/list",
                 "project-tools/get",
                 "project-tools/execute",
+                "jobs/cancel",
+                "asset/import-settings/get",
+                "asset/import-settings/set",
+                "scene/workspace",
+                "material/properties/get",
+                "material/properties/set",
             };
 
         private static readonly Dictionary<string, ToolProfile> ToolProfiles = BuildToolProfiles();
@@ -195,9 +201,16 @@ namespace UnityMCP.Editor
                 "animation/transition-info",
                 "asset/dependencies",
                 "asset/get-refresh-job",
+                "asset/import-settings/get",
                 "build/get-job",
                 "jobs/list",
                 "jobs/get",
+                "material/properties/get",
+                "audio-mixer/info",
+                "vfxgraph/info",
+                "addressables/info",
+                "timeline/info",
+                "cinemachine/info",
                 "testing/get-job",
                 "testing/get-package-job",
                 "profiler/stats",
@@ -247,6 +260,10 @@ namespace UnityMCP.Editor
                 "asset/create-folder",
                 "asset/copy",
                 "asset/transaction",
+                "asset/import-settings/set",
+                "material/properties/set",
+                "vfxgraph/transaction",
+                "timeline/transaction",
                 "texture/apply-sprite-preset",
                 "animation/update-state",
                 "animation/update-transition",
@@ -277,6 +294,12 @@ namespace UnityMCP.Editor
                 "scene/instantiate-prefab",
                 "profiler/enable");
 
+            AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true,
+                    mutatesRuntime: true, dangerous: true),
+                "scene/workspace",
+                "audio-mixer/transaction",
+                "cinemachine/transaction");
+
             AddProfile(profiles, ToolProfile.FirstClass(mutatesRuntime: true, longRunning: true,
                     mayReloadDomain: true),
                 "editor/play-mode");
@@ -285,7 +308,19 @@ namespace UnityMCP.Editor
                 "profiler/memory-snapshot");
 
             AddProfile(profiles, ToolProfile.FirstClass(),
-                "queue/cancel");
+                "queue/cancel",
+                "jobs/cancel");
+
+            AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true,
+                    mayReloadDomain: true),
+                "build/profile");
+
+            AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true),
+                "addressables/transaction");
+
+            AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true,
+                    longRunning: true),
+                "addressables/build");
 
             AddProfile(profiles, ToolProfile.FirstClass(mutatesAssets: true, longRunning: true,
                     mayReloadDomain: true),
@@ -331,7 +366,8 @@ namespace UnityMCP.Editor
         }
 
         public static object GetRegisteredTools(bool firstClassOnly = true, bool compact = true,
-            bool includeSchema = false, int offset = 0, int limit = 50, string category = null)
+            bool includeSchema = false, int offset = 0, int limit = 50, string category = null,
+            bool includeMetadataIssues = false)
         {
             if (firstClassOnly)
                 EnsureFirstClassToolMetadataCache();
@@ -374,7 +410,8 @@ namespace UnityMCP.Editor
 
             result["metadataSource"] = "MCPToolMetadata.ToolProfiles";
             result["tools"] = page.Select(tool => ToDetailedToolDescriptor(tool, includeSchema)).ToList();
-            result["metadataIssues"] = BuildMetadataIssues(page);
+            if (includeMetadataIssues)
+                result["metadataIssues"] = BuildMetadataIssues(page);
             return result;
         }
 
@@ -442,7 +479,6 @@ namespace UnityMCP.Editor
         private static List<string> GetRegisteredRouteList()
         {
             var routes = MCPRouteRegistry.BuiltInRoutes.ToList();
-            routes.AddRange(MCPBridgeServer.DeferredRouteNames);
             routes.AddRange(MCPProjectToolCommands.GetDirectRoutePaths());
             return routes
                 .Where(route => !string.IsNullOrEmpty(route))
@@ -915,6 +951,8 @@ namespace UnityMCP.Editor
                     return "Read the active scene hierarchy, optionally returning compact matches filtered by component type.";
                 case "scene/instantiate-prefab":
                     return "Instantiate a prefab asset into the currently open scene.";
+                case "scene/workspace":
+                    return "List loaded scenes, open a scene additively or singly, close a loaded scene with an explicit dirty-scene policy, or set the active scene.";
                 case "prefab-asset/add-component":
                     return "Add a component to a prefab asset after waiting for a newly compiled script type to become available.";
                 case "prefab-asset/configure-component":
@@ -959,6 +997,10 @@ namespace UnityMCP.Editor
                     return "Poll the current or latest reload-safe AssetDatabase refresh job.";
                 case "asset/import":
                     return "Preflight and import one or more external assets with shared TextureImporter defaults, image-content deduplication, configurable execution, per-item results, and rollback.";
+                case "asset/import-settings/get":
+                    return "Read semantic TextureImporter, ModelImporter, or AudioImporter settings without exposing Unity's internal serialized fields.";
+                case "asset/import-settings/set":
+                    return "Validate and update semantic TextureImporter, ModelImporter, or AudioImporter settings, optional platform overrides, and reimport behavior.";
                 case "asset/rename":
                     return "Safely rename a Unity asset using AssetDatabase while preserving its .meta GUID and synchronizing Single Sprite internal names.";
                 case "asset/move":
@@ -1107,10 +1149,46 @@ namespace UnityMCP.Editor
                     return "Start a persistent Player build job, optionally run the executable, and return immediately with a job ID. Poll build/get-job for the final BuildReport; no post-build asset refresh is required.";
                 case "build/get-job":
                     return "Poll the current or latest persistent Player build job and return its final BuildReport and optional run result.";
+                case "build/profile":
+                    return "Inspect or transactionally edit Unity 6 Build Profiles, active profile, scenes, scripting defines, and global build-scene settings.";
                 case "jobs/list":
                     return "List paginated persistent Unity MCP job history owned by the current agent.";
                 case "jobs/get":
                     return "Get one persistent Unity MCP job snapshot with owner enforcement.";
+                case "jobs/cancel":
+                    return "Request owner-checked cancellation of a persistent build, test, package-test, memory-snapshot, or Addressables build job and report the actual cancellation mode.";
+                case "material/properties/get":
+                    return "Read a Material's shader, typed shader properties, textures, keywords, render queue, and instancing settings through Unity's public Material API.";
+                case "material/properties/set":
+                    return "Transactionally set typed Material shader properties, texture references and transforms, keywords, render queue, and instancing settings.";
+                case "physics/raycast":
+                    return "Raycast through Physics or Physics2D using one dimension-selectable contract, with deterministic bounded multi-hit results.";
+                case "physics/overlap-sphere":
+                    return "Run a 3D sphere or 2D circle overlap query with deterministic bounded collider results.";
+                case "physics/overlap-box":
+                    return "Run a 3D or 2D box overlap query with deterministic bounded collider results.";
+                case "vfxgraph/info":
+                    return "Inspect a VFX Graph's contexts, blocks, operators, exposed properties, and object-reference connections, with slots and bounded raw serialization available only when requested.";
+                case "vfxgraph/transaction":
+                    return "Apply a validated, undoable batch of VFX Graph node or exposed-property serialized edits.";
+                case "audio-mixer/info":
+                    return "Inspect an AudioMixer's groups, snapshots, effects, and exposed parameter values, with a bounded raw serialized diagnostic available only when requested.";
+                case "audio-mixer/transaction":
+                    return "Manage AudioMixer groups, snapshots, effects, exposed parameters and persistent snapshot values, or apply a separate batch of editor-session runtime overrides.";
+                case "addressables/info":
+                    return "List Addressables settings, groups, schemas, labels, and paginated entries when com.unity.addressables is installed.";
+                case "addressables/transaction":
+                    return "Transactionally manage Addressables groups, copied schemas, the default group, labels, entries, addresses, and entry-label assignments.";
+                case "addressables/build":
+                    return "Start a persistent Addressables content build job and return a job ID for jobs/get or jobs/cancel.";
+                case "timeline/info":
+                    return "Inspect a Timeline asset's tracks, clips, markers, and duration, with a bounded raw serialized diagnostic available only when requested.";
+                case "timeline/transaction":
+                    return "Apply an undoable Timeline transaction that creates, deletes, renames, or configures tracks and clips.";
+                case "cinemachine/info":
+                    return "Inspect Cinemachine cameras, brains, and extensions in loaded scenes or a prefab, with optional bounded serialized properties.";
+                case "cinemachine/transaction":
+                    return "Apply an undoable Cinemachine scene or prefab transaction for properties, object targets, and enabled state.";
                 case "animation/set-object-reference-curve":
                     return "Set AnimationClip ObjectReference keyframes, such as SpriteRenderer.m_Sprite.";
                 case "localization/status":
@@ -1174,6 +1252,78 @@ namespace UnityMCP.Editor
                         Prop("recursive", "boolean", "Include descendants. Defaults to true."),
                         Prop("offset", "number", "Result offset."),
                         Prop("limit", "number", "Maximum assets. Defaults to 100; capped at 500.")));
+                case "asset/import-settings/get":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "Texture, model, or audio asset path below Assets/."),
+                        Prop("platform", "string", "Optional Unity platform override name such as Standalone, Android, or iPhone.")
+                    ), "assetPath");
+                case "asset/import-settings/set":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "Texture, model, or audio asset path below Assets/."),
+                        Prop("settings", "object", "Semantic importer fields. Unsupported keys are rejected with the allowed field list."),
+                        Prop("platform", "string", "Optional Unity platform override name such as Standalone, Android, or iPhone."),
+                        Prop("platformSettings", "object", "Optional semantic TextureImporter or AudioImporter override settings for platform."),
+                        Prop("reimport", "boolean", "Save and reimport the asset after updating settings. Defaults to true."),
+                        Prop("dryRun", "boolean", "Validate and return before/requested settings without modifying the importer.")
+                    ), "assetPath", "settings");
+                case "scene/workspace":
+                    return Schema(Props(
+                        Prop("action", "string", "Workspace action: list, open, close, or set-active. Defaults to list."),
+                        Prop("path", "string", "Scene asset path for open, close, or set-active."),
+                        Prop("name", "string", "Loaded scene name for close or set-active when path is omitted."),
+                        Prop("mode", "string", "Open mode: additive (default) or single."),
+                        Prop("saveModified", "boolean", "For single open, save every dirty loaded scene before replacement."),
+                        Prop("discardModified", "boolean", "For single open, explicitly allow replacement of dirty loaded scenes without saving."),
+                        Prop("save", "boolean", "For close, save a dirty scene before closing."),
+                        Prop("discardChanges", "boolean", "For close, explicitly discard dirty scene changes."),
+                        Prop("removeScene", "boolean", "For close, remove the scene from the workspace. Defaults to true.")
+                    ));
+                case "material/properties/get":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "Material asset path below Assets/."),
+                        ArrayProp("propertyNames", "string", "Optional shader property names. Omit to page through declared shader properties."),
+                        Prop("offset", "number", "Shader property offset. Defaults to 0."),
+                        Prop("limit", "number", "Maximum shader properties returned. Defaults to 100; capped at 500.")
+                    ), "assetPath");
+                case "material/properties/set":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "Material asset path below Assets/."),
+                        Prop("properties", "object", "Shader property values keyed by declared shader property name. Texture values accept assetPath plus optional scale and offset."),
+                        Prop("keywords", "object", "Keyword changes with enable and disable string arrays."),
+                        Prop("shader", "string", "Optional replacement shader name."),
+                        Prop("renderQueue", "number", "Optional Material render queue."),
+                        Prop("enableInstancing", "boolean", "Optional GPU instancing flag."),
+                        Prop("doubleSidedGI", "boolean", "Optional double-sided global illumination flag."),
+                        Prop("globalIlluminationFlags", "string", "Optional MaterialGlobalIlluminationFlags value."),
+                        Prop("dryRun", "boolean", "Validate and return requested changes without modifying the Material.")
+                    ), "assetPath");
+                case "physics/raycast":
+                    return Schema(Props(
+                        Prop("dimension", "string", "Physics dimension: 3D (default) or 2D."),
+                        Prop("origin", "object", "Ray origin with x/y/z. z is ignored for 2D."),
+                        Prop("direction", "object", "Ray direction with x/y/z. z is ignored for 2D."),
+                        Prop("maxDistance", "number", "Maximum ray distance. Defaults to infinity."),
+                        Prop("layerMask", "number", "Optional Physics or Physics2D layer mask."),
+                        Prop("all", "boolean", "Return multiple hits rather than only the closest hit."),
+                        Prop("maxResults", "number", "Maximum hits returned when all is true. Defaults to 100; capped at 500.")
+                    ), "origin", "direction");
+                case "physics/overlap-sphere":
+                    return Schema(Props(
+                        Prop("dimension", "string", "Physics dimension: 3D (default) or 2D. In 2D this performs an overlap circle."),
+                        Prop("center", "object", "Query center with x/y/z. z is ignored for 2D."),
+                        Prop("radius", "number", "Sphere or circle radius. Defaults to 1."),
+                        Prop("layerMask", "number", "Optional Physics or Physics2D layer mask."),
+                        Prop("maxResults", "number", "Maximum colliders returned. Defaults to 100; capped at 500.")
+                    ), "center");
+                case "physics/overlap-box":
+                    return Schema(Props(
+                        Prop("dimension", "string", "Physics dimension: 3D (default) or 2D."),
+                        Prop("center", "object", "Query center with x/y/z. z is ignored for 2D."),
+                        Prop("halfExtents", "object", "Half extents with x/y/z. In 2D, x/y are doubled into box size."),
+                        Prop("angle", "number", "2D box rotation in degrees. Ignored for 3D."),
+                        Prop("layerMask", "number", "Optional Physics or Physics2D layer mask."),
+                        Prop("maxResults", "number", "Maximum colliders returned. Defaults to 100; capped at 500.")
+                    ), "center", "halfExtents");
                 case "search/scene":
                     return Schema(Props(
                         Prop("name", "string", "Optional case-insensitive GameObject name substring or regular expression."),
@@ -1382,6 +1532,99 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("jobId", "string", "Job identifier."),
                         Prop("jobType", "string", "Optional job type disambiguator.")), "jobId");
+                case "jobs/cancel":
+                    return Schema(Props(
+                        Prop("jobId", "string", "Persistent job identifier returned by its start route."),
+                        Prop("jobType", "string", "Optional job type disambiguator.")
+                    ), "jobId");
+                case "vfxgraph/info":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "VisualEffectAsset path below Assets/."),
+                        Prop("maxObjects", "number", "Maximum semantic graph nodes returned. Defaults to 250; capped at 500."),
+                        Prop("maxExposedProperties", "number", "Maximum exposed properties returned. Defaults to 100; capped at 500."),
+                        Prop("maxConnections", "number", "Maximum connections among returned nodes and properties. Defaults to 500; capped at 2000."),
+                        Prop("maxSlotsPerNode", "number", "Maximum input and output slots per node when includeSlots is true. Defaults to 50; capped at 200."),
+                        Prop("maxProperties", "number", "Maximum visible serialized properties per graph object when includeSerialized is true. Defaults to 40; capped at 500."),
+                        Prop("includeSlots", "boolean", "Include typed input/output slot values for each node. Defaults to false."),
+                        Prop("includeSerialized", "boolean", "Include a recursively budgeted serialized graph diagnostic. Defaults to false.")
+                    ), "assetPath");
+                case "vfxgraph/transaction":
+                    return AssetGraphTransactionSchema("VFX Graph");
+                case "audio-mixer/info":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "AudioMixer asset path below Assets/."),
+                        Prop("maxGroups", "number", "Maximum groups returned. Defaults to 100; capped at 500."),
+                        Prop("maxSnapshots", "number", "Maximum snapshots returned. Defaults to 100; capped at 500."),
+                        Prop("maxEffects", "number", "Maximum detailed effects returned. Defaults to 100; capped at 500."),
+                        Prop("maxChildrenPerGroup", "number", "Maximum child groups listed per group. Defaults to 50; capped at 200."),
+                        Prop("maxEffectsPerGroup", "number", "Maximum effect references listed per group. Defaults to 50; capped at 200."),
+                        Prop("maxParametersPerEffect", "number", "Maximum parameter definitions returned per effect. Defaults to 50; capped at 200."),
+                        Prop("maxExposedParameters", "number", "Maximum exposed parameters returned. Defaults to 100; capped at 500."),
+                        Prop("maxObjects", "number", "Maximum mixer subassets in the optional serialized diagnostic. Defaults to 100; capped at 500."),
+                        Prop("maxProperties", "number", "Maximum visible serialized properties per object when includeSerialized is true. Defaults to 40; capped at 500."),
+                        Prop("includeSerialized", "boolean", "Include a recursively budgeted serialized mixer diagnostic. Defaults to false.")
+                    ), "assetPath");
+                case "audio-mixer/transaction":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "AudioMixer asset path below Assets/."),
+                        ArrayProp("operations", "object", "Ordered semantic group, snapshot, effect, exposed-parameter, snapshot-value, rename, or set-property operations. Runtime exposed-parameter overrides must use a separate transaction."),
+                        Prop("dryRun", "boolean", "Validate and describe the transaction without changing the mixer.")
+                    ), "assetPath", "operations");
+                case "build/profile":
+                    return Schema(Props(
+                        Prop("action", "string", "Build Profile action: info (default) or transaction."),
+                        ArrayProp("operations", "object", "For transaction, ordered set-active, set-scenes, set-scripting-defines, set-global-scenes, or set-property operations."),
+                        Prop("dryRun", "boolean", "Validate and return current profiles plus requested operations without mutation."),
+                        Prop("includeAfter", "boolean", "Include a paginated post-transaction Build Profile snapshot. Defaults to false; operation results are returned regardless."),
+                        Prop("offset", "number", "Build Profile offset for info or includeAfter. Defaults to 0."),
+                        Prop("limit", "number", "Maximum Build Profiles for info or includeAfter. Defaults to 50; capped at 200.")
+                    ));
+                case "addressables/info":
+                    return Schema(Props(
+                        Prop("offset", "number", "Addressable entry offset. Defaults to 0."),
+                        Prop("limit", "number", "Maximum entries returned. Defaults to 100; capped at 500.")
+                    ));
+                case "addressables/transaction":
+                    return Schema(Props(
+                        ArrayProp("operations", "object", "Ordered create/remove/default-group, add/remove/rename-label, create-or-move-entry, set-address, set-label, or remove-entry operations."),
+                        Prop("dryRun", "boolean", "Validate and describe the Addressables transaction without modifying settings.")
+                    ), "operations");
+                case "addressables/build":
+                    return Schema(Props());
+                case "timeline/info":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "TimelineAsset path below Assets/."),
+                        Prop("maxTracks", "number", "Maximum tracks returned across the semantic hierarchy. Defaults to 250; capped at 1000."),
+                        Prop("maxClipsPerTrack", "number", "Maximum clips returned per track. Defaults to 100; capped at 500."),
+                        Prop("maxMarkersPerTrack", "number", "Maximum markers returned per track. Defaults to 100; capped at 500."),
+                        Prop("maxObjects", "number", "Maximum Timeline subassets returned. Defaults to 250; capped at 500."),
+                        Prop("maxProperties", "number", "Maximum serialized properties per Timeline object when includeSerialized is true. Defaults to 60; capped at 500."),
+                        Prop("includeSerialized", "boolean", "Include a recursively budgeted serialized Timeline diagnostic. Defaults to false.")
+                    ), "assetPath");
+                case "timeline/transaction":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "TimelineAsset path below Assets/."),
+                        ArrayProp("operations", "object", "Ordered create-track, delete-track, rename-track, set-track-property, create-clip, delete-clip, or set-clip operations."),
+                        Prop("dryRun", "boolean", "Validate and return the current Timeline plus requested operations without mutation."),
+                        Prop("includeAfter", "boolean", "Include a bounded post-transaction Timeline snapshot. Defaults to false; operation results are returned regardless."),
+                        Prop("maxTracks", "number", "Maximum tracks in includeAfter. Defaults to 250; capped at 1000."),
+                        Prop("maxClipsPerTrack", "number", "Maximum clips per track in includeAfter. Defaults to 100; capped at 500."),
+                        Prop("maxMarkersPerTrack", "number", "Maximum markers per track in includeAfter. Defaults to 100; capped at 500.")
+                    ), "assetPath", "operations");
+                case "cinemachine/info":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "Optional prefab asset path. Omit to inspect loaded scenes."),
+                        Prop("includeProperties", "boolean", "Include bounded serialized properties for every Cinemachine component. Defaults to false."),
+                        Prop("maxProperties", "number", "Maximum serialized properties per component. Defaults to 60; capped at 200."),
+                        Prop("offset", "number", "Cinemachine component offset. Defaults to 0."),
+                        Prop("limit", "number", "Maximum Cinemachine components returned. Defaults to 100; capped at 500.")
+                    ));
+                case "cinemachine/transaction":
+                    return Schema(Props(
+                        Prop("assetPath", "string", "Optional prefab asset path. Omit to edit loaded scene objects."),
+                        ArrayProp("operations", "object", "Ordered set-property, set-object-reference, or set-enabled operations. Select scene objects by scenePath plus GameObject path, and components or target components by type plus zero-based index."),
+                        Prop("dryRun", "boolean", "Resolve and describe every operation without modifying scene or prefab data.")
+                    ), "operations");
                 case "instance/current":
                     return Schema(Props());
                 case "instance/list":
@@ -2300,6 +2543,17 @@ namespace UnityMCP.Editor
                         { "additionalProperties", true }
                     };
             }
+        }
+
+        private static Dictionary<string, object> AssetGraphTransactionSchema(string assetKind)
+        {
+            return Schema(Props(
+                Prop("assetPath", "string", $"{assetKind} asset path below Assets/."),
+                ArrayProp("operations", "object",
+                    "Ordered rename or set-property operations. Target each subasset by localId or by type plus targetName."),
+                Prop("dryRun", "boolean",
+                    $"Validate and describe the {assetKind} transaction without modifying the asset.")
+            ), "assetPath", "operations");
         }
 
         private static Dictionary<string, object> ExecutionSchema(bool includeContinueOnError = true)

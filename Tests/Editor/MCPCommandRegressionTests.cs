@@ -679,6 +679,7 @@ namespace UnityMCP.Editor.Tests
                 BindingFlags.Static | BindingFlags.NonPublic);
             Assert.That(routesProperty, Is.Not.Null);
             var routes = (IEnumerable<string>)routesProperty.GetValue(null);
+            var deferredRoutes = routes.ToHashSet(StringComparer.Ordinal);
             Assert.That(routes, Does.Contain("prefab-asset/configure-component"));
             Assert.That(routes, Does.Contain("prefab-asset/transaction-edit"));
             Assert.That(routes, Does.Contain("asset/import"));
@@ -690,6 +691,8 @@ namespace UnityMCP.Editor.Tests
             Assert.That(routes, Does.Contain("profiler/memory-snapshot"));
 
             var registeredRoutes = GetBuiltInRoutes();
+            CollectionAssert.IsSubsetOf(deferredRoutes, registeredRoutes,
+                "Every deferred route must belong to the authoritative built-in route registry.");
             Assert.That(registeredRoutes, Does.Not.Contain("prefab-asset/batch-edit"));
             Assert.That(registeredRoutes, Does.Not.Contain("asset/move-batch"));
             Assert.That(registeredRoutes, Does.Not.Contain("component/batch-wire"));
@@ -4381,11 +4384,17 @@ namespace UnityMCP.Editor.Tests
             Assert.That(property, Is.Not.Null);
             var registered = ((IEnumerable<string>)property.GetValue(null)).ToHashSet(StringComparer.Ordinal);
             CollectionAssert.IsSubsetOf(switchRoutes, registered);
+            var deferredRoutesProperty = typeof(MCPBridgeServer).GetProperty("DeferredRouteNames",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(deferredRoutesProperty, Is.Not.Null);
+            var deferredRoutes = ((IEnumerable<string>)deferredRoutesProperty.GetValue(null))
+                .ToHashSet(StringComparer.Ordinal);
+            CollectionAssert.IsSubsetOf(deferredRoutes, registered);
             CollectionAssert.AreEquivalent(new[]
             {
                 "_meta/tools", "_meta/capabilities",
                 "queue/cancel", "queue/info", "queue/status"
-            }, registered.Except(switchRoutes).ToArray());
+            }.Concat(deferredRoutes.Except(switchRoutes)), registered.Except(switchRoutes).ToArray());
         }
 
         [Test]
@@ -5591,6 +5600,505 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void NewToolRoutes_AreAuthoritativeAndCapabilityScoped()
+        {
+            List<string> routes = GetBuiltInRoutes();
+            foreach (string route in new[]
+                     {
+                         "jobs/cancel",
+                         "asset/import-settings/get", "asset/import-settings/set",
+                         "scene/workspace",
+                         "material/properties/get", "material/properties/set",
+                         "vfxgraph/info", "vfxgraph/transaction",
+                         "audio-mixer/info", "audio-mixer/transaction",
+                         "build/profile",
+                         "addressables/info", "addressables/transaction",
+                         "addressables/build",
+                         "timeline/info", "timeline/transaction",
+                         "cinemachine/info", "cinemachine/transaction",
+                     })
+            {
+                Assert.That(routes, Does.Contain(route), route);
+            }
+
+            var capabilities = RequireDictionary(MCPCapabilityRegistry.GetCapabilities());
+            var optional = ((List<Dictionary<string, object>>)capabilities["optional"])
+                .ToDictionary(item => item["name"].ToString());
+            foreach (string name in new[]
+                     {
+                         "vfxgraph", "addressables", "timeline", "cinemachine",
+                         "build-profile",
+                     })
+            {
+                Assert.That(optional.ContainsKey(name), Is.True, name);
+                Assert.That(optional[name].ContainsKey("version"), Is.True, name);
+                Assert.That(optional[name].ContainsKey("routePrefixes"), Is.True, name);
+                Assert.That(optional[name].ContainsKey("exactRoutes"), Is.True, name);
+            }
+            Assert.That(optional["vfxgraph"]["packageName"],
+                Is.EqualTo("com.unity.visualeffectgraph"));
+            Assert.That(optional["addressables"]["packageName"],
+                Is.EqualTo("com.unity.addressables"));
+            Assert.That(optional["timeline"]["packageName"],
+                Is.EqualTo("com.unity.timeline"));
+            Assert.That(optional["cinemachine"]["packageName"],
+                Is.EqualTo("com.unity.cinemachine"));
+            Assert.That((List<string>)optional["build-profile"]["exactRoutes"],
+                Does.Contain("build/profile"));
+        }
+
+        [Test]
+        public void NewP0Tools_AreFirstClassWhileOptionalPackageToolsStayLazy()
+        {
+            var firstClass = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
+            var firstClassRoutes = ((List<Dictionary<string, object>>)firstClass["tools"])
+                .Select(tool => tool["route"].ToString()).ToHashSet(StringComparer.Ordinal);
+            foreach (string route in new[]
+                     {
+                         "jobs/cancel",
+                         "asset/import-settings/get", "asset/import-settings/set",
+                         "scene/workspace",
+                         "material/properties/get", "material/properties/set",
+                     })
+            {
+                Assert.That(firstClassRoutes, Does.Contain(route), route);
+            }
+
+            var all = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: false, compact: false, includeSchema: true, limit: 500));
+            var tools = ((List<Dictionary<string, object>>)all["tools"])
+                .ToDictionary(tool => tool["route"].ToString());
+            foreach (string route in new[]
+                     {
+                         "vfxgraph/info", "audio-mixer/info", "build/profile",
+                         "addressables/info", "timeline/info", "cinemachine/info",
+                     })
+            {
+                if (!tools.TryGetValue(route, out Dictionary<string, object> tool))
+                    continue;
+                Assert.That(tool["firstClass"], Is.EqualTo(false), route);
+                Assert.That(tool["exposure"], Is.EqualTo("lazy"), route);
+            }
+        }
+
+        [Test]
+        public void AssetGraphSanitizer_BoundsStringsAndUnityObjectReferences()
+        {
+            object textValue = MCPAssetGraphUtility.SanitizeValue(new string('x', 700));
+            var bounded = RequireDictionary(textValue);
+            Assert.That(bounded["truncated"], Is.EqualTo(true));
+            Assert.That(Convert.ToInt32(bounded["length"]), Is.EqualTo(700));
+            Assert.That(bounded["preview"].ToString(), Has.Length.EqualTo(512));
+
+            var texture = new Texture2D(2, 2);
+            try
+            {
+                var reference = RequireDictionary(
+                    MCPAssetGraphUtility.SanitizeValue(texture));
+                Assert.That(reference["type"], Is.EqualTo(typeof(Texture2D).FullName));
+                Assert.That(reference.ContainsKey("width"), Is.False);
+                Assert.That(MiniJson.Serialize(reference).Length, Is.LessThan(500));
+            }
+            finally
+            {
+                Object.DestroyImmediate(texture);
+            }
+        }
+
+        [Test]
+        public void ImportSettings_UsesSemanticFieldsAndRejectsUnknownNestedSettings()
+        {
+            const string texturePath = TEST_FOLDER + "/Importer Settings.png";
+            CreateSingleSpriteTexture(texturePath, Color.white);
+
+            var info = RequireDictionary(MCPAssetImportSettingsCommands.Get(
+                new Dictionary<string, object> { { "assetPath", texturePath } }));
+            Assert.That(info["success"], Is.EqualTo(true));
+            Assert.That(info["importerType"], Is.EqualTo(nameof(TextureImporter)));
+            var original = (TextureImporter)AssetImporter.GetAtPath(texturePath);
+            FilterMode before = original.filterMode;
+
+            var dryRun = RequireDictionary(MCPAssetImportSettingsCommands.Set(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", texturePath },
+                    { "settings", new Dictionary<string, object>
+                        {
+                            { "filterMode", before == FilterMode.Point
+                                ? "Bilinear"
+                                : "Point" },
+                        }
+                    },
+                    { "dryRun", true },
+                }));
+            Assert.That(dryRun["success"], Is.EqualTo(true));
+            Assert.That(((TextureImporter)AssetImporter.GetAtPath(texturePath)).filterMode,
+                Is.EqualTo(before));
+
+            var invalid = RequireDictionary(MCPAssetImportSettingsCommands.Set(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", texturePath },
+                    { "settings", new Dictionary<string, object>() },
+                    { "platform", "Standalone" },
+                    { "platformSettings", new Dictionary<string, object>
+                        {
+                            { "m_InternalSerializedField", true },
+                        }
+                    },
+                }));
+            Assert.That(invalid["success"], Is.EqualTo(false));
+            Assert.That(invalid["errorCode"], Is.EqualTo("invalid_import_setting"));
+        }
+
+        [Test]
+        public void MaterialProperties_AreTypedPaginatedAndAtomicOnValidationFailure()
+        {
+            const string materialPath = TEST_FOLDER + "/Semantic Material.mat";
+            Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
+            Assert.That(shader, Is.Not.Null);
+            var material = new Material(shader);
+            AssetDatabase.CreateAsset(material, materialPath);
+            Assert.That(material.HasProperty("_Color"), Is.True);
+
+            var page = RequireDictionary(MCPMaterialCommands.GetProperties(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", materialPath },
+                    { "limit", 1 },
+                }));
+            Assert.That(page["success"], Is.EqualTo(true));
+            Assert.That(Convert.ToInt32(page["propertyTotal"]), Is.GreaterThan(0));
+            var pageMaterial = RequireDictionary(page["material"]);
+            Assert.That(((Dictionary<string, object>)pageMaterial["properties"]).Count,
+                Is.EqualTo(1));
+
+            Color before = material.GetColor("_Color");
+            var invalid = RequireDictionary(MCPMaterialCommands.SetProperties(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", materialPath },
+                    { "properties", new Dictionary<string, object>
+                        {
+                            { "_MissingProperty", 1f },
+                        }
+                    },
+                }));
+            Assert.That(invalid["success"], Is.EqualTo(false));
+            Assert.That(material.GetColor("_Color"), Is.EqualTo(before));
+
+            var updated = RequireDictionary(MCPMaterialCommands.SetProperties(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", materialPath },
+                    { "properties", new Dictionary<string, object>
+                        {
+                            { "_Color", new Dictionary<string, object>
+                                {
+                                    { "r", 0.2f }, { "g", 0.4f },
+                                    { "b", 0.6f }, { "a", 0.8f },
+                                }
+                            },
+                        }
+                    },
+                }));
+            Assert.That(updated["success"], Is.EqualTo(true));
+            Color actual = material.GetColor("_Color");
+            Assert.That(actual.r, Is.EqualTo(0.2f).Within(0.001f));
+            Assert.That(actual.g, Is.EqualTo(0.4f).Within(0.001f));
+            Assert.That(actual.b, Is.EqualTo(0.6f).Within(0.001f));
+            Assert.That(actual.a, Is.EqualTo(0.8f).Within(0.001f));
+        }
+
+        [Test]
+        public void SceneWorkspace_ListIsConciseAndHasNoOpaqueSceneHandle()
+        {
+            var result = RequireDictionary(MCPSceneWorkspaceCommands.Execute(
+                new Dictionary<string, object> { { "action", "list" } }));
+            Assert.That(result["success"], Is.EqualTo(true));
+            var scenes = (List<Dictionary<string, object>>)result["scenes"];
+            Assert.That(scenes, Is.Not.Empty);
+            Assert.That(scenes.All(scene => !scene.ContainsKey("handle")), Is.True);
+            Assert.That(scenes.Count(scene => Convert.ToBoolean(scene["active"])),
+                Is.EqualTo(1));
+        }
+
+        [Test]
+        public void PhysicsQueries_UseOneRouteContractFor2DAnd3D()
+        {
+            var target = new GameObject("Unity MCP 2D Physics Target");
+            target.transform.position = new Vector3(2f, 0f, 0f);
+            target.AddComponent<BoxCollider2D>();
+            try
+            {
+                Physics2D.SyncTransforms();
+                var hit2D = RequireDictionary(MCPPhysicsCommands.Raycast(
+                    new Dictionary<string, object>
+                    {
+                        { "dimension", "2D" },
+                        { "origin", new Dictionary<string, object>
+                            {
+                                { "x", 0f }, { "y", 0f }, { "z", 0f },
+                            }
+                        },
+                        { "direction", new Dictionary<string, object>
+                            {
+                                { "x", 1f }, { "y", 0f }, { "z", 0f },
+                            }
+                        },
+                        { "maxDistance", 10f },
+                    }));
+                Assert.That(hit2D["dimension"], Is.EqualTo("2D"));
+                Assert.That(hit2D["hit"], Is.EqualTo(true));
+
+                var overlap = RequireDictionary(MCPPhysicsCommands.OverlapSphere(
+                    new Dictionary<string, object>
+                    {
+                        { "dimension", "2D" },
+                        { "center", new Dictionary<string, object>
+                            {
+                                { "x", 2f }, { "y", 0f }, { "z", 0f },
+                            }
+                        },
+                        { "radius", 1f },
+                    }));
+                Assert.That(overlap["dimension"], Is.EqualTo("2D"));
+                Assert.That(Convert.ToInt32(overlap["count"]), Is.GreaterThanOrEqualTo(1));
+
+                var miss3D = RequireDictionary(MCPPhysicsCommands.Raycast(
+                    new Dictionary<string, object>
+                    {
+                        { "dimension", "3D" },
+                        { "origin", new Dictionary<string, object>
+                            {
+                                { "x", 100000f }, { "y", 100000f }, { "z", 100000f },
+                            }
+                        },
+                        { "direction", new Dictionary<string, object>
+                            {
+                                { "x", 1f }, { "y", 0f }, { "z", 0f },
+                            }
+                        },
+                        { "maxDistance", 1f },
+                    }));
+                Assert.That(miss3D["dimension"], Is.EqualTo("3D"));
+                Assert.That(miss3D["hit"], Is.EqualTo(false));
+            }
+            finally
+            {
+                Object.DestroyImmediate(target);
+            }
+        }
+
+        [Test]
+        public void AudioMixerTransaction_CreatesSemanticGroupOnTemporaryMixer()
+        {
+            const string mixerPath = TEST_FOLDER + "/Semantic Mixer.mixer";
+            Type controllerType = MCPAssetGraphUtility.FindType(
+                "UnityEditor.Audio.AudioMixerController");
+            Assert.That(controllerType, Is.Not.Null);
+            MethodInfo create = controllerType.GetMethod("CreateMixerControllerAtPath",
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+                null, new[] { typeof(string) }, null);
+            Assert.That(create, Is.Not.Null);
+            Assert.That(create.Invoke(null, new object[] { mixerPath }), Is.Not.Null);
+            AssetDatabase.SaveAssets();
+
+            var before = RequireDictionary(MCPAudioMixerCommands.Info(
+                new Dictionary<string, object> { { "assetPath", mixerPath } }));
+            var groups = (List<Dictionary<string, object>>)before["groups"];
+            string masterId = groups.Single(group => group["name"].ToString() == "Master")
+                ["localId"].ToString();
+
+            var dryRun = RequireDictionary(MCPAudioMixerCommands.Transaction(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", mixerPath },
+                    { "dryRun", true },
+                    { "operations", new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "action", "create-group" },
+                                { "name", "Music" },
+                                { "parentGroupLocalId", masterId },
+                            },
+                        }
+                    },
+                }));
+            Assert.That(dryRun["success"], Is.EqualTo(true));
+
+            var transaction = RequireDictionary(MCPAudioMixerCommands.Transaction(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", mixerPath },
+                    { "operations", new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "action", "create-group" },
+                                { "name", "Music" },
+                                { "parentGroupLocalId", masterId },
+                            },
+                        }
+                    },
+                }));
+            Assert.That(transaction["success"], Is.EqualTo(true));
+            var after = RequireDictionary(MCPAudioMixerCommands.Info(
+                new Dictionary<string, object> { { "assetPath", mixerPath } }));
+            Assert.That(((List<Dictionary<string, object>>)after["groups"])
+                .Any(group => group["name"].ToString() == "Music"), Is.True);
+            Assert.That(MiniJson.Serialize(after), Does.Not.Contain("m_SavedProperties"));
+        }
+
+        [Test]
+        public void OptionalGraphTools_AreConciseAndFailExplicitlyWhenUnavailable()
+        {
+            bool timelineAvailable =
+                MCPCapabilityRegistry.IsCapabilityAvailable("timeline");
+            if (timelineAvailable)
+            {
+                const string timelinePath = TEST_FOLDER + "/Semantic Timeline.playable";
+                Type timelineType = MCPAssetGraphUtility.FindType(
+                    "UnityEngine.Timeline.TimelineAsset");
+                Assert.That(timelineType, Is.Not.Null);
+                var timeline = ScriptableObject.CreateInstance(timelineType);
+                AssetDatabase.CreateAsset(timeline, timelinePath);
+                var info = RequireDictionary(MCPTimelineCommands.Info(
+                    new Dictionary<string, object>
+                    {
+                        { "assetPath", timelinePath },
+                    }));
+                Assert.That(info["success"], Is.EqualTo(true));
+                Assert.That(info.ContainsKey("serializedGraph"), Is.False);
+                Object.DestroyImmediate(timeline, true);
+            }
+            else
+            {
+                Assert.That(MCPCapabilityRegistry.IsRouteAvailable("timeline/info"),
+                    Is.False);
+            }
+
+            object vfx = MCPVFXGraphCommands.Info(new Dictionary<string, object>
+            {
+                { "assetPath", TEST_FOLDER + "/Missing.vfx" },
+            });
+            var vfxResult = RequireDictionary(vfx);
+            Assert.That(vfxResult["errorCode"],
+                Is.EqualTo(MCPCapabilityRegistry.IsCapabilityAvailable("vfxgraph")
+                    ? "asset_not_found"
+                    : "capability_unavailable"));
+
+            object cinemachine = MCPCinemachineCommands.Info(
+                new Dictionary<string, object>());
+            var cinemachineResult = RequireDictionary(cinemachine);
+            if (MCPCapabilityRegistry.IsCapabilityAvailable("cinemachine"))
+            {
+                Assert.That(cinemachineResult["success"], Is.EqualTo(true));
+                Assert.That(Convert.ToInt32(cinemachineResult["limit"]),
+                    Is.EqualTo(100));
+            }
+            else
+            {
+                Assert.That(cinemachineResult["errorCode"],
+                    Is.EqualTo("capability_unavailable"));
+            }
+        }
+
+        [Test]
+        public void BuildProfileAndAddressablesExposeValidatedDryRuns()
+        {
+            if (MCPCapabilityRegistry.IsCapabilityAvailable("build-profile"))
+            {
+                var profile = RequireDictionary(MCPBuildProfileCommands.Execute(
+                    new Dictionary<string, object> { { "action", "info" } }));
+                Assert.That(profile["success"], Is.EqualTo(true));
+                Assert.That(profile["available"], Is.EqualTo(true));
+            }
+
+            if (!MCPCapabilityRegistry.IsCapabilityAvailable("addressables"))
+                return;
+            var info = RequireDictionary(MCPAddressablesCommands.Info(
+                new Dictionary<string, object> { { "limit", 1 } }));
+            if (info.TryGetValue("success", out object success) &&
+                success is bool succeeded && succeeded)
+            {
+                string label = "__UnityMCP_DryRun_" + Guid.NewGuid().ToString("N");
+                string group = "__UnityMCP_DryRun_" + Guid.NewGuid().ToString("N");
+                const string entryPath = TEST_FOLDER + "/Addressables Dry Run.asset";
+                AssetDatabase.CreateAsset(
+                    ScriptableObject.CreateInstance<SerializedEnumFlagsTestObject>(),
+                    entryPath);
+                var dryRun = RequireDictionary(MCPAddressablesCommands.Transaction(
+                    new Dictionary<string, object>
+                    {
+                        { "dryRun", true },
+                        { "operations", new List<object>
+                            {
+                                new Dictionary<string, object>
+                                {
+                                    { "action", "create-group" },
+                                    { "group", group },
+                                },
+                                new Dictionary<string, object>
+                                {
+                                    { "action", "create-or-move-entry" },
+                                    { "assetPath", entryPath },
+                                    { "group", group },
+                                },
+                                new Dictionary<string, object>
+                                {
+                                    { "action", "add-label" },
+                                    { "label", label },
+                                },
+                                new Dictionary<string, object>
+                                {
+                                    { "action", "set-label" },
+                                    { "assetPath", entryPath },
+                                    { "label", label },
+                                },
+                            }
+                        },
+                    }));
+                Assert.That(dryRun["success"], Is.EqualTo(true));
+                Assert.That(MiniJson.Serialize(info), Does.Not.Contain(label));
+                Assert.That(MiniJson.Serialize(info), Does.Not.Contain(group));
+            }
+            else
+            {
+                Assert.That(info["errorCode"],
+                    Is.EqualTo("addressables_settings_missing"));
+            }
+        }
+
+        [Test]
+        public void JobsCancel_CancelsQueuedPlayerBuildWithoutStartingIt()
+        {
+            string agentId = "regression-" + Guid.NewGuid().ToString("N");
+            var started = RequireDictionary(MCPBuildCommands.StartBuild(
+                new Dictionary<string, object>
+                {
+                    { "_agentId", agentId },
+                    { "outputPath", Path.Combine(Path.GetTempPath(),
+                        "unity-mcp-never-built.exe") },
+                    { "run", false },
+                    { "clearStuck", true },
+                }));
+            Assert.That(started["status"], Is.EqualTo("queued"));
+
+            var canceled = RequireDictionary(MCPJobCommands.Cancel(
+                new Dictionary<string, object>
+                {
+                    { "_agentId", agentId },
+                    { "jobId", started["jobId"].ToString() },
+                }));
+            Assert.That(canceled["status"], Is.EqualTo("canceled"));
+            Assert.That(canceled["cancelRequested"], Is.EqualTo(true));
+            Assert.That(canceled["cancelMode"], Is.EqualTo("pre-start"));
+        }
+
+        [Test]
         public void ToolMetadata_DefaultIsCompactPaginatedAndSchemaFree()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools());
@@ -5617,6 +6125,7 @@ namespace UnityMCP.Editor.Tests
             Assert.That(tools.All(tool => !tool.ContainsKey("input_schema")), Is.True);
             Assert.That(result.ContainsKey("firstClassTools"), Is.False);
             Assert.That(result.ContainsKey("fallbackTools"), Is.False);
+            Assert.That(result.ContainsKey("metadataIssues"), Is.False);
         }
 
         [Test]
@@ -5626,7 +6135,8 @@ namespace UnityMCP.Editor.Tests
                 firstClassOnly: true,
                 compact: false,
                 includeSchema: true,
-                limit: 200));
+                limit: 200,
+                includeMetadataIssues: true));
             var issues = (List<Dictionary<string, object>>)result["metadataIssues"];
 
             Assert.That(issues, Is.Empty,
@@ -5676,6 +6186,12 @@ namespace UnityMCP.Editor.Tests
                 "project-tools/list",
                 "project-tools/get",
                 "project-tools/execute",
+                "jobs/cancel",
+                "asset/import-settings/get",
+                "asset/import-settings/set",
+                "scene/workspace",
+                "material/properties/get",
+                "material/properties/set",
             }, builtInRoutes);
         }
 

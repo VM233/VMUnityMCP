@@ -69,7 +69,8 @@ namespace UnityMCP.Editor
                 };
             }
 
-            if (TryBuildDirtySceneTransitionError("open another scene", path, out object dirtySceneError))
+            if (TryBuildDirtySceneTransitionError("open another scene", path,
+                    out object dirtySceneError))
                 return dirtySceneError;
 
             try

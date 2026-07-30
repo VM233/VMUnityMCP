@@ -867,6 +867,9 @@ namespace UnityMCP.Editor
                                value == null || Convert.ToBoolean(value);
                 bool includeSchema = args.TryGetValue("includeSchema", out value) &&
                                      value != null && Convert.ToBoolean(value);
+                bool includeMetadataIssues =
+                    args.TryGetValue("includeMetadataIssues", out value) &&
+                    value != null && Convert.ToBoolean(value);
                 int offset = args.TryGetValue("offset", out value) && value != null
                     ? Convert.ToInt32(value)
                     : 0;
@@ -875,7 +878,7 @@ namespace UnityMCP.Editor
                     : 50;
                 string metadataCategory = args.TryGetValue("category", out value) ? value?.ToString() : null;
                 return MCPToolMetadata.GetRegisteredTools(firstClassOnly, compact, includeSchema,
-                    offset, limit, metadataCategory);
+                    offset, limit, metadataCategory, includeMetadataIssues);
             }
             if (path == "_meta/capabilities")
             {
@@ -940,6 +943,8 @@ namespace UnityMCP.Editor
                     return MCPJobHistory.List(ParseJson(body));
                 case "jobs/get":
                     return MCPJobHistory.Get(ParseJson(body));
+                case "jobs/cancel":
+                    return MCPJobCommands.Cancel(ParseJson(body));
 
                 // ─── Stable Generic Route ───
                 case "advanced/execute":
@@ -974,6 +979,8 @@ namespace UnityMCP.Editor
                     return MCPSceneCommands.GetHierarchy(ParseJson(body));
                 case "scene/instantiate-prefab":
                     return MCPAssetCommands.InstantiatePrefab(ParseJson(body));
+                case "scene/workspace":
+                    return MCPSceneWorkspaceCommands.Execute(ParseJson(body));
 
                 // ─── GameObject ───
                 case "gameobject/create":
@@ -1016,6 +1023,10 @@ namespace UnityMCP.Editor
                     return MCPAssetCommands.List(ParseJson(body));
                 case "asset/import":
                     return MCPAssetCommands.Import(ParseJson(body));
+                case "asset/import-settings/get":
+                    return MCPAssetImportSettingsCommands.Get(ParseJson(body));
+                case "asset/import-settings/set":
+                    return MCPAssetImportSettingsCommands.Set(ParseJson(body));
                 case "asset/refresh":
                     return MCPAssetCommands.Refresh(ParseJson(body));
                 case "asset/get-refresh-job":
@@ -1054,12 +1065,34 @@ namespace UnityMCP.Editor
                 // ─── Renderer ───
                 case "renderer/set-material":
                     return MCPRendererCommands.SetMaterial(ParseJson(body));
+                case "material/properties/get":
+                    return MCPMaterialCommands.GetProperties(ParseJson(body));
+                case "material/properties/set":
+                    return MCPMaterialCommands.SetProperties(ParseJson(body));
 
                 // ─── Build ───
                 case "build/start":
                     return MCPBuildCommands.StartBuild(ParseJson(body));
                 case "build/get-job":
                     return MCPBuildCommands.GetBuildJob(ParseJson(body));
+                case "build/profile":
+                    return MCPBuildProfileCommands.Execute(ParseJson(body));
+
+                // ─── Optional Package Workflows ───
+                case "addressables/info":
+                    return MCPAddressablesCommands.Info(ParseJson(body));
+                case "addressables/transaction":
+                    return MCPAddressablesCommands.Transaction(ParseJson(body));
+                case "addressables/build":
+                    return MCPAddressablesCommands.StartBuild(ParseJson(body));
+                case "timeline/info":
+                    return MCPTimelineCommands.Info(ParseJson(body));
+                case "timeline/transaction":
+                    return MCPTimelineCommands.Transaction(ParseJson(body));
+                case "cinemachine/info":
+                    return MCPCinemachineCommands.Info(ParseJson(body));
+                case "cinemachine/transaction":
+                    return MCPCinemachineCommands.Transaction(ParseJson(body));
 
                 // ─── Console ───
                 case "console/query":
@@ -1243,6 +1276,10 @@ namespace UnityMCP.Editor
                     return MCPAudioCommands.CreateAudioSource(ParseJson(body));
                 case "audio/set-global":
                     return MCPAudioCommands.SetGlobalAudio(ParseJson(body));
+                case "audio-mixer/info":
+                    return MCPAudioMixerCommands.Info(ParseJson(body));
+                case "audio-mixer/transaction":
+                    return MCPAudioMixerCommands.Transaction(ParseJson(body));
 
                 // ─── Tags & Layers ───
                 case "taglayer/info":
@@ -1371,6 +1408,10 @@ namespace UnityMCP.Editor
                     return MCPShaderGraphCommands.SetGraphNodeProperty(ParseJson(body));
                 case "shadergraph/get-node-types":
                     return MCPShaderGraphCommands.GetNodeTypes(ParseJson(body));
+                case "vfxgraph/info":
+                    return MCPVFXGraphCommands.Info(ParseJson(body));
+                case "vfxgraph/transaction":
+                    return MCPVFXGraphCommands.Transaction(ParseJson(body));
 
                 // ─── Agent Management ───
                 case "agents/list":

@@ -2,6 +2,17 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.2.0] - 2026-07-30
+
+- Add first-class persistent-job cancellation for Player Builds, Unity tests, package-test workflows, Memory Profiler snapshots, and Addressables builds, with explicit cooperative/pre-start cancellation results.
+- Add semantic Texture, Model, and Audio importer inspection/editing, multi-scene workspace management, and typed Material shader-property/keyword editing without exposing Unity's internal serialized layouts.
+- Extend the existing Physics raycast and overlap routes with one `dimension=2D|3D` contract, deterministic bounded results, total counts, and truncation metadata instead of duplicating the tool surface.
+- Add lazy, capability-gated VFX Graph, Audio Mixer, Build Profile, Addressables, Timeline, and Cinemachine inspection/transaction routes; Addressables content builds reuse the persistent job system.
+- Declare optional capabilities independently by route, package name, detected version, or minimum Unity version so unavailable integrations remain out of the published tool surface.
+- Make the route registry authoritative for every deferred route, including `testing/list-tests`, and enforce the relationship with regression tests.
+- Bound large graph, hierarchy, component, property, and query replies; keep raw serialized graph data and catalog metadata diagnostics opt-in; reject ambiguous selectors and unknown transaction fields; preflight ordered transactions before mutation.
+- Preserve the legacy `scene/open` response and dirty-scene error contract while assigning additive/close/active-scene behavior to `scene/workspace`.
+
 ## [5.1.0] - 2026-07-30
 
 - Bound the default first-class catalog to a release-managed set of common routes; keep specialized and compatibility routes available through lazy discovery.

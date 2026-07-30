@@ -62,15 +62,23 @@ http://127.0.0.1:7890/api/ping
 | Prefab asset search | `unity_prefab_asset_hierarchy` | `prefab-asset/hierarchy` | Read a prefab asset hierarchy directly from disk. |
 | Prefab asset search | `unity_prefab_asset_get_properties` | `prefab-asset/get-properties` | Read serialized component properties inside a prefab asset. |
 | Scene editing | `unity_scene_instantiate_prefab` | `scene/instantiate-prefab` | Instantiate a prefab asset into the currently open scene. |
+| Scene workspace | `unity_scene_workspace` | `scene/workspace` | List loaded scenes, open additively or singly, close with an explicit dirty-scene policy, and set the active scene. |
 | Safe assets | `unity_asset_refresh` | `asset/refresh` | Start a reload-safe AssetDatabase refresh and return a refresh job ID. |
 | Safe assets | `unity_asset_get_refresh_job` | `asset/get-refresh-job` | Poll a reload-safe AssetDatabase refresh through compilation or domain reload. |
 | Safe assets | `unity_asset_import` | `asset/import` | Preflight and import external assets with shared TextureImporter defaults, decoded-pixel/file-byte deduplication, frame-batched execution, per-item results, and rollback. |
+| Safe assets | `unity_asset_import_settings_get` | `asset/import-settings/get` | Read semantic TextureImporter, ModelImporter, or AudioImporter settings and optional platform overrides. |
+| Safe assets | `unity_asset_import_settings_set` | `asset/import-settings/set` | Validate and update semantic importer settings with dry-run and one controlled reimport. |
 | Safe assets | `unity_asset_import_unitypackage` | `asset/import-unitypackage` | Start a reload-safe, non-interactive `.unitypackage` import; poll `unity_jobs_get` until callback-confirmed completion, with packaged `.meta` GUIDs preserved. |
 | Safe assets | `unity_asset_rename` | `asset/rename` | Rename an asset through `AssetDatabase.RenameAsset`, preserving `.meta`, GUID, references, and Single Sprite internal names. |
 | Safe assets | `unity_asset_move` | `asset/move` | Preflight and move one or more assets, preserving `.meta` GUIDs, synchronizing Single Sprite internal names when filenames change, and rolling back completed moves when configured to stop on failure. |
 | Scene references | `unity_component_set_reference` | `component/set-reference` | Assign one or more ObjectReference properties with `execution.mode` and shared target defaults. |
 | Serialization | `unity_serialized_object_get` | `serialized-object/get` | Read serialized properties from a scene object, component, or asset. |
 | Serialization | `unity_serialized_object_set` | `serialized-object/set` | Set one serialized property on a scene object, component, or asset. |
+| Materials | `unity_material_properties_get` | `material/properties/get` | Read typed, paginated shader properties, textures, keywords, and render settings from a Material asset. |
+| Materials | `unity_material_properties_set` | `material/properties/set` | Atomically validate and update typed shader properties, textures, keywords, and render settings. |
+| Physics | `unity_physics_raycast` | `physics/raycast` | Raycast through either Physics or Physics2D with `dimension=3D|2D` and bounded multi-hit results. |
+| Physics | `unity_physics_overlap_sphere` | `physics/overlap-sphere` | Run a 3D sphere or 2D circle overlap through one route contract. |
+| Physics | `unity_physics_overlap_box` | `physics/overlap-box` | Run a 3D or 2D box overlap through one route contract. |
 | Console inspection | `unity_console_query` | `console/query` | Filter recent console entries by time, log type, message, source stack frame, full stack text, or only entries after the last Play transition. |
 | Compilation inspection | `unity_compilation_errors` | `compilation/errors` | Return tracked Unity compilation errors and warnings, always including a separate deprecated-warning summary even when filtering for errors. |
 | Animator editing | `unity_animation_transition_info` | `animation/transition-info` | Read full Animator transition details, including conditions, exit time, duration, offset, and interruption settings. |
@@ -113,6 +121,18 @@ http://127.0.0.1:7890/api/ping
 | Texture pipeline | `unity_texture_check_ui_import_settings` | `texture/check-ui-import-settings` | Check UI pixel-art image import settings, including pixel sprite defaults plus optional expected dimensions, border, and max texture size. |
 | Player Build | `unity_build_start` | `build/start` | Start a persistent Player Build job and optionally run the built player. |
 | Player Build | `unity_build_get_job` | `build/get-job` | Poll the Player Build job for its final BuildReport and optional run result. |
+| Build Profiles (Unity 6) | `unity_build_profile` | `build/profile` | Inspect paginated Build Profiles or transact active profile, scenes, defines, and supported profile properties. |
+| VFX Graph (optional) | `unity_vfxgraph_info` | `vfxgraph/info` | Inspect bounded VFX systems, exposed properties, slots, and connections; raw serialized data is opt-in. |
+| VFX Graph (optional) | `unity_vfxgraph_transaction` | `vfxgraph/transaction` | Preflight and apply serialized VFX Graph object edits through stable asset-graph selectors. |
+| Audio Mixer | `unity_audio_mixer_info` | `audio-mixer/info` | Inspect bounded Mixer groups, snapshots, effects, parameters, and exposed parameters. |
+| Audio Mixer | `unity_audio_mixer_transaction` | `audio-mixer/transaction` | Preflight and edit Mixer groups, snapshots, effects, routing, values, and exposed parameters. |
+| Addressables (optional) | `unity_addressables_info` | `addressables/info` | Inspect paginated groups, entries, labels, schemas, and current settings. |
+| Addressables (optional) | `unity_addressables_transaction` | `addressables/transaction` | Preflight and apply ordered group, entry, address, and label operations. |
+| Addressables (optional) | `unity_addressables_build` | `addressables/build` | Start a persistent Addressables content build job. |
+| Timeline (optional) | `unity_timeline_info` | `timeline/info` | Inspect bounded tracks, clips, markers, bindings, and exposed references; raw serialization is opt-in. |
+| Timeline (optional) | `unity_timeline_transaction` | `timeline/transaction` | Preflight and apply Timeline asset-graph edits with optional bounded post-state. |
+| Cinemachine (optional) | `unity_cinemachine_info` | `cinemachine/info` | List paginated Cinemachine cameras and semantic target/lens/component state across loaded scenes. |
+| Cinemachine (optional) | `unity_cinemachine_transaction` | `cinemachine/transaction` | Preflight and edit enabled state, priority, targets, lens values, and component properties. |
 | Package management | `unity_packages_update_git` | `packages/update-git` | Update a Git package through a deferred route; same-commit updates skip Unity Package Manager resolve by default. |
 | Package management | `unity_packages_add` | `packages/add` | Add a registry, Git, local, or tarball package through Unity Package Manager. |
 | Package management | `unity_packages_remove` | `packages/remove` | Remove an installed package without blocking the Editor main thread. |
@@ -126,6 +146,7 @@ http://127.0.0.1:7890/api/ping
 | UI Toolkit authoring | `unity_uitoolkit_authoring_transaction` | `uitoolkit/authoring-transaction` | Apply multi-file UXML/USS edits with rollback. |
 | Jobs | `unity_jobs_list` | `jobs/list` | List paginated job history owned by the calling agent. |
 | Jobs | `unity_jobs_get` | `jobs/get` | Read one owned historical job snapshot. |
+| Jobs | `unity_jobs_cancel` | `jobs/cancel` | Request cancellation of an owned Player Build, Unity test, package-test, Memory Profiler snapshot, or Addressables build job. |
 | Project extensions | `unity_project_tools_list` | `project-tools/list` | List compact project-tool names, descriptions, and behavior flags without parameter schemas. |
 | Project extensions | `unity_project_tools_get` | `project-tools/get` | Get the complete descriptor and input schema for one project tool. |
 | Project extensions | `unity_project_tools_execute` | `project-tools/execute` | Execute a project tool by `toolName` after inspecting its schema. |
@@ -207,7 +228,13 @@ Finally execute it:
 ## Notes
 
 - Use the upstream README for the general feature list and MCP setup flow.
-- `_meta/tools` defaults to compact first-class metadata, 50 tools per page, and no schemas. Use `includeSchema=true`, `offset`, `limit`, and optional `category` as needed.
+- `_meta/tools` defaults to compact first-class metadata, 50 tools per page, and no schemas. Use `includeSchema=true`, `offset`, `limit`, and optional `category` as needed; request `includeMetadataIssues=true` only when auditing catalog metadata.
+- `_meta/capabilities` declares VFX Graph, Localization, Shader Graph, Addressables, Timeline, Cinemachine, and Unity 6 Build Profiles independently, including package names and detected versions. Package-specific routes publish lazily only while their capability is available.
+- Graph and integration info routes use semantic result limits and truncation metadata. VFX Graph, Timeline, and Audio Mixer raw serialized output is omitted unless explicitly requested.
+- Transaction routes preflight their complete ordered operation list before mutation and support `dryRun` where applicable. Unknown fields and ambiguous name/type selectors are rejected instead of being guessed.
+- `jobs/cancel` is workflow-aware and cooperative: queued work is canceled before it starts where possible; running APIs are canceled only when Unity exposes a safe cancellation mechanism. Poll the owning job route for the terminal result.
+- `scene/open` retains its compact single-scene compatibility contract. Use `scene/workspace` for additive loading, close, active-scene switching, or explicit save/discard policies.
+- Importer tools expose stable semantic fields rather than `SerializedObject` internals. Physics queries select 2D or 3D through `dimension` and cap returned hits with `maxResults`.
 - Configure namespaces used by every `editor/execute-code` call under **Project Settings > Unity MCP > Execute Code**. Keep one namespace per line; the `usings` request field remains available for one-off imports.
 - Successful wire responses omit the redundant inner `success=true`. Project-tool success envelopes are unwrapped, exact collection counts and completed-pagination aliases are omitted, and false truncation flags are absent. A partial page keeps only its collection, total, and `nextOffset`.
 - Wire-only Unity values use compact scalar forms such as `position: "(1,2)"`, `rect: "(1,2)-(4,5),size:(3,3)"`, `bounds: "(0,0,0)-(2,4,6),size:(2,4,6)"`, `color: "rgba(1,0.5,0,1)"`, and `margin: "LTRB(1,2,3,4)"`. Equivalent dictionary shapes, execute-code values, complete reflected `Rect` aliases, and dimension pairs inside larger results are compacted centrally; internally queued command data remains structured.

@@ -25,6 +25,7 @@ namespace UnityMCP.Editor
         {
             public readonly object CallbackGate = new object();
             public string JobId;
+            public string OwnerAgentId;
             public string ApiType;
             public string CaptureFlags;
             public string TempPath;
@@ -38,6 +39,7 @@ namespace UnityMCP.Editor
             public bool CallbackReceived;
             public bool CallbackSuccess;
             public string CallbackPath;
+            public bool CancelRequested;
         }
 
         private static MemorySnapshotJob _snapshotJob;
@@ -401,6 +403,9 @@ namespace UnityMCP.Editor
                 var job = new MemorySnapshotJob
                 {
                     JobId = Guid.NewGuid().ToString("N"),
+                    OwnerAgentId = args != null && args.TryGetValue("_agentId", out object agentValue)
+                        ? agentValue?.ToString()
+                        : "anonymous",
                     ApiType = memProfilerType.FullName,
                     TempPath = tempPath,
                     SnapshotPath = snapshotPath,
@@ -409,6 +414,7 @@ namespace UnityMCP.Editor
                     StartedAt = startedAt,
                 };
                 _snapshotJob = job;
+                RecordSnapshotJob(job);
 
                 void ResolveOnce(object result)
                 {
@@ -422,12 +428,14 @@ namespace UnityMCP.Editor
                 void CheckProgress()
                 {
                     RefreshSnapshotJobFromFiles(job);
+                    RecordSnapshotJob(job);
                     if (job.Status != "Capturing")
                     {
                         var terminal = SnapshotJobData(job);
                         terminal["success"] = job.Status == "Completed";
-                        terminal["completed"] = job.Status == "Completed";
-                        if (job.Status == "Failed")
+                        terminal["completed"] = true;
+                        terminal["canceled"] = job.Status == "Canceled";
+                        if (job.Status == "Failed" || job.Status == "Canceled")
                             terminal["error"] = job.Error;
                         ResolveOnce(terminal);
                         return;
@@ -517,8 +525,45 @@ namespace UnityMCP.Editor
             RefreshSnapshotJobFromFiles(_snapshotJob);
             var result = SnapshotJobData(_snapshotJob);
             result["success"] = true;
-            result["completed"] = _snapshotJob.Status == "Completed";
+            result["completed"] = _snapshotJob.Status == "Completed" ||
+                                  _snapshotJob.Status == "Canceled";
+            RecordSnapshotJob(_snapshotJob);
             return result;
+        }
+
+        internal static object CancelMemorySnapshot(Dictionary<string, object> args)
+        {
+            string jobId = args != null && args.TryGetValue("jobId", out object jobValue)
+                ? jobValue?.ToString()
+                : "";
+            if (_snapshotJob == null || (!string.IsNullOrEmpty(jobId) && _snapshotJob.JobId != jobId))
+                return MCPResponse.Error($"Memory snapshot job '{jobId}' was not found.",
+                    "job_not_found");
+
+            string requester = args != null && args.TryGetValue("_agentId", out object agentValue)
+                ? agentValue?.ToString()
+                : "anonymous";
+            if (!string.Equals(_snapshotJob.OwnerAgentId ?? "anonymous", requester,
+                    StringComparison.Ordinal))
+                return MCPResponse.Error("Memory snapshot job belongs to another agent.",
+                    "job_owner_mismatch");
+            if (_snapshotJob.Status != "Capturing")
+                return MCPResponse.Error("Memory snapshot job is already terminal.",
+                    "job_already_terminal", false, SnapshotJobData(_snapshotJob));
+
+            _snapshotJob.CancelRequested = true;
+            RecordSnapshotJob(_snapshotJob);
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "jobId", _snapshotJob.JobId },
+                { "jobType", "memory-snapshot" },
+                { "status", "canceling" },
+                { "cancelRequested", true },
+                { "cancelMode", "cooperative" },
+                { "captureMayStillComplete", true },
+                { "message", "Unity does not expose a portable snapshot abort API. The completed capture will be discarded." },
+            };
         }
 
         private static Type ResolveMemoryProfilerType()
@@ -606,6 +651,11 @@ namespace UnityMCP.Editor
 
             if (callbackReceived)
             {
+                if (job.CancelRequested)
+                {
+                    CompleteCanceledSnapshot(job, callbackPath);
+                    return;
+                }
                 if (!callbackSuccess)
                 {
                     job.Status = "Failed";
@@ -637,6 +687,11 @@ namespace UnityMCP.Editor
 
             if (File.Exists(job.SnapshotPath))
             {
+                if (job.CancelRequested)
+                {
+                    CompleteCanceledSnapshot(job, job.SnapshotPath);
+                    return;
+                }
                 job.Status = "Completed";
                 job.CompletedUtc = DateTime.UtcNow.ToString("O");
                 return;
@@ -658,6 +713,11 @@ namespace UnityMCP.Editor
                 string recoveredPath = FinalizeSnapshotFile(job, job.TempPath);
                 if (!string.IsNullOrEmpty(recoveredPath))
                 {
+                    if (job.CancelRequested)
+                    {
+                        CompleteCanceledSnapshot(job, recoveredPath);
+                        return;
+                    }
                     job.SnapshotPath = recoveredPath;
                     job.Status = "Completed";
                     job.CompletedUtc = DateTime.UtcNow.ToString("O");
@@ -707,6 +767,7 @@ namespace UnityMCP.Editor
             return new Dictionary<string, object>
             {
                 { "jobId", job.JobId },
+                { "jobType", "memory-snapshot" },
                 { "status", job.Status },
                 { "apiType", job.ApiType ?? "" },
                 { "captureFlags", job.CaptureFlags ?? "" },
@@ -719,10 +780,50 @@ namespace UnityMCP.Editor
                 { "startedUtc", job.StartedUtc },
                 { "completedUtc", job.CompletedUtc ?? "" },
                 { "timedOut", job.TimedOut },
+                { "cancelRequested", job.CancelRequested },
                 { "captureMayStillComplete", job.Status == "Capturing" },
                 { "elapsedMs", Math.Round((EditorApplication.timeSinceStartup - job.StartedAt) * 1000d, 1) },
                 { "error", job.Error ?? "" },
             };
+        }
+
+        private static void CompleteCanceledSnapshot(MemorySnapshotJob job, string callbackPath)
+        {
+            foreach (string path in new[] { callbackPath, job.TempPath, job.SnapshotPath }
+                         .Where(path => !string.IsNullOrEmpty(path))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (File.Exists(path))
+                        File.Delete(path);
+                }
+                catch (IOException)
+                {
+                    // The native writer can still own the file. A later status poll retries.
+                    return;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return;
+                }
+            }
+
+            job.Status = "Canceled";
+            job.Error = "Canceled by request; completed snapshot output was discarded.";
+            job.CompletedUtc = DateTime.UtcNow.ToString("O");
+            RecordSnapshotJob(job);
+        }
+
+        private static void RecordSnapshotJob(MemorySnapshotJob job)
+        {
+            if (job == null)
+                return;
+            string status = job.CancelRequested && job.Status == "Capturing"
+                ? "canceling"
+                : job.Status.ToLowerInvariant();
+            MCPJobHistory.Record("memory-snapshot", job.JobId, job.OwnerAgentId, status,
+                SnapshotJobData(job));
         }
 
         // ─── Helpers ───

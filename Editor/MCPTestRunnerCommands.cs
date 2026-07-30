@@ -39,12 +39,12 @@ namespace UnityMCP.Editor
             RestoreFromSessionState();
             SetTestRunActive(_currentJobId != null &&
                              _jobs.TryGetValue(_currentJobId, out var restoredJob) &&
-                             restoredJob.Status == TestJobStatus.Running);
+                             IsActive(restoredJob.Status));
 
             // Re-register callbacks if a test job is in progress
             // (handles domain reload during PlayMode tests if guard failed)
             if (_currentJobId != null && _jobs.TryGetValue(_currentJobId, out var job)
-                && job.Status == TestJobStatus.Running)
+                && IsActive(job.Status))
             {
                 EnsureCallbacksRegistered();
                 Debug.Log($"[MCP TestRunner] Re-registered callbacks after domain reload for job {_currentJobId}");
@@ -68,7 +68,7 @@ namespace UnityMCP.Editor
         {
             // Check if a test run is already in progress
             if (_currentJobId != null && _jobs.TryGetValue(_currentJobId, out var existing)
-                && existing.Status == TestJobStatus.Running)
+                && IsActive(existing.Status))
             {
                 // Allow force-clear of stuck jobs
                 bool clearStuck = args.ContainsKey("clearStuck") && Convert.ToBoolean(args["clearStuck"]);
@@ -195,7 +195,8 @@ namespace UnityMCP.Editor
             var executionSettings = new ExecutionSettings(filter);
             try
             {
-                _testRunnerApi.Execute(executionSettings);
+                job.RunGuid = _testRunnerApi.Execute(executionSettings);
+                SaveToSessionState();
             }
             catch (Exception ex)
             {
@@ -218,6 +219,63 @@ namespace UnityMCP.Editor
                 { "jobId", job.JobId },
                 { "status", "running" },
                 { "mode", testMode.ToString() }
+            };
+        }
+
+        internal static object CancelTestJob(Dictionary<string, object> args)
+        {
+            string jobId = args != null && args.TryGetValue("jobId", out object jobValue)
+                ? jobValue?.ToString()
+                : null;
+            if (string.IsNullOrEmpty(jobId) || !_jobs.TryGetValue(jobId, out var job))
+                return MCPResponse.Error($"Test job '{jobId}' was not found.", "job_not_found");
+
+            string requester = args != null && args.TryGetValue("_agentId", out object agentValue)
+                ? agentValue?.ToString()
+                : "anonymous";
+            if (!string.Equals(job.AgentId ?? "anonymous", requester, StringComparison.Ordinal))
+                return MCPResponse.Error("Test job belongs to another agent.", "job_owner_mismatch");
+            if (!IsActive(job.Status))
+                return MCPResponse.Error("Test job is already terminal.", "job_already_terminal",
+                    false, SerializeJob(job, false, false, false, 0, 100, 20));
+            if (string.IsNullOrEmpty(job.RunGuid))
+                return MCPResponse.Error("Unity Test Runner has not assigned a run GUID yet.",
+                    "job_cancel_not_ready", true, new Dictionary<string, object>
+                    {
+                        { "jobId", job.JobId },
+                        { "status", job.Status.ToString().ToLowerInvariant() },
+                    });
+
+            bool accepted;
+            try
+            {
+                accepted = TestRunnerApi.CancelTestRun(job.RunGuid);
+            }
+            catch (Exception exception)
+            {
+                return MCPResponse.Error(exception.GetBaseException().Message, "job_cancel_failed");
+            }
+
+            if (!accepted)
+                return MCPResponse.Error("Unity Test Runner rejected the cancellation request.",
+                    "job_cancel_rejected", true, new Dictionary<string, object>
+                    {
+                        { "jobId", job.JobId },
+                        { "runGuid", job.RunGuid },
+                    });
+
+            job.CancelRequested = true;
+            job.Status = TestJobStatus.Canceling;
+            job.LastUpdatedAt = DateTime.UtcNow;
+            SaveToSessionState();
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "jobId", job.JobId },
+                { "jobType", "unity-test" },
+                { "status", "canceling" },
+                { "cancelRequested", true },
+                { "cancelMode", "unity-test-runner" },
             };
         }
 
@@ -450,7 +508,7 @@ namespace UnityMCP.Editor
 
         private static void TryFinalizeFromLeafResults(TestJob job)
         {
-            if (job.Status != TestJobStatus.Running || job.TotalTests <= 0 ||
+            if (!IsActive(job.Status) || job.TotalTests <= 0 ||
                 job.CompletedTests < job.TotalTests || job.CurrentTestName != null)
                 return;
 
@@ -465,7 +523,13 @@ namespace UnityMCP.Editor
 
         private static void FinalizeJob(TestJob job, double totalDuration, bool recoveredFromLeafResults)
         {
-            if (job.TotalTests == 0 && job.HasExplicitFilters)
+            if (job.CancelRequested)
+            {
+                job.Status = TestJobStatus.Canceled;
+                job.Error = "Canceled by request.";
+                job.ErrorCode = "job_canceled";
+            }
+            else if (job.TotalTests == 0 && job.HasExplicitFilters)
             {
                 job.Status = TestJobStatus.Failed;
                 job.Error = "No tests matched the requested filters.";
@@ -540,7 +604,7 @@ namespace UnityMCP.Editor
             }
 
             // Blocked reason detection
-            if (job.Status == TestJobStatus.Running)
+            if (IsActive(job.Status))
             {
                 if (EditorApplication.isCompiling)
                     progress["blockedReason"] = "compiling";
@@ -665,6 +729,8 @@ namespace UnityMCP.Editor
                     {
                         { "jobId", j.JobId },
                         { "agentId", j.AgentId ?? "anonymous" },
+                        { "runGuid", j.RunGuid ?? "" },
+                        { "cancelRequested", j.CancelRequested },
                         { "mode", j.Mode.ToString() },
                         { "status", j.Status.ToString() },
                         { "startedAt", j.StartedAt.ToString("O") },
@@ -721,6 +787,11 @@ namespace UnityMCP.Editor
                         AgentId = dict.TryGetValue("agentId", out object agentValue)
                             ? agentValue?.ToString()
                             : "anonymous",
+                        RunGuid = dict.TryGetValue("runGuid", out object runGuid)
+                            ? runGuid?.ToString()
+                            : "",
+                        CancelRequested = dict.TryGetValue("cancelRequested", out object cancelRequested) &&
+                                          Convert.ToBoolean(cancelRequested),
                         Mode = Enum.TryParse<TestMode>(dict["mode"].ToString(), out var m) ? m : TestMode.EditMode,
                         Status = Enum.TryParse<TestJobStatus>(dict["status"].ToString(), out var s)
                             ? s
@@ -758,7 +829,7 @@ namespace UnityMCP.Editor
                     }
 
                     // If job was running but survived a domain reload, mark as failed
-                    if (job.Status == TestJobStatus.Running)
+                    if (IsActive(job.Status))
                     {
                         var elapsed = (DateTime.UtcNow - job.StartedAt).TotalMinutes;
                         if (elapsed > 5)
@@ -786,7 +857,7 @@ namespace UnityMCP.Editor
         private static void CleanupExpiredJobs()
         {
             var expired = _jobs.Values
-                .Where(j => j.Status != TestJobStatus.Running
+                .Where(j => !IsActive(j.Status)
                             && j.CompletedAt.HasValue
                             && (DateTime.UtcNow - j.CompletedAt.Value).TotalMinutes > JobExpiryMinutes)
                 .Select(j => j.JobId)
@@ -889,6 +960,8 @@ namespace UnityMCP.Editor
         internal enum TestJobStatus
         {
             Running,
+            Canceling,
+            Canceled,
             Succeeded,
             Failed
         }
@@ -897,6 +970,8 @@ namespace UnityMCP.Editor
         {
             public string JobId;
             public string AgentId;
+            public string RunGuid;
+            public bool CancelRequested;
             public TestMode Mode;
             public TestJobStatus Status;
             public DateTime StartedAt;
@@ -927,6 +1002,11 @@ namespace UnityMCP.Editor
             // Results
             public List<TestResult> AllResults = new List<TestResult>();
             public List<TestResult> FailuresSoFar = new List<TestResult>();
+        }
+
+        private static bool IsActive(TestJobStatus status)
+        {
+            return status == TestJobStatus.Running || status == TestJobStatus.Canceling;
         }
 
         internal class TestResult

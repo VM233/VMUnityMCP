@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 #if UNITY_EDITOR_WIN
 using System.Runtime.InteropServices;
 #endif
@@ -152,6 +153,88 @@ namespace UnityMCP.Editor
             return response;
         }
 
+        internal static object CancelBuild(Dictionary<string, object> args)
+        {
+            if (_job == null)
+                _job = LoadBuildJob();
+            if (_job == null)
+                return MCPResponse.Error("No Player build job was found.", "job_not_found");
+
+            string jobId = GetString(args, "jobId");
+            if (!string.IsNullOrEmpty(jobId) && jobId != _job.JobId)
+                return MCPResponse.Error($"Player build job '{jobId}' was not found.", "job_not_found");
+
+            string owner = _job.Arguments != null &&
+                           _job.Arguments.TryGetValue("_agentId", out object ownerValue)
+                ? ownerValue?.ToString()
+                : "anonymous";
+            string requester = GetString(args, "_agentId");
+            if (string.IsNullOrEmpty(requester)) requester = "anonymous";
+            if (!string.Equals(owner, requester, StringComparison.Ordinal))
+                return MCPResponse.Error("Player build job belongs to another agent.", "job_owner_mismatch");
+
+            if (_job.IsTerminal)
+                return MCPResponse.Error("Player build job is already terminal.", "job_already_terminal",
+                    false, BuildJobResponse(_job));
+
+            if (_job.Status == "queued")
+            {
+                _job.CancelRequested = true;
+                _job.Status = "canceled";
+                _job.Error = "Canceled before the Player build started.";
+                _job.UpdatedAt = DateTime.UtcNow;
+                SaveBuildJob();
+                UnregisterBuildUpdate();
+                var canceled = BuildJobResponse(_job);
+                canceled["cancelMode"] = "pre-start";
+                canceled["canceled"] = true;
+                return canceled;
+            }
+
+            MethodInfo cancelMethod = typeof(BuildPipeline)
+                .GetMethods(BindingFlags.Static | BindingFlags.Public |
+                            BindingFlags.NonPublic)
+                .FirstOrDefault(method => method.Name == "CancelBuild" &&
+                                          method.GetParameters().Length == 0);
+            if (cancelMethod == null)
+            {
+                return MCPResponse.Error(
+                    "This Unity version cannot preempt a Player build after BuildPipeline.BuildPlayer has started.",
+                    "job_not_preemptible", false, new Dictionary<string, object>
+                    {
+                        { "jobId", _job.JobId },
+                        { "jobType", "player-build" },
+                        { "status", _job.Status },
+                        { "cancelableBeforeStart", true },
+                    });
+            }
+
+            try
+            {
+                object result = cancelMethod.Invoke(null, null);
+                bool accepted = !(result is bool boolResult) || boolResult;
+                if (accepted)
+                {
+                    _job.CancelRequested = true;
+                    _job.UpdatedAt = DateTime.UtcNow;
+                    SaveBuildJob();
+                }
+                return new Dictionary<string, object>
+                {
+                    { "success", accepted },
+                    { "jobId", _job.JobId },
+                    { "jobType", "player-build" },
+                    { "status", _job.Status },
+                    { "cancelRequested", accepted },
+                    { "cancelMode", "unity-build-pipeline" },
+                };
+            }
+            catch (Exception exception)
+            {
+                return MCPResponse.Error(exception.GetBaseException().Message, "job_cancel_failed");
+            }
+        }
+
         private static object ExecuteBuildJob(Dictionary<string, object> args)
         {
             string outputPath = GetString(args, "outputPath");
@@ -214,9 +297,13 @@ namespace UnityMCP.Editor
                 _job.Result = MCPResponse.ToDictionary(ExecuteBuildJob(_job.Arguments));
                 bool success = _job.Result != null && _job.Result.TryGetValue("success", out object value) &&
                                value is bool succeeded && succeeded;
-                _job.Status = success ? "succeeded" : "failed";
+                _job.Status = _job.CancelRequested && !success
+                    ? "canceled"
+                    : success ? "succeeded" : "failed";
                 if (!success && _job.Result != null && _job.Result.TryGetValue("error", out object error))
                     _job.Error = error?.ToString();
+                if (_job.Status == "canceled" && string.IsNullOrEmpty(_job.Error))
+                    _job.Error = "Canceled by request.";
             }
             catch (Exception ex)
             {
@@ -238,6 +325,7 @@ namespace UnityMCP.Editor
                 { "success", job.IsTerminal ? job.Status == "succeeded" : true },
                 { "jobId", job.JobId },
                 { "status", job.Status },
+                { "cancelRequested", job.CancelRequested },
                 { "pollRoute", "build/get-job" },
                 { "startedAt", job.StartedAt.ToString("O") },
                 { "updatedAt", job.UpdatedAt.ToString("O") },
@@ -466,10 +554,11 @@ namespace UnityMCP.Editor
             public Dictionary<string, object> Arguments;
             public Dictionary<string, object> Result;
             public string Error;
+            public bool CancelRequested;
             public DateTime StartedAt;
             public DateTime UpdatedAt;
 
-            public bool IsTerminal => Status == "succeeded" || Status == "failed";
+            public bool IsTerminal => Status == "succeeded" || Status == "failed" || Status == "canceled";
 
             public Dictionary<string, object> ToDictionary()
             {
@@ -480,6 +569,7 @@ namespace UnityMCP.Editor
                     { "arguments", Arguments },
                     { "result", Result },
                     { "error", Error ?? "" },
+                    { "cancelRequested", CancelRequested },
                     { "startedAt", StartedAt.ToString("O") },
                     { "updatedAt", UpdatedAt.ToString("O") },
                 };
@@ -500,6 +590,7 @@ namespace UnityMCP.Editor
                         ? result as Dictionary<string, object>
                         : null,
                     Error = GetString(values, "error"),
+                    CancelRequested = GetBool(values, "cancelRequested", false),
                     StartedAt = ParseDate(values, "startedAt"),
                     UpdatedAt = ParseDate(values, "updatedAt"),
                 };

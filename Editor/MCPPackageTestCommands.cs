@@ -130,6 +130,76 @@ namespace UnityMCP.Editor
             return response;
         }
 
+        internal static object CancelPackageTest(Dictionary<string, object> args)
+        {
+            if (_workflow == null)
+                _workflow = LoadWorkflow();
+            if (_workflow == null)
+                return MCPResponse.Error("No package test workflow was found.", "job_not_found");
+
+            string workflowId = GetString(args, "jobId");
+            if (!string.IsNullOrEmpty(workflowId) && workflowId != _workflow.WorkflowId)
+                return MCPResponse.Error($"Package test workflow '{workflowId}' was not found.",
+                    "job_not_found");
+            if (!string.Equals(_workflow.OwnerAgentId ?? "anonymous",
+                    GetString(args, "_agentId", "anonymous"), StringComparison.Ordinal))
+                return MCPResponse.Error("Package test workflow belongs to another agent.",
+                    "job_owner_mismatch");
+            if (_workflow.IsTerminal)
+                return MCPResponse.Error("Package test workflow is already terminal.",
+                    "job_already_terminal", false, BuildResponse(_workflow));
+
+            _workflow.CancelRequested = true;
+            _workflow.Error = "Canceled by request.";
+
+            object underlyingResult = null;
+            if (!string.IsNullOrEmpty(_workflow.TestJobId))
+            {
+                underlyingResult = MCPTestRunnerCommands.CancelTestJob(new Dictionary<string, object>
+                {
+                    { "jobId", _workflow.TestJobId },
+                    { "_agentId", _workflow.OwnerAgentId ?? "anonymous" },
+                });
+                Dictionary<string, object> underlying =
+                    MCPResponse.ToDictionary(underlyingResult);
+                if (underlying == null ||
+                    !underlying.TryGetValue("success", out object successValue) ||
+                    !(successValue is bool success) || !success)
+                {
+                    _workflow.CancelRequested = false;
+                    _workflow.Error = "";
+                    TouchAndSaveWorkflow();
+                    return MCPResponse.Error(
+                        "The underlying Unity Test Runner did not accept cancellation.",
+                        "job_cancel_rejected", true,
+                        new Dictionary<string, object>
+                        {
+                            { "workflowId", _workflow.WorkflowId },
+                            { "underlyingJob", underlyingResult },
+                        });
+                }
+            }
+            else if (_workflow.ManifestChanged)
+            {
+                BeginRestore();
+            }
+            else
+            {
+                _workflow.State = "canceled";
+                TouchAndSaveWorkflow();
+                UnregisterUpdate();
+            }
+
+            var response = BuildResponse(_workflow);
+            response["cancelRequested"] = true;
+            response["cancelMode"] = string.IsNullOrEmpty(_workflow.TestJobId)
+                ? "workflow"
+                : "unity-test-runner";
+            if (underlyingResult != null)
+                response["underlyingJob"] = underlyingResult;
+            return response;
+        }
+
         internal static bool TryGetActiveWorkflow(out string workflowId, out string packageName,
             out string state)
         {
@@ -297,7 +367,7 @@ namespace UnityMCP.Editor
                 return;
 
             string status = GetString(jobResult, "status");
-            if (status == "running")
+            if (status == "running" || status == "canceling")
                 return;
 
             _workflow.TestResult = CompactStoredTestResult(jobResult);
@@ -356,9 +426,11 @@ namespace UnityMCP.Editor
 
         private static void CompleteWorkflow()
         {
-            _workflow.State = string.IsNullOrEmpty(_workflow.Error) && _workflow.TestSucceeded
-                ? "succeeded"
-                : "failed";
+            _workflow.State = _workflow.CancelRequested
+                ? "canceled"
+                : string.IsNullOrEmpty(_workflow.Error) && _workflow.TestSucceeded
+                    ? "succeeded"
+                    : "failed";
             TouchAndSaveWorkflow();
             UnregisterUpdate();
             Debug.Log($"[MCP Package Tests] Workflow {_workflow.WorkflowId} finished with state {_workflow.State}");
@@ -393,6 +465,7 @@ namespace UnityMCP.Editor
                 { "assemblies", workflow.Assemblies ?? Array.Empty<string>() },
                 { "manifestChanged", workflow.ManifestChanged },
                 { "manifestRestored", !workflow.ManifestChanged || ManifestIsRestored(workflow) },
+                { "cancelRequested", workflow.CancelRequested },
                 { "startedAt", workflow.StartedAt.ToString("O") },
                 { "updatedAt", workflow.UpdatedAt.ToString("O") },
                 { "compilationDiagnostics", MCPConsoleCommands.GetCompilationDiagnosticsSummary() },
@@ -796,13 +869,14 @@ namespace UnityMCP.Editor
             public bool ManifestChanged;
             public string TestJobId;
             public bool TestSucceeded;
+            public bool CancelRequested;
             public Dictionary<string, object> TestResult;
             public string Error;
             public DateTime StartedAt;
             public DateTime UpdatedAt;
             public string OwnerAgentId;
 
-            public bool IsTerminal => State == "succeeded" || State == "failed";
+            public bool IsTerminal => State == "succeeded" || State == "failed" || State == "canceled";
 
             public Dictionary<string, object> ToDictionary()
             {
@@ -822,6 +896,7 @@ namespace UnityMCP.Editor
                     { "manifestChanged", ManifestChanged },
                     { "testJobId", TestJobId ?? "" },
                     { "testSucceeded", TestSucceeded },
+                    { "cancelRequested", CancelRequested },
                     { "testResult", TestResult },
                     { "error", Error ?? "" },
                     { "startedAt", StartedAt.ToString("O") },
@@ -848,6 +923,7 @@ namespace UnityMCP.Editor
                     ManifestChanged = GetBoolean(values, "manifestChanged"),
                     TestJobId = GetValue(values, "testJobId"),
                     TestSucceeded = GetBoolean(values, "testSucceeded"),
+                    CancelRequested = GetBoolean(values, "cancelRequested"),
                     TestResult = values.TryGetValue("testResult", out var result)
                         ? result as Dictionary<string, object>
                         : null,
