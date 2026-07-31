@@ -561,6 +561,12 @@ namespace UnityMCP.Editor
                     ? null
                     : agentId + "|" + apiPath + "|" + requestId;
 
+                // Target binding and request identity belong to the queue/transport envelope.
+                // Validate and derive the queue idempotency key first, then expose only the
+                // context explicitly owned by the destination route.
+                RemoveConsumedTransportArguments(apiPath, innerArgs);
+                innerBody = MiniJson.Serialize(innerArgs);
+
                 MCPRequestQueue.RequestTicket ticket;
                 bool reused = false;
                 if (apiPath == "wait/editor-idle")
@@ -674,12 +680,11 @@ namespace UnityMCP.Editor
                 nestedMethod = string.IsNullOrEmpty(outerMethod) ? "POST" : outerMethod;
 
             string nestedBody = GetArgumentString(args, "body");
-            if (string.IsNullOrEmpty(nestedBody))
-            {
-                var nestedArgs = GetArgumentDictionary(args, "args")
-                                 ?? new Dictionary<string, object>();
-                nestedBody = MiniJson.Serialize(nestedArgs);
-            }
+            var nestedArgs = string.IsNullOrEmpty(nestedBody)
+                ? GetArgumentDictionary(args, "args") ?? new Dictionary<string, object>()
+                : ParseJson(nestedBody);
+            CopyAdvancedRouteContext(args, nestedArgs);
+            nestedBody = MiniJson.Serialize(nestedArgs);
 
             return RouteRequest(route, nestedMethod, nestedBody);
         }
@@ -707,6 +712,7 @@ namespace UnityMCP.Editor
                              ?? new Dictionary<string, object>();
             if (!string.IsNullOrEmpty(nestedBody))
                 nestedArgs = ParseJson(nestedBody);
+            CopyAdvancedRouteContext(args, nestedArgs);
             MCPToolConfigurationPolicy.ApplyDefaults(route, nestedArgs);
             nestedBody = MiniJson.Serialize(nestedArgs);
 
@@ -715,6 +721,8 @@ namespace UnityMCP.Editor
                 resolve(projectMismatch);
                 return;
             }
+
+            RemoveConsumedTransportArguments(route, nestedArgs);
 
             if (MCPDeferredRouteRegistry.TryGet(route, out var deferredHandler))
             {
@@ -748,21 +756,44 @@ namespace UnityMCP.Editor
             destination[key] = value;
         }
 
-        private static void RemoveConsumedTargetBindingArguments(string route,
+        private static void CopyAdvancedRouteContext(Dictionary<string, object> source,
+            Dictionary<string, object> destination)
+        {
+            foreach (string key in new[]
+                     {
+                         "expectedProjectPath", "expectedProjectName", "_agentId", "_requestId"
+                     })
+                CopyArgumentIfMissing(source, destination, key);
+        }
+
+        private static void RemoveConsumedTransportArguments(string route,
             Dictionary<string, object> args)
         {
             if (args == null)
                 return;
 
             string normalizedRoute = (route ?? "").Trim('/');
-            if (string.Equals(normalizedRoute, "advanced/execute", StringComparison.Ordinal) ||
-                string.Equals(normalizedRoute, "instance/assert-project", StringComparison.Ordinal))
-                return;
+            bool routeOwnsTargetBinding =
+                string.Equals(normalizedRoute, "advanced/execute", StringComparison.Ordinal) ||
+                string.Equals(normalizedRoute, "instance/assert-project", StringComparison.Ordinal);
+            if (!routeOwnsTargetBinding)
+            {
+                args.Remove("expectedProjectPath");
+                args.Remove("expectedProjectName");
+            }
 
-            // These fields belong to the transport envelope. Project validation has already
-            // consumed them before route dispatch, so strict business schemas must not see them.
-            args.Remove("expectedProjectPath");
-            args.Remove("expectedProjectName");
+            if (!RouteConsumesRequestId(normalizedRoute))
+                args.Remove("_requestId");
+        }
+
+        private static bool RouteConsumesRequestId(string normalizedRoute)
+        {
+            return string.Equals(normalizedRoute, "advanced/execute", StringComparison.Ordinal) ||
+                   string.Equals(normalizedRoute, "asset/refresh", StringComparison.Ordinal) ||
+                   string.Equals(normalizedRoute, "asset/import-unitypackage", StringComparison.Ordinal) ||
+                   string.Equals(normalizedRoute, "project-tools/execute", StringComparison.Ordinal) ||
+                   normalizedRoute.StartsWith(MCPProjectToolCommands.DirectRoutePrefix,
+                       StringComparison.Ordinal);
         }
 
         private static void AddExpectedProjectHeaders(HttpListenerRequest request, Dictionary<string, object> args)
@@ -892,7 +923,7 @@ namespace UnityMCP.Editor
                 return projectMismatch;
             }
 
-            RemoveConsumedTargetBindingArguments(path, configuredArguments);
+            RemoveConsumedTransportArguments(path, configuredArguments);
             body = MiniJson.Serialize(configuredArguments);
 
             // Project context reads EditorPrefs and project paths, so it must run through

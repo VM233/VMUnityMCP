@@ -2,6 +2,16 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.8] - 2026-07-31
+
+- Consume queue request identity together with expected-project binding at the
+  bridge boundary, so strict route-owned schemas never receive `_requestId`.
+- Preserve request identity only for refresh, Unity-package import, project-tool,
+  and advanced routes that explicitly own it; advanced execution now forwards
+  its transport context to the nested route before that route consumes it.
+- Apply the same transport-envelope boundary to deferred routes instead of
+  limiting cleanup to the normal main-thread route dispatcher.
+
 ## [5.6.7] - 2026-07-31
 
 - Consume expected-project binding fields at the bridge boundary after target

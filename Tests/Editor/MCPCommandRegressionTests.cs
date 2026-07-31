@@ -5091,9 +5091,9 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
-        public void BridgeConsumesTargetBindingBeforeStrictBusinessSchemaValidation()
+        public void BridgeConsumesTransportEnvelopeBeforeStrictBusinessSchemaValidation()
         {
-            var method = typeof(MCPBridgeServer).GetMethod("RemoveConsumedTargetBindingArguments",
+            var method = typeof(MCPBridgeServer).GetMethod("RemoveConsumedTransportArguments",
                 BindingFlags.Static | BindingFlags.NonPublic);
             Assert.That(method, Is.Not.Null);
 
@@ -5103,6 +5103,7 @@ namespace UnityMCP.Editor.Tests
                 { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
                 { "expectedProjectName", "BattleIdle" },
                 { "_agentId", "regression-agent" },
+                { "_requestId", "strict-route-request" },
             };
             method.Invoke(null, new object[] { "asset/import-settings/get", importerArguments });
 
@@ -5120,6 +5121,24 @@ namespace UnityMCP.Editor.Tests
 
                 Assert.That(preservedArguments.Keys,
                     Is.EquivalentTo(new[] { "expectedProjectPath", "expectedProjectName" }), route);
+            }
+
+            foreach (string route in new[]
+                     {
+                         "advanced/execute", "asset/refresh", "asset/import-unitypackage",
+                         "project-tools/execute", "project-tools/call/sample/tool"
+                     })
+            {
+                var requestArguments = new Dictionary<string, object>
+                {
+                    { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
+                    { "_requestId", "owned-request" },
+                };
+                method.Invoke(null, new object[] { route, requestArguments });
+
+                Assert.That(requestArguments["_requestId"], Is.EqualTo("owned-request"), route);
+                if (route != "advanced/execute")
+                    Assert.That(requestArguments.ContainsKey("expectedProjectPath"), Is.False, route);
             }
         }
 
