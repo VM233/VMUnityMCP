@@ -50,6 +50,14 @@ second list, and reading metadata does not initialize the HTTP listener.
 | Long work | Builds, tests, refreshes, package tests, snapshots, Addressables builds, execute-code, and long project tools use persistent jobs or tickets; owned cancel routes are cooperative. |
 | Optional packages | Localization, Shader Graph, VFX Graph, Addressables, Timeline, Cinemachine, and Build Profiles publish only when their capability is available. |
 
+Common asset-authoring composition is intentionally available without arbitrary
+Editor code: create folders and Prefab Variants, inspect a Prefab hierarchy,
+apply one atomic Prefab transaction, then create or update framework-owned
+configuration through a project/package tool. Localization entry upsert and
+removal are concrete tools when Unity Localization is installed. Project code
+should not retain one-off Editor builders that mirror checked-in asset values;
+temporary migrations are removed after asset readback succeeds.
+
 Major route families include:
 
 - scene workspaces, GameObjects, components, Prefabs, materials, importers, and

@@ -7162,6 +7162,31 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ToolMetadata_ExposesComposableAssetAuthoringRoutesAsFirstClass()
+        {
+            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: true, compact: true, includeSchema: true, limit: 500));
+            var tools = (List<Dictionary<string, object>>)result["tools"];
+            string[] routes =
+            {
+                "asset/create-folder",
+                "prefab/create-variant",
+                "prefab-asset/hierarchy",
+                "prefab-asset/transaction-edit",
+                "localization/upsert-entry",
+                "localization/remove-entry",
+            };
+
+            foreach (string route in routes)
+            {
+                var tool = tools.Single(item => item["route"].ToString() == route);
+                Assert.That(HasTag(tool, "firstClass"), Is.True, route);
+                Assert.That(tool.ContainsKey("inputSchema"), Is.True, route);
+                Assert.That(tool.ContainsKey("outputSchema"), Is.True, route);
+            }
+        }
+
+        [Test]
         public void ToolMetadata_LazyPrefabAddGameObjectExposesLayer()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(

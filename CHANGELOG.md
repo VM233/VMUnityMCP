@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.0] - 2026-07-31
+
+- Expose the existing folder creation, Prefab Variant creation, Prefab
+  hierarchy, atomic Prefab transaction, and Localization entry upsert/removal
+  routes as a compact first-class asset-authoring workflow.
+- Document that checked-in assets remain the source of truth and one-off Editor
+  builders must not become parallel asset producers.
+
 ## [5.5.4] - 2026-07-31
 
 - Enforce the documented project-scoped idempotency contract for persistent
