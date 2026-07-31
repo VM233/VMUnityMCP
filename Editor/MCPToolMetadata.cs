@@ -2191,7 +2191,9 @@ namespace UnityMCP.Editor
                         Prop("prefabPath", "string", "Path of the GameObject inside the prefab. Empty means root."),
                         Prop("componentType", "string", "Component type name or full name. Optional when propertyName can identify the component."),
                         Prop("propertyName", "string", "ObjectReference serialized property name or property path."),
-                        Prop("referenceAssetPath", "string", "Project asset path to assign."),
+                        Prop("referenceAssetPath", "string", "Project asset path to assign. Ambiguous compatible objects require an exact subasset selector."),
+                        Prop("referenceSubAssetName", "string", "Optional exact object name within referenceAssetPath."),
+                        Prop("referenceSubAssetLocalId", "string", "Optional exact local file ID within referenceAssetPath, encoded as a decimal string."),
                         Prop("referencePrefabPath", "string", "Path of a GameObject inside the same prefab to assign."),
                         Prop("referenceComponentType", "string", "When using referencePrefabPath, assign this component instead of the GameObject."),
                         Prop("clear", "boolean", "Clear the ObjectReference."),
@@ -3065,7 +3067,9 @@ namespace UnityMCP.Editor
         {
             var referenceProperties = Props(
                 Prop("propertyName", "string", "ObjectReference serialized property name or path."),
-                Prop("referenceAssetPath", "string", "Project asset path to assign."),
+                Prop("referenceAssetPath", "string", "Project asset path to assign. Ambiguous compatible objects require an exact subasset selector."),
+                Prop("referenceSubAssetName", "string", "Optional exact object name within referenceAssetPath."),
+                Prop("referenceSubAssetLocalId", "string", "Optional exact local file ID within referenceAssetPath, encoded as a decimal string."),
                 Prop("referencePrefabPath", "string", "Path of a GameObject inside the same prefab to assign."),
                 Prop("referenceComponentType", "string", "When using referencePrefabPath, assign this component instead of the GameObject."),
                 Prop("referenceComponentIndex", "number", "Component index on referencePrefabPath when multiple components of the same type exist. Defaults to 0."),

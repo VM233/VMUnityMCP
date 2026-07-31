@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.10] - 2026-07-31
+
+- Add exact `referenceSubAssetName` and lossless
+  `referenceSubAssetLocalId` selectors to Prefab ObjectReference routes.
+- Reject asset paths with multiple compatible objects when no exact selector
+  is supplied instead of silently assigning the first imported subasset.
+- Add multi-Sprite regression coverage for configure-component and direct
+  set-reference workflows.
+
 ## [5.6.9] - 2026-07-31
 
 - Keep the validated transport envelope on normal persistent queue requests

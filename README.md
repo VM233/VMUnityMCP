@@ -255,6 +255,10 @@ The full ownership matrix and authoritative built-in route audit are in
   ObjectReference wiring. Pass `createPathIfMissing=true` when the component's
   semantic GameObject path does not exist yet; the path and component are then
   created and configured in one rollback-capable transaction.
+- When `referenceAssetPath` contains more than one compatible object, Prefab
+  reference routes require `referenceSubAssetName` or the lossless decimal
+  string `referenceSubAssetLocalId`. Ambiguous paths fail with bounded candidate
+  details instead of silently assigning the first imported subasset.
 - Potentially large raw graph, stack, serialized, and metadata diagnostics are
   opt-in.
 - Mutating requests validate the expected project before dispatch. Stable

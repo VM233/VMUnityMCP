@@ -5537,6 +5537,123 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void PrefabReferences_RequireAndHonorExactSpriteSubAssetSelectors()
+        {
+            string externalPath = CreateExternalSparseSpriteSheetPng();
+            const string spritePath = TEST_FOLDER + "/Reference Sheet.png";
+            try
+            {
+                var importResult = RequireDictionary(MCPAssetCommands.Import(new Dictionary<string, object>
+                {
+                    { "defaults", new Dictionary<string, object>
+                        {
+                            { "dedupeMode", "none" },
+                            { "textureType", "Sprite" }, { "spriteMode", "Multiple" },
+                            { "spriteSlice", new Dictionary<string, object>
+                                {
+                                    { "frameWidth", 48 }, { "frameHeight", 48 },
+                                }
+                            },
+                        }
+                    },
+                    { "imports", new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "sourcePath", externalPath }, { "destinationPath", spritePath },
+                            },
+                        }
+                    },
+                    { "execution", new Dictionary<string, object> { { "mode", "immediate" } } },
+                }));
+                Assert.That(importResult["success"], Is.EqualTo(true));
+
+                var prefabRoot = new GameObject("Sprite Reference Prefab");
+                try
+                {
+                    prefabRoot.AddComponent<SpriteRenderer>();
+                    Assert.That(PrefabUtility.SaveAsPrefabAsset(prefabRoot, PREFAB_PATH), Is.Not.Null);
+                }
+                finally
+                {
+                    Object.DestroyImmediate(prefabRoot);
+                }
+
+                var ambiguous = RequireDictionary(MCPPrefabAssetCommands.SetReference(
+                    new Dictionary<string, object>
+                    {
+                        { "assetPath", PREFAB_PATH },
+                        { "componentType", typeof(SpriteRenderer).FullName },
+                        { "propertyName", "m_Sprite" },
+                        { "referenceAssetPath", spritePath },
+                    }));
+                Assert.That(ambiguous.ContainsKey("success"), Is.False);
+                Assert.That(ambiguous["error"].ToString(), Does.Contain("referenceSubAssetName"));
+
+                var configured = RequireDictionary(MCPPrefabAssetCommands.ConfigureComponent(
+                    new Dictionary<string, object>
+                    {
+                        { "assetPath", PREFAB_PATH },
+                        { "componentType", typeof(SpriteRenderer).FullName },
+                        { "references", new List<object>
+                            {
+                                new Dictionary<string, object>
+                                {
+                                    { "propertyName", "m_Sprite" },
+                                    { "referenceAssetPath", spritePath },
+                                    { "referenceSubAssetName", "Reference Sheet_2" },
+                                },
+                            }
+                        },
+                    }));
+                Assert.That(configured["success"], Is.EqualTo(true));
+
+                var configuredRoot = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+                try
+                {
+                    Assert.That(configuredRoot.GetComponent<SpriteRenderer>().sprite.name,
+                        Is.EqualTo("Reference Sheet_2"));
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(configuredRoot);
+                }
+
+                var sprites = AssetDatabase.LoadAllAssetsAtPath(spritePath).OfType<Sprite>().ToArray();
+                var localIdTarget = sprites.Single(sprite => sprite.name == "Reference Sheet_3");
+                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(localIdTarget, out string _,
+                    out long localId), Is.True);
+
+                var selectedByLocalId = RequireDictionary(MCPPrefabAssetCommands.SetReference(
+                    new Dictionary<string, object>
+                    {
+                        { "assetPath", PREFAB_PATH },
+                        { "componentType", typeof(SpriteRenderer).FullName },
+                        { "propertyName", "m_Sprite" },
+                        { "referenceAssetPath", spritePath },
+                        { "referenceSubAssetLocalId",
+                            localId.ToString(System.Globalization.CultureInfo.InvariantCulture) },
+                    }));
+                Assert.That(selectedByLocalId["success"], Is.EqualTo(true));
+
+                var loadedRoot = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+                try
+                {
+                    Assert.That(loadedRoot.GetComponent<SpriteRenderer>().sprite.name,
+                        Is.EqualTo("Reference Sheet_3"));
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(loadedRoot);
+                }
+            }
+            finally
+            {
+                if (File.Exists(externalPath)) File.Delete(externalPath);
+            }
+        }
+
+        [Test]
         public void PrefabSetReference_EmptyPrefabPathResolvesRootComponent()
         {
             var prefabRoot = new GameObject("Root Reference Prefab");
@@ -7351,6 +7468,11 @@ namespace UnityMCP.Editor.Tests
             Assert.That(properties.Keys, Does.Contain("references"));
             Assert.That(properties.Keys, Does.Contain("createPathIfMissing"));
             Assert.That(properties.Keys, Does.Contain("expectedProjectPath"));
+            var references = RequireDictionary(properties["references"]);
+            var referenceItems = RequireDictionary(references["items"]);
+            var referenceProperties = RequireDictionary(referenceItems["properties"]);
+            Assert.That(referenceProperties.Keys, Does.Contain("referenceSubAssetName"));
+            Assert.That(referenceProperties.Keys, Does.Contain("referenceSubAssetLocalId"));
         }
 
         [Test]

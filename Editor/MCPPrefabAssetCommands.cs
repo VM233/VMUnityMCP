@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -984,6 +985,8 @@ namespace UnityMCP.Editor
                 return new { error = "propertyName is required" };
 
             string referenceAssetPath = GetString(args, "referenceAssetPath");
+            string referenceSubAssetName = GetString(args, "referenceSubAssetName");
+            string referenceSubAssetLocalId = GetString(args, "referenceSubAssetLocalId");
             string referencePrefabPath = GetString(args, "referencePrefabPath");
             bool hasReferencePrefabPath = args.ContainsKey("referencePrefabPath");
             string referenceComponentType = GetString(args, "referenceComponentType");
@@ -1041,7 +1044,8 @@ namespace UnityMCP.Editor
                 }
                 else if (!string.IsNullOrEmpty(referenceAssetPath))
                 {
-                    if (!TryResolveAssetReference(prop, referenceAssetPath, out targetRef, out string error))
+                    if (!TryResolveAssetReference(prop, referenceAssetPath, referenceSubAssetName,
+                            referenceSubAssetLocalId, out targetRef, out string error))
                         return new { error };
 
                     refDescription = $"{targetRef.name} ({targetRef.GetType().Name})";
@@ -4383,7 +4387,10 @@ namespace UnityMCP.Editor
             string referenceAssetPath = GetString(operation, "referenceAssetPath");
             if (string.IsNullOrEmpty(referenceAssetPath) == false)
             {
-                if (!TryResolveAssetReference(property, referenceAssetPath, out targetRef, out error))
+                string referenceSubAssetName = GetString(operation, "referenceSubAssetName");
+                string referenceSubAssetLocalId = GetString(operation, "referenceSubAssetLocalId");
+                if (!TryResolveAssetReference(property, referenceAssetPath, referenceSubAssetName,
+                        referenceSubAssetLocalId, out targetRef, out error))
                     return false;
 
                 refDescription = $"{targetRef.name} ({targetRef.GetType().Name})";
@@ -4434,10 +4441,24 @@ namespace UnityMCP.Editor
         }
 
         private static bool TryResolveAssetReference(SerializedProperty property, string assetPath,
-            out UnityEngine.Object targetRef, out string error)
+            string subAssetName, string subAssetLocalIdText, out UnityEngine.Object targetRef,
+            out string error)
         {
             targetRef = null;
             error = "";
+            long? subAssetLocalId = null;
+            if (string.IsNullOrWhiteSpace(subAssetLocalIdText) == false)
+            {
+                if (!long.TryParse(subAssetLocalIdText, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                        out long parsedLocalId))
+                {
+                    error = "referenceSubAssetLocalId must be a signed 64-bit decimal string";
+                    return false;
+                }
+
+                subAssetLocalId = parsedLocalId;
+            }
+
             var candidates = AssetDatabase.LoadAllAssetsAtPath(assetPath);
             if (candidates == null || candidates.Length == 0)
             {
@@ -4445,22 +4466,92 @@ namespace UnityMCP.Editor
                 return false;
             }
 
-            foreach (var candidate in candidates)
+            UnityEngine.Object originalReference = property.objectReferenceValue;
+            var compatibleCandidates = new List<UnityEngine.Object>();
+            try
             {
-                if (candidate == null)
-                    continue;
-
-                property.objectReferenceValue = candidate;
-                if (property.objectReferenceValue == candidate)
+                foreach (var candidate in candidates)
                 {
-                    targetRef = candidate;
-                    return true;
+                    if (candidate == null)
+                        continue;
+
+                    property.objectReferenceValue = candidate;
+                    if (property.objectReferenceValue == candidate)
+                        compatibleCandidates.Add(candidate);
                 }
             }
+            finally
+            {
+                property.objectReferenceValue = originalReference;
+            }
 
-            error = $"No asset at '{assetPath}' is compatible with property " +
-                    $"'{property.propertyPath}' ({property.type})";
+            if (compatibleCandidates.Count == 0)
+            {
+                error = $"No asset at '{assetPath}' is compatible with property " +
+                        $"'{property.propertyPath}' ({property.type})";
+                return false;
+            }
+
+            IEnumerable<UnityEngine.Object> selectedCandidates = compatibleCandidates;
+            if (string.IsNullOrEmpty(subAssetName) == false)
+            {
+                selectedCandidates = selectedCandidates.Where(candidate =>
+                    string.Equals(candidate.name, subAssetName, StringComparison.Ordinal));
+            }
+
+            if (subAssetLocalId.HasValue)
+            {
+                selectedCandidates = selectedCandidates.Where(candidate =>
+                    TryGetAssetLocalId(candidate, out long localId) && localId == subAssetLocalId.Value);
+            }
+
+            var selected = selectedCandidates.ToList();
+            if (selected.Count == 1)
+            {
+                targetRef = selected[0];
+                property.objectReferenceValue = targetRef;
+                return true;
+            }
+
+            string available = DescribeAssetReferenceCandidates(compatibleCandidates);
+            if (selected.Count == 0 &&
+                (string.IsNullOrEmpty(subAssetName) == false || subAssetLocalId.HasValue))
+            {
+                var selectors = new List<string>();
+                if (string.IsNullOrEmpty(subAssetName) == false)
+                    selectors.Add($"referenceSubAssetName='{subAssetName}'");
+                if (subAssetLocalId.HasValue)
+                    selectors.Add($"referenceSubAssetLocalId='{subAssetLocalId.Value.ToString(CultureInfo.InvariantCulture)}'");
+                error = $"No compatible asset at '{assetPath}' matches {string.Join(" and ", selectors)}. " +
+                        $"Available compatible assets: {available}";
+                return false;
+            }
+
+            error = $"Asset path '{assetPath}' has {selected.Count} compatible objects for property " +
+                    $"'{property.propertyPath}' ({property.type}). Specify referenceSubAssetName or " +
+                    $"referenceSubAssetLocalId. Compatible assets: {available}";
             return false;
+        }
+
+        private static bool TryGetAssetLocalId(UnityEngine.Object asset, out long localId)
+        {
+            return AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string _, out localId);
+        }
+
+        private static string DescribeAssetReferenceCandidates(IReadOnlyList<UnityEngine.Object> candidates)
+        {
+            const int MaxDescriptions = 8;
+            var descriptions = candidates.Take(MaxDescriptions).Select(candidate =>
+            {
+                string localId = TryGetAssetLocalId(candidate, out long value)
+                    ? value.ToString(CultureInfo.InvariantCulture)
+                    : "unknown";
+                return $"'{candidate.name}' ({candidate.GetType().Name}, localId {localId})";
+            });
+            string suffix = candidates.Count > MaxDescriptions
+                ? $", ... ({candidates.Count - MaxDescriptions} more)"
+                : "";
+            return string.Join(", ", descriptions) + suffix;
         }
 
         private static void ApplyTransformArguments(Transform transform, Dictionary<string, object> operation)
