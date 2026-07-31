@@ -87,6 +87,8 @@ namespace UnityMCP.Editor
 
             provider.Apply();
             importer.SaveAndReimport();
+            AssetDatabase.ForceReserializeAssets(new[] { texturePath },
+                ForceReserializeAssetsOptions.ReserializeMetadata);
             AssetDatabase.Refresh();
 
             var sprites = LoadSprites(texturePath);

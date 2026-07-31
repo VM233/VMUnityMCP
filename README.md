@@ -265,6 +265,9 @@ The full ownership matrix and authoritative built-in route audit are in
   reference routes require `referenceSubAssetName` or the lossless decimal
   string `referenceSubAssetLocalId`. Ambiguous paths fail with bounded candidate
   details instead of silently assigning the first imported subasset.
+- Sprite sheet slicing replaces the complete Sprite name-fileID mapping and
+  reserializes importer metadata. Renaming or shrinking a sheet therefore does
+  not leave stale subasset names or removed frames in the texture `.meta` file.
 - Potentially large raw graph, stack, serialized, and metadata diagnostics are
   opt-in.
 - Mutating requests validate the expected project before dispatch. Stable

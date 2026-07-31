@@ -6017,6 +6017,62 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void SpriteSlice_RenamesAndShrinksWithoutStaleNameFileIdEntries()
+        {
+            string externalPath = CreateExternalSparseSpriteSheetPng();
+            const string spritePath = TEST_FOLDER + "/Renamed Frames.png";
+
+            try
+            {
+                File.Copy(externalPath, GetAbsolutePath(spritePath), true);
+                AssetDatabase.ImportAsset(spritePath, ImportAssetOptions.ForceSynchronousImport);
+
+                var first = RequireDictionary(MCPSpriteSheetCommands.SliceSheet(
+                    new Dictionary<string, object>
+                    {
+                        { "texturePath", spritePath },
+                        { "frameWidth", 48 },
+                        { "frameHeight", 48 },
+                        { "frameCount", 4 },
+                        { "baseName", "Old Spearman" },
+                    }));
+                Assert.That(first["success"], Is.EqualTo(true));
+
+                var second = RequireDictionary(MCPSpriteSheetCommands.SliceSheet(
+                    new Dictionary<string, object>
+                    {
+                        { "texturePath", spritePath },
+                        { "frameWidth", 48 },
+                        { "frameHeight", 48 },
+                        { "frameCount", 3 },
+                        { "baseName", "Spearman" },
+                    }));
+                Assert.That(second["success"], Is.EqualTo(true));
+
+                var spriteNames = AssetDatabase.LoadAllAssetsAtPath(spritePath)
+                    .OfType<Sprite>()
+                    .Select(sprite => sprite.name)
+                    .OrderBy(name => name, StringComparer.Ordinal)
+                    .ToArray();
+                CollectionAssert.AreEqual(new[]
+                {
+                    "Spearman_0", "Spearman_1", "Spearman_2"
+                }, spriteNames);
+
+                string metaText = File.ReadAllText(GetAbsolutePath(spritePath) + ".meta");
+                Assert.That(metaText, Does.Not.Contain("Old Spearman"));
+                Assert.That(metaText, Does.Contain("Spearman_0"));
+                Assert.That(metaText, Does.Contain("Spearman_1"));
+                Assert.That(metaText, Does.Contain("Spearman_2"));
+                Assert.That(metaText, Does.Not.Contain("Spearman_3"));
+            }
+            finally
+            {
+                if (File.Exists(externalPath)) File.Delete(externalPath);
+            }
+        }
+
+        [Test]
         public void AssetImport_InvalidSpriteSliceFailsPreflight()
         {
             string externalPath = CreateExternalSparseSpriteSheetPng();
