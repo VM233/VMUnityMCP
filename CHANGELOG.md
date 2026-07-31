@@ -10,6 +10,10 @@ All notable changes to this package will be documented in this file.
 - Add a regression that injects a legacy stale row, slices the same sheet with
   a new semantic name and fewer frames, then verifies both imported Sprites and
   the `.meta` file.
+- Preserve an existing Multiple Sprite mode when applying the `pixel-sprite`
+  preset, and stop treating Single as part of preset validation; structural
+  mode changes remain owned by explicit importer settings, reference copies,
+  or slicing routes.
 
 ## [5.6.12] - 2026-08-01
 

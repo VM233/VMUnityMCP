@@ -260,7 +260,6 @@ namespace UnityMCP.Editor
             if (string.Equals(preset, "pixel-sprite", StringComparison.OrdinalIgnoreCase))
             {
                 importer.textureType = TextureImporterType.Sprite;
-                importer.spriteImportMode = SpriteImportMode.Single;
                 importer.mipmapEnabled = false;
                 importer.filterMode = FilterMode.Point;
                 importer.textureCompression = TextureImporterCompression.Uncompressed;
@@ -763,7 +762,6 @@ namespace UnityMCP.Editor
             TextureImporter importer, float tolerance)
         {
             AddComparison(comparisons, "textureType", TextureImporterType.Sprite, importer.textureType);
-            AddComparison(comparisons, "spriteImportMode", SpriteImportMode.Single, importer.spriteImportMode);
             AddComparison(comparisons, "filterMode", FilterMode.Point, importer.filterMode);
             AddComparison(comparisons, "mipmapEnabled", false, importer.mipmapEnabled);
             AddComparison(comparisons, "textureCompression", TextureImporterCompression.Uncompressed,

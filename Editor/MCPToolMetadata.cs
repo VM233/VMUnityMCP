@@ -1496,7 +1496,7 @@ namespace UnityMCP.Editor
                 case "sprite/replace-slice-update-clip":
                     return "Replace a sprite sheet, slice it, then update an AnimationClip from the generated sprites.";
                 case "texture/apply-sprite-preset":
-                    return "Apply high-level TextureImporter/Sprite settings such as pixel sprite preset, PPU, pivot, border, and reference settings.";
+                    return "Apply high-level TextureImporter/Sprite settings such as pixel sprite preset, PPU, pivot, border, and reference settings without changing Single/Multiple mode unless a reference owns it.";
                 case "texture/info":
                     return "Inspect a texture asset, runtime format and memory, and its TextureImporter settings, including sprite PPU, pivot, and border when applicable.";
                 case "texture/set-import":
@@ -2889,7 +2889,7 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("path", "string", "Texture asset path."),
                         Prop("referencePath", "string", "Optional texture asset whose importer settings are copied first."),
-                        Prop("preset", "string", "High-level preset. Supported: pixel-sprite."),
+                        Prop("preset", "string", "High-level preset. Supported: pixel-sprite. Preserves the current Single/Multiple mode."),
                         Prop("pixelsPerUnit", "number", "Sprite pixels per unit."),
                         Prop("filterMode", "string", "Texture FilterMode, e.g. Point."),
                         Prop("textureCompression", "string", "TextureImporterCompression value."),

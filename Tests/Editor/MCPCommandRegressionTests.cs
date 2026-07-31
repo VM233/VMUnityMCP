@@ -7071,6 +7071,46 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ApplySpritePreset_PreservesExistingMultipleMode()
+        {
+            string sourcePath = CreateExternalSparseSpriteSheetPng();
+            const string texturePath = TEST_FOLDER + "/Multiple Pixel Sprite.png";
+            try
+            {
+                File.Copy(sourcePath, GetAbsolutePath(texturePath), true);
+                AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceSynchronousImport);
+                var importer = (TextureImporter)AssetImporter.GetAtPath(texturePath);
+                importer.textureType = TextureImporterType.Sprite;
+                importer.spriteImportMode = SpriteImportMode.Multiple;
+                importer.SaveAndReimport();
+
+                var result = RequireDictionary(MCPTextureCommands.ApplySpriteImportPreset(
+                    new Dictionary<string, object>
+                    {
+                        { "path", texturePath },
+                        { "preset", "pixel-sprite" },
+                    }));
+
+                Assert.That(result["success"], Is.EqualTo(true));
+                importer = (TextureImporter)AssetImporter.GetAtPath(texturePath);
+                Assert.That(importer.spriteImportMode, Is.EqualTo(SpriteImportMode.Multiple));
+
+                var check = RequireDictionary(MCPTextureCommands.CheckImportSettings(
+                    new Dictionary<string, object>
+                    {
+                        { "assetPath", texturePath },
+                        { "preset", "pixel-sprite" },
+                        { "includeMatching", true },
+                    }));
+                Assert.That(check["valid"], Is.EqualTo(true));
+            }
+            finally
+            {
+                if (File.Exists(sourcePath)) File.Delete(sourcePath);
+            }
+        }
+
+        [Test]
         public void MaterialProperties_AreTypedPaginatedAndAtomicOnValidationFailure()
         {
             const string materialPath = TEST_FOLDER + "/Semantic Material.mat";

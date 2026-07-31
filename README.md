@@ -268,6 +268,9 @@ The full ownership matrix and authoritative built-in route audit are in
 - Sprite sheet slicing replaces the complete Sprite name-fileID mapping and
   reserializes importer metadata. Renaming or shrinking a sheet therefore does
   not leave stale subasset names or removed frames in the texture `.meta` file.
+- The `pixel-sprite` importer preset preserves an existing Single/Multiple
+  Sprite mode. Use `texture/set-import`, a reference importer, or a slicing
+  route when changing that structural mode is intentional.
 - Potentially large raw graph, stack, serialized, and metadata diagnostics are
   opt-in.
 - Mutating requests validate the expected project before dispatch. Stable
