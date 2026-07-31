@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.3] - 2026-07-31
+
+- Return Localization `keyId` values as invariant decimal strings from entry
+  listing and validation results, preserving 64-bit identifiers across JSON and
+  JavaScript transports.
+- Add regression coverage for identifiers beyond JavaScript's safe-integer
+  range.
+
 ## [5.6.2] - 2026-07-31
 
 - Align the complete first-class catalog regression snapshot with the newly

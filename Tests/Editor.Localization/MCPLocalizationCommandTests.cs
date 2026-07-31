@@ -319,6 +319,48 @@ namespace UnityMCP.Editor.Localization.Tests
         }
 
         [Test]
+        public void EntryAndValidationResponses_PreserveKeyIdsBeyondJavaScriptSafeInteger()
+        {
+            const long keyId = 9007199254740993L;
+            const string keyIdText = "9007199254740993";
+
+            CreateLocale(EnglishCode, "English");
+            CreateLocale(ChineseCode, "Chinese");
+            var created = Execute("localization/create-collection", new Dictionary<string, object>
+            {
+                { "name", "MCP Exact Key Id Strings" },
+                { "type", "string" },
+                { "assetDirectory", TestFolder + "/Exact Key Id Tables" },
+                { "locales", new[] { EnglishCode, ChineseCode } },
+            });
+            Assert.That(created["success"], Is.EqualTo(true));
+
+            var collection =
+                LocalizationEditorSettings.GetStringTableCollection("MCP Exact Key Id Strings");
+            collection.SharedData.AddKey("BeyondJavaScriptSafeInteger", keyId);
+            EditorUtility.SetDirty(collection.SharedData);
+            AssetDatabase.SaveAssets();
+
+            var listed = Execute("localization/entries", new Dictionary<string, object>
+            {
+                { "collection", "MCP Exact Key Id Strings" },
+            });
+            var listedEntry = RequireDictionary(
+                ((List<Dictionary<string, object>>)listed["entries"]).Single());
+            Assert.That(listedEntry["keyId"], Is.TypeOf<string>());
+            Assert.That(listedEntry["keyId"], Is.EqualTo(keyIdText));
+
+            var validation = Execute("localization/validate", new Dictionary<string, object>
+            {
+                { "collection", "MCP Exact Key Id Strings" },
+            });
+            var issues = (List<Dictionary<string, object>>)validation["issues"];
+            Assert.That(issues, Is.Not.Empty);
+            Assert.That(issues.All(issue => issue["keyId"] is string), Is.True);
+            Assert.That(issues.All(issue => issue["keyId"].Equals(keyIdText)), Is.True);
+        }
+
+        [Test]
         public void RemoveEntry_LocaleScopeReportsOnlyActualLocaleRemoval()
         {
             CreateLocale(EnglishCode, "English");

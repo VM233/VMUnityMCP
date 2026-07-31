@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using UnityEditor;
@@ -1086,7 +1087,7 @@ namespace UnityMCP.Editor.Localization
             return new Dictionary<string, object>
             {
                 { "key", sharedEntry.Key },
-                { "keyId", sharedEntry.Id },
+                { "keyId", sharedEntry.Id.ToString(CultureInfo.InvariantCulture) },
                 { "values", values },
             };
         }
@@ -1212,7 +1213,7 @@ namespace UnityMCP.Editor.Localization
                 { "collection", collection.TableCollectionName },
                 { "type", type },
                 { "key", entry.Key },
-                { "keyId", entry.Id },
+                { "keyId", entry.Id.ToString(CultureInfo.InvariantCulture) },
                 { "locale", locale },
                 { "issue", issue },
             });
