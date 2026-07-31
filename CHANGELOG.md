@@ -4,10 +4,12 @@ All notable changes to this package will be documented in this file.
 
 ## [5.6.13] - 2026-08-01
 
-- Force-reserialize texture importer metadata after Sprite sheet slicing so a
-  renamed or shortened sheet removes stale name-fileID rows and ghost frames.
-- Add a regression that slices the same sheet twice with a new semantic name
-  and fewer frames, then verifies both imported Sprites and the `.meta` file.
+- Rebuild both modern and legacy texture-importer name-fileID tables from the
+  actual imported Sprite subassets, then force-reserialize metadata, so a
+  renamed or shortened sheet removes stale rows and ghost frames.
+- Add a regression that injects a legacy stale row, slices the same sheet with
+  a new semantic name and fewer frames, then verifies both imported Sprites and
+  the `.meta` file.
 
 ## [5.6.12] - 2026-08-01
 

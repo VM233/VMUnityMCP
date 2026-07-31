@@ -6038,6 +6038,25 @@ namespace UnityMCP.Editor.Tests
                     }));
                 Assert.That(first["success"], Is.EqualTo(true));
 
+                var importer = (TextureImporter)AssetImporter.GetAtPath(spritePath);
+                var serializedImporter = new SerializedObject(importer);
+                serializedImporter.Update();
+                var legacyNameTable = serializedImporter.FindProperty("m_InternalIDToNameTable") ??
+                                      serializedImporter.FindProperty("internalIDToNameTable");
+                Assert.That(legacyNameTable, Is.Not.Null);
+                int staleIndex = legacyNameTable.arraySize;
+                legacyNameTable.arraySize++;
+                var staleRow = legacyNameTable.GetArrayElementAtIndex(staleIndex);
+                staleRow.FindPropertyRelative("first.first").longValue = 213;
+                staleRow.FindPropertyRelative("first.second").longValue = 912345678901234567L;
+                staleRow.FindPropertyRelative("second").stringValue = "Retired Spearman_9";
+                serializedImporter.ApplyModifiedPropertiesWithoutUndo();
+                importer.SaveAndReimport();
+                AssetDatabase.ForceReserializeAssets(new[] { spritePath },
+                    ForceReserializeAssetsOptions.ReserializeMetadata);
+                Assert.That(File.ReadAllText(GetAbsolutePath(spritePath) + ".meta"),
+                    Does.Contain("Retired Spearman_9"));
+
                 var second = RequireDictionary(MCPSpriteSheetCommands.SliceSheet(
                     new Dictionary<string, object>
                     {
@@ -6061,6 +6080,7 @@ namespace UnityMCP.Editor.Tests
 
                 string metaText = File.ReadAllText(GetAbsolutePath(spritePath) + ".meta");
                 Assert.That(metaText, Does.Not.Contain("Old Spearman"));
+                Assert.That(metaText, Does.Not.Contain("Retired Spearman_9"));
                 Assert.That(metaText, Does.Contain("Spearman_0"));
                 Assert.That(metaText, Does.Contain("Spearman_1"));
                 Assert.That(metaText, Does.Contain("Spearman_2"));

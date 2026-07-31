@@ -87,8 +87,8 @@ namespace UnityMCP.Editor
 
             provider.Apply();
             importer.SaveAndReimport();
-            AssetDatabase.ForceReserializeAssets(new[] { texturePath },
-                ForceReserializeAssetsOptions.ReserializeMetadata);
+            if (SynchronizeImportedSpriteNameTable(texturePath) == false)
+                return new { error = $"Failed to synchronize Sprite name-fileID metadata for '{texturePath}'." };
             AssetDatabase.Refresh();
 
             var sprites = LoadSprites(texturePath);
@@ -288,6 +288,79 @@ namespace UnityMCP.Editor
             return AssetDatabase.LoadAllAssetsAtPath(texturePath)
                 .OfType<Sprite>()
                 .ToList();
+        }
+
+        private static bool SynchronizeImportedSpriteNameTable(string texturePath)
+        {
+            var identities = new List<KeyValuePair<long, string>>();
+            foreach (var sprite in LoadSprites(texturePath)
+                         .OrderBy(sprite => ExtractTrailingNumber(sprite.name))
+                         .ThenBy(sprite => sprite.name, StringComparer.Ordinal))
+            {
+                if (AssetDatabase.TryGetGUIDAndLocalFileIdentifier(sprite, out string _,
+                        out long localId) == false)
+                    return false;
+                identities.Add(new KeyValuePair<long, string>(localId, sprite.name));
+            }
+
+            if (AssetImporter.GetAtPath(texturePath) is not TextureImporter importer)
+                return false;
+
+            var serializedImporter = new SerializedObject(importer);
+            serializedImporter.Update();
+            var legacyNameTable = serializedImporter.FindProperty("m_InternalIDToNameTable") ??
+                                  serializedImporter.FindProperty("internalIDToNameTable");
+            if (legacyNameTable != null && legacyNameTable.isArray)
+            {
+                legacyNameTable.arraySize = identities.Count;
+                for (int index = 0; index < identities.Count; index++)
+                {
+                    var row = legacyNameTable.GetArrayElementAtIndex(index);
+                    var classId = row.FindPropertyRelative("first.first");
+                    var localId = row.FindPropertyRelative("first.second");
+                    var name = row.FindPropertyRelative("second");
+                    if (classId == null || localId == null || name == null)
+                        return false;
+
+                    classId.longValue = 213;
+                    localId.longValue = identities[index].Key;
+                    name.stringValue = identities[index].Value;
+                }
+
+                serializedImporter.ApplyModifiedPropertiesWithoutUndo();
+                importer.SaveAndReimport();
+            }
+
+            AssetDatabase.ForceReserializeAssets(new[] { texturePath },
+                ForceReserializeAssetsOptions.ReserializeMetadata);
+
+            importer = AssetImporter.GetAtPath(texturePath) as TextureImporter;
+            if (importer == null)
+                return false;
+            serializedImporter = new SerializedObject(importer);
+            serializedImporter.Update();
+            legacyNameTable = serializedImporter.FindProperty("m_InternalIDToNameTable") ??
+                              serializedImporter.FindProperty("internalIDToNameTable");
+            if (legacyNameTable == null || legacyNameTable.isArray == false)
+                return true;
+            if (legacyNameTable.arraySize != identities.Count)
+                return false;
+
+            for (int index = 0; index < identities.Count; index++)
+            {
+                var row = legacyNameTable.GetArrayElementAtIndex(index);
+                var classId = row.FindPropertyRelative("first.first");
+                var localId = row.FindPropertyRelative("first.second");
+                var name = row.FindPropertyRelative("second");
+                if (classId == null || localId == null || name == null ||
+                    classId.longValue != 213 ||
+                    localId.longValue != identities[index].Key ||
+                    string.Equals(name.stringValue, identities[index].Value,
+                        StringComparison.Ordinal) == false)
+                    return false;
+            }
+
+            return true;
         }
 
         private static Dictionary<string, object> SpriteToDictionary(Sprite sprite)
