@@ -222,7 +222,9 @@ The full ownership matrix and authoritative built-in route audit are in
 - Editor process state uses the same presence vocabulary (`playing`, `paused`,
   `compiling`, `updating`, `changingPlayMode`, and `idle`). The composite
   `isPlayingOrWillChangePlaymode` alias and successful wait-configuration
-  echoes are not sent.
+  echoes are not sent. Every `editor/state` snapshot contains at least one
+  process-state tag: a stable Editor reports `idle`, including while Play Mode
+  itself is stable; missing positive tags mean those states are false.
 - Execute-code uses compact Unity value strings by default. Pass
   `unityStructFormat="structured"` for typed objects with stable fields.
 - Completed pagination aliases and exact duplicate counts are removed on the

@@ -7671,6 +7671,26 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void EditorState_AlwaysPublishesAnAuthoritativeProcessStateTag()
+        {
+            var rawState = RequireDictionary(MCPEditorCommands.GetEditorState());
+            Assert.That(rawState.ContainsKey("isIdle"), Is.True);
+
+            bool expectedIdle =
+                !Convert.ToBoolean(rawState["isCompiling"]) &&
+                !Convert.ToBoolean(rawState["isUpdating"]) &&
+                !Convert.ToBoolean(rawState["isChangingPlayMode"]);
+            Assert.That(rawState["isIdle"], Is.EqualTo(expectedIdle));
+
+            var compactedState = RequireDictionary(MCPResponse.CompactForTransport(rawState));
+            var tags = ((IList)compactedState["tags"]).Cast<object>()
+                .Select(value => value.ToString())
+                .ToArray();
+            Assert.That(tags.Length, Is.GreaterThan(0));
+            Assert.That(tags.Contains("idle"), Is.EqualTo(expectedIdle));
+        }
+
+        [Test]
         public void TransportCompaction_PreservesJsonSchemaBusinessFields()
         {
             var compacted = RequireDictionary(MCPResponse.CompactForTransport(

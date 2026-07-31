@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.5.2] - 2026-07-31
+
+- Keep presence-only Editor-state response compaction while making the compact
+  snapshot unambiguous: `editor/state` now authors `isIdle`, which becomes the
+  mandatory `idle` tag whenever compilation, asset updating, and Play Mode
+  transitions are all inactive.
+- Add regression coverage proving every compact Editor-state snapshot retains
+  at least one authoritative process-state tag.
+
 ## [5.5.1] - 2026-07-31
 
 - Preserve `inputSchema` and `outputSchema` as exact machine-readable
