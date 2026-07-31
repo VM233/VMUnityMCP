@@ -70,6 +70,12 @@ Major route families include:
 - Console, compilation, debugger, Profiler, testing, builds, packages, jobs,
   queue diagnostics, and Editor execution.
 
+Shader Graph inspection treats the graph's `GraphData` node, property, and edge
+references as authoritative. Texture properties report authoring flags that can
+change generated shader declarations, while scalar graph-object edits validate
+the existing field and type, synchronously import, verify readback, and roll
+back on failure.
+
 Use live tool metadata for exact names and schemas. Do not copy a tool list from
 this README into a client manifest.
 

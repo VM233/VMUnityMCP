@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -99,6 +100,14 @@ namespace UnityMCP.Editor
                 commands.Add("shadergraph/open");
                 commands.Add("shadergraph/get-properties");
                 commands.Add("shadergraph/list-subgraphs");
+                commands.Add("shadergraph/get-nodes");
+                commands.Add("shadergraph/get-edges");
+                commands.Add("shadergraph/add-node");
+                commands.Add("shadergraph/remove-node");
+                commands.Add("shadergraph/connect");
+                commands.Add("shadergraph/disconnect");
+                commands.Add("shadergraph/set-node-property");
+                commands.Add("shadergraph/get-node-types");
             }
 
             if (hasVFX)
@@ -248,53 +257,45 @@ namespace UnityMCP.Editor
             if (shader == null)
                 return new Dictionary<string, object> { { "error", $"Shader not found at: {path}" } };
 
-            int propCount = shader.GetPropertyCount();
-            var properties = new List<Dictionary<string, object>>();
-
-            for (int i = 0; i < propCount; i++)
-            {
-                var propType = shader.GetPropertyType(i);
-                var prop = new Dictionary<string, object>
-                {
-                    { "name", shader.GetPropertyName(i) },
-                    { "description", shader.GetPropertyDescription(i) },
-                    { "type", propType.ToString() },
-                };
-
-                // Get range info for Range type properties
-                if (propType == UnityEngine.Rendering.ShaderPropertyType.Range)
-                {
-                    var limits = shader.GetPropertyRangeLimits(i);
-                    prop["rangeMin"] = limits.x;
-                    prop["rangeMax"] = limits.y;
-                    prop["rangeDefault"] = shader.GetPropertyDefaultFloatValue(i);
-                }
-
-                properties.Add(prop);
-            }
-
-            // Parse the .shadergraph JSON for additional metadata
-            var graphMeta = new Dictionary<string, object>();
+            string graphContent = null;
+            ShaderGraphDocument graphDocument = null;
+            var textureMetadata = new Dictionary<string, Dictionary<string, object>>(StringComparer.Ordinal);
             try
             {
                 string fullPath = Path.Combine(Application.dataPath, "..", path);
                 if (File.Exists(fullPath))
                 {
-                    string content = File.ReadAllText(fullPath);
-                    // Extract some basic counts from the JSON
-                    graphMeta["fileSizeKB"] = Math.Round(new FileInfo(fullPath).Length / 1024.0, 1);
-
-                    // Count nodes (rough estimate by counting "m_ObjectId" occurrences)
-                    int nodeCount = content.Split(new[] { "\"m_ObjectId\"" }, StringSplitOptions.None).Length - 1;
-                    graphMeta["estimatedNodeCount"] = nodeCount;
-
-                    // Check for common features
-                    graphMeta["usesCustomFunction"] = content.Contains("CustomFunctionNode");
-                    graphMeta["usesSubGraph"] = content.Contains("SubGraphNode");
-                    graphMeta["usesKeywords"] = content.Contains("ShaderKeyword");
+                    graphContent = File.ReadAllText(fullPath);
+                    graphDocument = ParseShaderGraphDocument(graphContent);
+                    textureMetadata = GetTexturePropertyMetadata(graphDocument);
                 }
             }
-            catch { }
+            catch
+            {
+                graphContent = null;
+                graphDocument = null;
+            }
+
+            int propCount = shader.GetPropertyCount();
+            var properties = new List<Dictionary<string, object>>();
+
+            for (int i = 0; i < propCount; i++)
+                properties.Add(BuildShaderPropertyInfo(shader, i, textureMetadata));
+
+            // Parse the .shadergraph JSON for additional metadata
+            var graphMeta = new Dictionary<string, object>();
+            if (graphContent != null && graphDocument != null)
+            {
+                string fullPath = Path.Combine(Application.dataPath, "..", path);
+                graphMeta["fileSizeKB"] = Math.Round(new FileInfo(fullPath).Length / 1024.0, 1);
+                graphMeta["nodeCount"] = GetReferencedObjectIds(graphDocument.GraphData, "m_Nodes").Count;
+                graphMeta["edgeCount"] = ReadGraphEdges(graphDocument.GraphData).Count;
+                graphMeta["blackboardPropertyCount"] =
+                    GetReferencedObjectIds(graphDocument.GraphData, "m_Properties").Count;
+                graphMeta["usesCustomFunction"] = graphContent.Contains("CustomFunctionNode");
+                graphMeta["usesSubGraph"] = graphContent.Contains("SubGraphNode");
+                graphMeta["usesKeywords"] = graphContent.Contains("ShaderKeyword");
+            }
 
             var result = new Dictionary<string, object>
             {
@@ -324,9 +325,13 @@ namespace UnityMCP.Editor
                 return new Dictionary<string, object> { { "error", "Provide 'path' (asset path) or 'shaderName' (shader name like 'Universal Render Pipeline/Lit')" } };
 
             Shader shader = null;
+            string shaderAssetPath = null;
 
             if (args.ContainsKey("path"))
-                shader = AssetDatabase.LoadAssetAtPath<Shader>(args["path"].ToString());
+            {
+                shaderAssetPath = args["path"].ToString();
+                shader = AssetDatabase.LoadAssetAtPath<Shader>(shaderAssetPath);
+            }
             else if (args.ContainsKey("shaderName"))
                 shader = Shader.Find(args["shaderName"].ToString());
 
@@ -335,41 +340,31 @@ namespace UnityMCP.Editor
 
             int propCount = shader.GetPropertyCount();
             var properties = new List<Dictionary<string, object>>();
-
-            for (int i = 0; i < propCount; i++)
+            var textureMetadata = new Dictionary<string, Dictionary<string, object>>(StringComparer.Ordinal);
+            if (string.IsNullOrEmpty(shaderAssetPath) == false &&
+                shaderAssetPath.EndsWith(".shadergraph", StringComparison.OrdinalIgnoreCase))
             {
-                var propType = shader.GetPropertyType(i);
-                var prop = new Dictionary<string, object>
+                try
                 {
-                    { "name", shader.GetPropertyName(i) },
-                    { "description", shader.GetPropertyDescription(i) },
-                    { "type", propType.ToString() },
-                    { "isHidden", shader.GetPropertyFlags(i).HasFlag(UnityEngine.Rendering.ShaderPropertyFlags.HideInInspector) },
-                };
-
-                if (propType == UnityEngine.Rendering.ShaderPropertyType.Range)
-                {
-                    var limits = shader.GetPropertyRangeLimits(i);
-                    prop["rangeMin"] = limits.x;
-                    prop["rangeMax"] = limits.y;
-                    prop["rangeDefault"] = shader.GetPropertyDefaultFloatValue(i);
+                    string fullPath = Path.Combine(Application.dataPath, "..", shaderAssetPath);
+                    textureMetadata = GetTexturePropertyMetadata(
+                        ParseShaderGraphDocument(File.ReadAllText(fullPath)));
                 }
-
-                // Get texture dimension for Texture properties
-                if (propType == UnityEngine.Rendering.ShaderPropertyType.Texture)
-                {
-                    prop["textureDimension"] = shader.GetPropertyTextureDimension(i).ToString();
-                }
-
-                properties.Add(prop);
+                catch { }
             }
 
-            return new Dictionary<string, object>
+            for (int i = 0; i < propCount; i++)
+                properties.Add(BuildShaderPropertyInfo(shader, i, textureMetadata));
+
+            var result = new Dictionary<string, object>
             {
                 { "shaderName", shader.name },
                 { "propertyCount", propCount },
                 { "properties", properties.ToArray() },
             };
+            if (string.IsNullOrEmpty(shaderAssetPath) == false)
+                result["assetPath"] = shaderAssetPath;
+            return result;
         }
 
         // ─── Create Shader Graph ───
@@ -712,48 +707,44 @@ namespace UnityMCP.Editor
 
             try
             {
-                string content = File.ReadAllText(fullPath);
-                var jsonBlocks = ParseMultiJson(content);
+                ShaderGraphDocument document = ParseShaderGraphDocument(File.ReadAllText(fullPath));
                 var nodes = new List<Dictionary<string, object>>();
 
-                foreach (var block in jsonBlocks)
+                foreach (string objectId in GetReferencedObjectIds(document.GraphData, "m_Nodes"))
                 {
-                    string typeVal = ExtractJsonString(block, "m_Type");
-                    string objectId = ExtractJsonString(block, "m_ObjectId") ?? ExtractJsonString(block, "m_Id");
+                    if (!document.ObjectsById.TryGetValue(objectId, out var node))
+                        throw new InvalidDataException($"GraphData references missing node '{objectId}'.");
 
-                    if (string.IsNullOrEmpty(typeVal) || string.IsNullOrEmpty(objectId)) continue;
-
-                    // Skip the main GraphData object
-                    if (typeVal.Contains("GraphData")) continue;
-
-                    // Extract position from m_DrawState
-                    float posX = 0, posY = 0;
-                    int drawStateIdx = block.IndexOf("\"m_DrawState\"");
-                    if (drawStateIdx >= 0)
-                    {
-                        string posSection = block.Substring(drawStateIdx, Math.Min(500, block.Length - drawStateIdx));
-                        posX = ExtractJsonFloat(posSection, "x");
-                        posY = ExtractJsonFloat(posSection, "y");
-                    }
-
-                    // Extract node name
-                    string name = ExtractJsonString(block, "m_Name") ?? typeVal.Split('.').Last();
-
-                    // Count slots
-                    int slotCount = CountOccurrences(block, "\"m_Id\"");
+                    string typeValue = GetString(node, "m_Type");
+                    if (string.IsNullOrEmpty(typeValue))
+                        throw new InvalidDataException($"Shader Graph node '{objectId}' has no m_Type.");
 
                     var nodeInfo = new Dictionary<string, object>
                     {
                         { "objectId", objectId },
-                        { "type", typeVal },
-                        { "name", name },
-                        { "position", new Dictionary<string, object> { { "x", posX }, { "y", posY } } },
+                        { "type", typeValue },
+                        { "name", GetString(node, "m_Name") ?? typeValue.Split('.').Last() },
+                        { "slotCount", GetReferencedObjectIds(node, "m_Slots").Count },
                     };
 
-                    // Extract any m_Value or m_DefaultValue
-                    string defaultValue = ExtractJsonString(block, "m_DefaultValue") ?? ExtractJsonString(block, "m_Value");
-                    if (!string.IsNullOrEmpty(defaultValue))
-                        nodeInfo["defaultValue"] = defaultValue;
+                    if (TryGetPosition(node, out double positionX, out double positionY))
+                    {
+                        nodeInfo["position"] = new Dictionary<string, object>
+                        {
+                            { "x", positionX },
+                            { "y", positionY },
+                        };
+                    }
+
+                    if (node.TryGetValue("m_DefaultValue", out object defaultValue) ||
+                        node.TryGetValue("m_Value", out defaultValue))
+                    {
+                        if (defaultValue == null || defaultValue is string || defaultValue is bool ||
+                            IsNumber(defaultValue))
+                        {
+                            nodeInfo["defaultValue"] = defaultValue;
+                        }
+                    }
 
                     nodes.Add(nodeInfo);
                 }
@@ -790,8 +781,8 @@ namespace UnityMCP.Editor
 
             try
             {
-                string content = File.ReadAllText(fullPath);
-                var edges = ParseEdgesFromJson(content);
+                ShaderGraphDocument document = ParseShaderGraphDocument(File.ReadAllText(fullPath));
+                var edges = ReadGraphEdges(document.GraphData);
 
                 return new Dictionary<string, object>
                 {
@@ -1110,42 +1101,83 @@ namespace UnityMCP.Editor
         }
 
         /// <summary>
-        /// Set a property value on a node in the shader graph JSON.
+        /// Set a scalar property value on a serialized Shader Graph object.
         /// </summary>
         public static object SetGraphNodeProperty(Dictionary<string, object> args)
         {
             if (!IsShaderGraphInstalled())
                 return PackageNotInstalledError("Shader Graph (com.unity.shadergraph)");
 
-            if (!args.ContainsKey("path") || !args.ContainsKey("nodeId") || !args.ContainsKey("propertyName"))
-                return new Dictionary<string, object> { { "error", "path, nodeId, and propertyName are required" } };
+            if (!args.ContainsKey("path") ||
+                (!args.ContainsKey("objectId") && !args.ContainsKey("nodeId")) ||
+                !args.ContainsKey("propertyName") || !args.ContainsKey("value"))
+            {
+                return new Dictionary<string, object>
+                {
+                    { "error", "path, objectId (or legacy nodeId), propertyName, and value are required" },
+                };
+            }
 
             string path = args["path"].ToString();
-            string nodeId = args["nodeId"].ToString();
+            string objectId = args.ContainsKey("objectId")
+                ? args["objectId"].ToString()
+                : args["nodeId"].ToString();
             string propertyName = args["propertyName"].ToString();
-            string value = args.ContainsKey("value") ? args["value"].ToString() : "";
+            object requestedValue = args.ContainsKey("value") ? args["value"] : null;
 
             string fullPath = Path.Combine(Application.dataPath, "..", path);
             if (!File.Exists(fullPath))
                 return new Dictionary<string, object> { { "error", $"File not found: {path}" } };
 
+            string originalContent = null;
+            bool wroteFile = false;
             try
             {
-                string content = File.ReadAllText(fullPath);
-                var blocks = ParseMultiJson(content);
-                var newBlocks = new List<string>();
-                bool found = false;
+                originalContent = File.ReadAllText(fullPath);
+                ShaderGraphDocument document = ParseShaderGraphDocument(originalContent);
+                if (!document.ObjectsById.TryGetValue(objectId, out var graphObject))
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "error", $"Shader Graph object with ID '{objectId}' not found" },
+                    };
+                }
 
-                foreach (var block in blocks)
+                if (!graphObject.TryGetValue(propertyName, out object previousValue))
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "error", $"Property '{propertyName}' does not exist on Shader Graph object '{objectId}'" },
+                        { "objectId", objectId },
+                        { "objectType", GetString(graphObject, "m_Type") ?? "unknown" },
+                    };
+                }
+
+                if (!TryNormalizeScalarJsonValue(previousValue, requestedValue,
+                        out object normalizedValue, out string valueError))
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "error", valueError },
+                        { "objectId", objectId },
+                        { "propertyName", propertyName },
+                    };
+                }
+
+                var newBlocks = new List<string>();
+
+                foreach (string block in document.Blocks)
                 {
                     string blockId = ExtractJsonString(block, "m_ObjectId") ?? ExtractJsonString(block, "m_Id");
-
-                    if (blockId == nodeId)
+                    if (blockId == objectId)
                     {
-                        // Replace the property value in this block
-                        string modified = SetJsonProperty(block, propertyName, value);
+                        if (!TrySetTopLevelJsonProperty(block, propertyName, normalizedValue,
+                                out string modified))
+                        {
+                            throw new InvalidDataException(
+                                $"Could not locate serialized property '{propertyName}' on object '{objectId}'.");
+                        }
                         newBlocks.Add(modified);
-                        found = true;
                     }
                     else
                     {
@@ -1153,24 +1185,54 @@ namespace UnityMCP.Editor
                     }
                 }
 
-                if (!found)
-                    return new Dictionary<string, object> { { "error", $"Node with ID '{nodeId}' not found" } };
-
                 string newContent = string.Join("\n\n", newBlocks);
                 File.WriteAllText(fullPath, newContent);
-                AssetDatabase.ImportAsset(path);
+                wroteFile = true;
+                AssetDatabase.ImportAsset(path,
+                    ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+
+                ShaderGraphDocument readback = ParseShaderGraphDocument(File.ReadAllText(fullPath));
+                if (!readback.ObjectsById.TryGetValue(objectId, out var readbackObject) ||
+                    !readbackObject.TryGetValue(propertyName, out object readbackValue) ||
+                    !JsonScalarEquals(readbackValue, normalizedValue))
+                {
+                    throw new InvalidDataException(
+                        $"Readback verification failed for '{objectId}.{propertyName}'.");
+                }
 
                 return new Dictionary<string, object>
                 {
                     { "success", true },
-                    { "nodeId", nodeId },
+                    { "objectId", objectId },
+                    { "objectType", GetString(graphObject, "m_Type") ?? "unknown" },
                     { "propertyName", propertyName },
-                    { "value", value },
+                    { "previousValue", previousValue },
+                    { "value", normalizedValue },
                 };
             }
             catch (Exception ex)
             {
-                return new Dictionary<string, object> { { "error", $"Failed to set property: {ex.Message}" } };
+                bool rolledBack = false;
+                if (wroteFile && originalContent != null)
+                {
+                    try
+                    {
+                        File.WriteAllText(fullPath, originalContent);
+                        AssetDatabase.ImportAsset(path,
+                            ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                        rolledBack = true;
+                    }
+                    catch
+                    {
+                        rolledBack = false;
+                    }
+                }
+
+                return new Dictionary<string, object>
+                {
+                    { "error", $"Failed to set Shader Graph object property: {ex.Message}" },
+                    { "rolledBack", rolledBack },
+                };
             }
         }
 
@@ -1258,29 +1320,285 @@ namespace UnityMCP.Editor
 
         // ─── JSON Parsing Helpers ───
 
+        private sealed class ShaderGraphDocument
+        {
+            public readonly List<string> Blocks = new List<string>();
+            public readonly Dictionary<string, Dictionary<string, object>> ObjectsById =
+                new Dictionary<string, Dictionary<string, object>>(StringComparer.Ordinal);
+            public Dictionary<string, object> GraphData;
+        }
+
+        private static ShaderGraphDocument ParseShaderGraphDocument(string content)
+        {
+            var document = new ShaderGraphDocument();
+            foreach (string block in ParseMultiJson(content))
+            {
+                if (!(MiniJson.Deserialize(block) is Dictionary<string, object> parsed))
+                    throw new InvalidDataException("Shader Graph contains a non-object JSON block.");
+
+                document.Blocks.Add(block);
+                string objectId = GetString(parsed, "m_ObjectId");
+                if (string.IsNullOrEmpty(objectId) &&
+                    parsed.TryGetValue("m_Id", out object idValue) && idValue is string id)
+                {
+                    objectId = id;
+                }
+
+                if (!string.IsNullOrEmpty(objectId))
+                {
+                    if (document.ObjectsById.ContainsKey(objectId))
+                        throw new InvalidDataException($"Duplicate Shader Graph object ID '{objectId}'.");
+                    document.ObjectsById.Add(objectId, parsed);
+                }
+
+                string type = GetString(parsed, "m_Type");
+                if (!string.IsNullOrEmpty(type) &&
+                    type.EndsWith(".GraphData", StringComparison.Ordinal))
+                {
+                    if (document.GraphData != null)
+                        throw new InvalidDataException("Shader Graph contains multiple GraphData objects.");
+                    document.GraphData = parsed;
+                }
+            }
+
+            if (document.GraphData == null)
+                throw new InvalidDataException("Shader Graph does not contain a GraphData object.");
+            return document;
+        }
+
+        private static Dictionary<string, object> BuildShaderPropertyInfo(
+            Shader shader,
+            int propertyIndex,
+            Dictionary<string, Dictionary<string, object>> textureMetadata)
+        {
+            var propertyType = shader.GetPropertyType(propertyIndex);
+            string propertyName = shader.GetPropertyName(propertyIndex);
+            var flags = shader.GetPropertyFlags(propertyIndex);
+            var property = new Dictionary<string, object>
+            {
+                { "name", propertyName },
+                { "description", shader.GetPropertyDescription(propertyIndex) },
+                { "type", propertyType.ToString() },
+                { "flags", flags.ToString() },
+                { "isHidden", flags.HasFlag(UnityEngine.Rendering.ShaderPropertyFlags.HideInInspector) },
+            };
+
+            if (propertyType == UnityEngine.Rendering.ShaderPropertyType.Range)
+            {
+                Vector2 limits = shader.GetPropertyRangeLimits(propertyIndex);
+                property["rangeMin"] = limits.x;
+                property["rangeMax"] = limits.y;
+                property["rangeDefault"] = shader.GetPropertyDefaultFloatValue(propertyIndex);
+            }
+
+            if (propertyType == UnityEngine.Rendering.ShaderPropertyType.Texture)
+            {
+                property["textureDimension"] = shader.GetPropertyTextureDimension(propertyIndex).ToString();
+                if (textureMetadata.TryGetValue(propertyName, out var metadata))
+                {
+                    foreach (var pair in metadata)
+                        property[pair.Key] = pair.Value;
+                }
+            }
+
+            return property;
+        }
+
+        private static Dictionary<string, Dictionary<string, object>> GetTexturePropertyMetadata(
+            ShaderGraphDocument document)
+        {
+            var result = new Dictionary<string, Dictionary<string, object>>(StringComparer.Ordinal);
+            foreach (string propertyId in GetReferencedObjectIds(document.GraphData, "m_Properties"))
+            {
+                if (!document.ObjectsById.TryGetValue(propertyId, out var property))
+                    throw new InvalidDataException($"GraphData references missing property '{propertyId}'.");
+
+                string type = GetString(property, "m_Type");
+                if (string.IsNullOrEmpty(type) ||
+                    !type.EndsWith("ShaderProperty", StringComparison.Ordinal) ||
+                    type.IndexOf("Texture", StringComparison.Ordinal) < 0)
+                {
+                    continue;
+                }
+
+                string referenceName = GetString(property, "m_OverrideReferenceName");
+                if (string.IsNullOrEmpty(referenceName))
+                    referenceName = GetString(property, "m_DefaultReferenceName");
+                if (string.IsNullOrEmpty(referenceName))
+                    continue;
+
+                var metadata = new Dictionary<string, object>
+                {
+                    { "graphObjectId", propertyId },
+                    { "graphPropertyType", type },
+                };
+                AddOptionalString(metadata, "graphDisplayName", GetString(property, "m_Name"));
+                AddOptionalBoolean(metadata, "generatePropertyBlock", property, "m_GeneratePropertyBlock");
+                AddOptionalBoolean(metadata, "perRendererData", property, "m_PerRendererData");
+                AddOptionalBoolean(metadata, "isMainTexture", property, "isMainTexture");
+                AddOptionalBoolean(metadata, "useTilingAndOffset", property, "useTilingAndOffset");
+                AddOptionalBoolean(metadata, "useTexelSize", property, "useTexelSize");
+                result[referenceName] = metadata;
+            }
+
+            return result;
+        }
+
+        private static void AddOptionalString(Dictionary<string, object> target, string key, string value)
+        {
+            if (!string.IsNullOrEmpty(value))
+                target[key] = value;
+        }
+
+        private static void AddOptionalBoolean(
+            Dictionary<string, object> target,
+            string outputKey,
+            Dictionary<string, object> source,
+            string sourceKey)
+        {
+            if (source.TryGetValue(sourceKey, out object value) && TryConvertBoolean(value, out bool result))
+                target[outputKey] = result;
+        }
+
+        private static string GetString(Dictionary<string, object> dictionary, string key)
+        {
+            return dictionary != null && dictionary.TryGetValue(key, out object value)
+                ? value as string
+                : null;
+        }
+
+        private static List<string> GetReferencedObjectIds(
+            Dictionary<string, object> owner,
+            string collectionName)
+        {
+            var result = new List<string>();
+            if (owner == null || !owner.TryGetValue(collectionName, out object collection) || collection == null)
+                return result;
+            if (!(collection is IEnumerable<object> references))
+                throw new InvalidDataException($"'{collectionName}' is not a JSON array.");
+
+            foreach (object referenceValue in references)
+            {
+                if (!(referenceValue is Dictionary<string, object> reference))
+                    throw new InvalidDataException($"'{collectionName}' contains a non-object reference.");
+                string id = GetString(reference, "m_Id");
+                if (string.IsNullOrEmpty(id))
+                    throw new InvalidDataException($"'{collectionName}' contains a reference without m_Id.");
+                result.Add(id);
+            }
+
+            return result;
+        }
+
+        private static List<Dictionary<string, object>> ReadGraphEdges(Dictionary<string, object> graphData)
+        {
+            var result = new List<Dictionary<string, object>>();
+            if (graphData == null || !graphData.TryGetValue("m_Edges", out object edgesValue) ||
+                edgesValue == null)
+            {
+                return result;
+            }
+            if (!(edgesValue is IEnumerable<object> edges))
+                throw new InvalidDataException("'m_Edges' is not a JSON array.");
+
+            foreach (object edgeValue in edges)
+            {
+                if (!(edgeValue is Dictionary<string, object> edge))
+                    throw new InvalidDataException("'m_Edges' contains a non-object edge.");
+
+                Dictionary<string, object> outputSlot = GetRequiredDictionary(edge, "m_OutputSlot");
+                Dictionary<string, object> inputSlot = GetRequiredDictionary(edge, "m_InputSlot");
+                string outputNodeId = GetString(GetRequiredDictionary(outputSlot, "m_Node"), "m_Id");
+                string inputNodeId = GetString(GetRequiredDictionary(inputSlot, "m_Node"), "m_Id");
+                if (string.IsNullOrEmpty(outputNodeId) || string.IsNullOrEmpty(inputNodeId))
+                    throw new InvalidDataException("Shader Graph edge contains an empty node ID.");
+
+                result.Add(new Dictionary<string, object>
+                {
+                    { "outputNodeId", outputNodeId },
+                    { "outputSlotId", GetRequiredInteger(outputSlot, "m_SlotId") },
+                    { "inputNodeId", inputNodeId },
+                    { "inputSlotId", GetRequiredInteger(inputSlot, "m_SlotId") },
+                });
+            }
+
+            return result;
+        }
+
+        private static Dictionary<string, object> GetRequiredDictionary(
+            Dictionary<string, object> owner,
+            string key)
+        {
+            if (!owner.TryGetValue(key, out object value) ||
+                !(value is Dictionary<string, object> dictionary))
+            {
+                throw new InvalidDataException($"Shader Graph JSON is missing object '{key}'.");
+            }
+            return dictionary;
+        }
+
+        private static int GetRequiredInteger(Dictionary<string, object> owner, string key)
+        {
+            if (!owner.TryGetValue(key, out object value) || value == null)
+                throw new InvalidDataException($"Shader Graph JSON is missing integer '{key}'.");
+            try
+            {
+                return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidDataException($"Shader Graph JSON value '{key}' is not an integer.", ex);
+            }
+        }
+
+        private static bool TryGetPosition(
+            Dictionary<string, object> node,
+            out double positionX,
+            out double positionY)
+        {
+            positionX = 0;
+            positionY = 0;
+            if (!node.TryGetValue("m_DrawState", out object drawStateValue) ||
+                !(drawStateValue is Dictionary<string, object> drawState) ||
+                !drawState.TryGetValue("m_Position", out object positionValue) ||
+                !(positionValue is Dictionary<string, object> position) ||
+                !position.TryGetValue("x", out object xValue) ||
+                !position.TryGetValue("y", out object yValue))
+            {
+                return false;
+            }
+
+            try
+            {
+                positionX = Convert.ToDouble(xValue, CultureInfo.InvariantCulture);
+                positionY = Convert.ToDouble(yValue, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static List<string> ParseMultiJson(string content)
         {
             var blocks = new List<string>();
-            int depth = 0;
-            int blockStart = -1;
-
-            for (int i = 0; i < content.Length; i++)
+            int index = 0;
+            while (index < content.Length)
             {
-                char c = content[i];
-                if (c == '{')
-                {
-                    if (depth == 0) blockStart = i;
-                    depth++;
-                }
-                else if (c == '}')
-                {
-                    depth--;
-                    if (depth == 0 && blockStart >= 0)
-                    {
-                        blocks.Add(content.Substring(blockStart, i - blockStart + 1));
-                        blockStart = -1;
-                    }
-                }
+                while (index < content.Length &&
+                       (char.IsWhiteSpace(content[index]) || content[index] == '\uFEFF'))
+                    index++;
+                if (index >= content.Length)
+                    break;
+                if (content[index] != '{')
+                    throw new InvalidDataException($"Unexpected Shader Graph content at offset {index}.");
+
+                int blockEnd = FindMatchingJsonDelimiter(content, index);
+                if (blockEnd < 0)
+                    throw new InvalidDataException($"Unterminated Shader Graph JSON object at offset {index}.");
+                blocks.Add(content.Substring(index, blockEnd - index + 1));
+                index = blockEnd + 1;
             }
 
             return blocks;
@@ -1293,96 +1611,9 @@ namespace UnityMCP.Editor
             return match.Success ? match.Groups[1].Value : null;
         }
 
-        private static float ExtractJsonFloat(string json, string key)
-        {
-            string pattern = $"\"{key}\"\\s*:\\s*([\\-0-9.eE]+)";
-            var match = System.Text.RegularExpressions.Regex.Match(json, pattern);
-            if (match.Success && float.TryParse(match.Groups[1].Value,
-                System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out float val))
-                return val;
-            return 0f;
-        }
-
-        private static int CountOccurrences(string text, string pattern)
-        {
-            int count = 0;
-            int idx = 0;
-            while ((idx = text.IndexOf(pattern, idx)) != -1)
-            {
-                count++;
-                idx += pattern.Length;
-            }
-            return count;
-        }
-
         private static List<Dictionary<string, object>> ParseEdgesFromJson(string content)
         {
-            var edges = new List<Dictionary<string, object>>();
-
-            int edgesIdx = content.IndexOf("\"m_Edges\"");
-            if (edgesIdx < 0) return edges;
-
-            int arrayStart = content.IndexOf('[', edgesIdx);
-            if (arrayStart < 0) return edges;
-
-            int arrayEnd = FindMatchingBracket(content, arrayStart);
-            if (arrayEnd < 0) return edges;
-
-            string edgesSection = content.Substring(arrayStart + 1, arrayEnd - arrayStart - 1);
-
-            // Parse individual edge objects
-            int depth = 0;
-            int objStart = -1;
-
-            for (int i = 0; i < edgesSection.Length; i++)
-            {
-                if (edgesSection[i] == '{')
-                {
-                    if (depth == 0) objStart = i;
-                    depth++;
-                }
-                else if (edgesSection[i] == '}')
-                {
-                    depth--;
-                    if (depth == 0 && objStart >= 0)
-                    {
-                        string edgeJson = edgesSection.Substring(objStart, i - objStart + 1);
-
-                        // Extract output node ID
-                        string outNodePattern = "\"m_OutputSlot\".*?\"m_Id\"\\s*:\\s*\"([^\"]*)\"";
-                        var outMatch = System.Text.RegularExpressions.Regex.Match(edgeJson, outNodePattern);
-                        string outNodeId = outMatch.Success ? outMatch.Groups[1].Value : "";
-
-                        // Extract output slot ID
-                        string outSlotPattern = "\"m_OutputSlot\".*?\"m_SlotId\"\\s*:\\s*(\\d+)";
-                        var outSlotMatch = System.Text.RegularExpressions.Regex.Match(edgeJson, outSlotPattern);
-                        int outSlotId = outSlotMatch.Success ? int.Parse(outSlotMatch.Groups[1].Value) : 0;
-
-                        // Extract input node ID
-                        string inNodePattern = "\"m_InputSlot\".*?\"m_Id\"\\s*:\\s*\"([^\"]*)\"";
-                        var inMatch = System.Text.RegularExpressions.Regex.Match(edgeJson, inNodePattern);
-                        string inNodeId = inMatch.Success ? inMatch.Groups[1].Value : "";
-
-                        // Extract input slot ID
-                        string inSlotPattern = "\"m_InputSlot\".*?\"m_SlotId\"\\s*:\\s*(\\d+)";
-                        var inSlotMatch = System.Text.RegularExpressions.Regex.Match(edgeJson, inSlotPattern);
-                        int inSlotId = inSlotMatch.Success ? int.Parse(inSlotMatch.Groups[1].Value) : 0;
-
-                        edges.Add(new Dictionary<string, object>
-                        {
-                            { "outputNodeId", outNodeId },
-                            { "outputSlotId", outSlotId },
-                            { "inputNodeId", inNodeId },
-                            { "inputSlotId", inSlotId },
-                        });
-
-                        objStart = -1;
-                    }
-                }
-            }
-
-            return edges;
+            return ReadGraphEdges(ParseShaderGraphDocument(content).GraphData);
         }
 
         private static int FindJsonArrayEnd(string content, string arrayName)
@@ -1396,16 +1627,54 @@ namespace UnityMCP.Editor
 
         private static int FindMatchingBracket(string content, int openPos)
         {
-            char open = content[openPos];
-            char close = open == '[' ? ']' : '}';
+            return FindMatchingJsonDelimiter(content, openPos);
+        }
+
+        private static int FindMatchingJsonDelimiter(string content, int openPosition)
+        {
+            if (string.IsNullOrEmpty(content) || openPosition < 0 || openPosition >= content.Length)
+                return -1;
+            char open = content[openPosition];
+            if (open != '{' && open != '[')
+                return -1;
+            char close = open == '{' ? '}' : ']';
             int depth = 1;
-            for (int i = openPos + 1; i < content.Length; i++)
+            bool inString = false;
+            bool escaped = false;
+            for (int index = openPosition + 1; index < content.Length; index++)
             {
-                if (content[i] == open) depth++;
-                else if (content[i] == close)
+                char character = content[index];
+                if (inString)
+                {
+                    if (escaped)
+                    {
+                        escaped = false;
+                    }
+                    else if (character == '\\')
+                    {
+                        escaped = true;
+                    }
+                    else if (character == '"')
+                    {
+                        inString = false;
+                    }
+                    continue;
+                }
+
+                if (character == '"')
+                {
+                    inString = true;
+                    continue;
+                }
+                if (character == open)
+                {
+                    depth++;
+                }
+                else if (character == close)
                 {
                     depth--;
-                    if (depth == 0) return i;
+                    if (depth == 0)
+                        return index;
                 }
             }
             return -1;
@@ -1442,24 +1711,217 @@ namespace UnityMCP.Editor
             return graphBlock.Substring(0, arrayStart) + newArray + graphBlock.Substring(arrayEnd + 1);
         }
 
-        private static string SetJsonProperty(string block, string propertyName, string value)
+        private static bool TryNormalizeScalarJsonValue(
+            object previousValue,
+            object requestedValue,
+            out object normalizedValue,
+            out string error)
         {
-            // Try to find and replace a string property
-            string strPattern = $"\"{propertyName}\"\\s*:\\s*\"[^\"]*\"";
-            if (System.Text.RegularExpressions.Regex.IsMatch(block, strPattern))
-                return System.Text.RegularExpressions.Regex.Replace(block, strPattern, $"\"{propertyName}\": \"{value}\"");
+            normalizedValue = null;
+            error = null;
 
-            // Try numeric property
-            string numPattern = $"\"{propertyName}\"\\s*:\\s*[\\-0-9.eE]+";
-            if (System.Text.RegularExpressions.Regex.IsMatch(block, numPattern))
-                return System.Text.RegularExpressions.Regex.Replace(block, numPattern, $"\"{propertyName}\": {value}");
+            if (previousValue is bool)
+            {
+                if (!TryConvertBoolean(requestedValue, out bool boolValue))
+                {
+                    error = $"Value '{requestedValue}' is not a boolean.";
+                    return false;
+                }
+                normalizedValue = boolValue;
+                return true;
+            }
 
-            // Try boolean property
-            string boolPattern = $"\"{propertyName}\"\\s*:\\s*(true|false)";
-            if (System.Text.RegularExpressions.Regex.IsMatch(block, boolPattern))
-                return System.Text.RegularExpressions.Regex.Replace(block, boolPattern, $"\"{propertyName}\": {value.ToLower()}");
+            if (IsNumber(previousValue))
+            {
+                if (!double.TryParse(Convert.ToString(requestedValue, CultureInfo.InvariantCulture),
+                        NumberStyles.Float, CultureInfo.InvariantCulture, out double numericValue) ||
+                    double.IsNaN(numericValue) || double.IsInfinity(numericValue))
+                {
+                    error = $"Value '{requestedValue}' is not a finite number.";
+                    return false;
+                }
 
-            return block; // Property not found
+                if (previousValue is byte || previousValue is sbyte || previousValue is short ||
+                    previousValue is ushort || previousValue is int || previousValue is uint ||
+                    previousValue is long || previousValue is ulong)
+                {
+                    if (numericValue % 1 != 0 || numericValue < long.MinValue || numericValue > long.MaxValue)
+                    {
+                        error = $"Value '{requestedValue}' is not an integer in range.";
+                        return false;
+                    }
+                    normalizedValue = Convert.ToInt64(numericValue);
+                }
+                else
+                {
+                    normalizedValue = numericValue;
+                }
+                return true;
+            }
+
+            if (previousValue is string)
+            {
+                normalizedValue = requestedValue?.ToString() ?? string.Empty;
+                return true;
+            }
+
+            if (previousValue == null &&
+                (requestedValue == null || requestedValue is string || requestedValue is bool ||
+                 IsNumber(requestedValue)))
+            {
+                normalizedValue = requestedValue;
+                return true;
+            }
+
+            error = "Only scalar string, number, boolean, or null Shader Graph fields can be edited safely.";
+            return false;
+        }
+
+        private static bool TryConvertBoolean(object value, out bool result)
+        {
+            if (value is bool boolean)
+            {
+                result = boolean;
+                return true;
+            }
+            return bool.TryParse(value?.ToString(), out result);
+        }
+
+        private static bool IsNumber(object value)
+        {
+            return value is byte || value is sbyte || value is short || value is ushort ||
+                   value is int || value is uint || value is long || value is ulong ||
+                   value is float || value is double || value is decimal;
+        }
+
+        private static bool JsonScalarEquals(object left, object right)
+        {
+            if (IsNumber(left) && IsNumber(right))
+            {
+                return Convert.ToDouble(left, CultureInfo.InvariantCulture).Equals(
+                    Convert.ToDouble(right, CultureInfo.InvariantCulture));
+            }
+            return Equals(left, right);
+        }
+
+        private static bool TrySetTopLevelJsonProperty(
+            string jsonObject,
+            string propertyName,
+            object value,
+            out string modified)
+        {
+            modified = jsonObject;
+            if (!TryFindTopLevelJsonPropertyValue(
+                    jsonObject, propertyName, out int valueStart, out int valueEnd))
+            {
+                return false;
+            }
+
+            string serializedValue = MiniJson.Serialize(value);
+            modified = jsonObject.Substring(0, valueStart) + serializedValue +
+                       jsonObject.Substring(valueEnd);
+            return true;
+        }
+
+        private static bool TryFindTopLevelJsonPropertyValue(
+            string jsonObject,
+            string propertyName,
+            out int valueStart,
+            out int valueEnd)
+        {
+            valueStart = -1;
+            valueEnd = -1;
+            int objectDepth = 0;
+            int arrayDepth = 0;
+
+            for (int index = 0; index < jsonObject.Length; index++)
+            {
+                char character = jsonObject[index];
+                if (character == '"')
+                {
+                    int stringEnd = FindJsonStringEnd(jsonObject, index);
+                    if (stringEnd < 0)
+                        return false;
+
+                    if (objectDepth == 1 && arrayDepth == 0)
+                    {
+                        string keyToken = jsonObject.Substring(index, stringEnd - index + 1);
+                        string key = MiniJson.Deserialize(keyToken) as string;
+                        int colon = stringEnd + 1;
+                        while (colon < jsonObject.Length && char.IsWhiteSpace(jsonObject[colon]))
+                            colon++;
+                        if (string.Equals(key, propertyName, StringComparison.Ordinal) &&
+                            colon < jsonObject.Length && jsonObject[colon] == ':')
+                        {
+                            valueStart = colon + 1;
+                            while (valueStart < jsonObject.Length && char.IsWhiteSpace(jsonObject[valueStart]))
+                                valueStart++;
+                            valueEnd = FindJsonValueEnd(jsonObject, valueStart);
+                            return valueEnd > valueStart;
+                        }
+                    }
+
+                    index = stringEnd;
+                    continue;
+                }
+
+                if (character == '{')
+                    objectDepth++;
+                else if (character == '}')
+                    objectDepth--;
+                else if (character == '[')
+                    arrayDepth++;
+                else if (character == ']')
+                    arrayDepth--;
+            }
+
+            return false;
+        }
+
+        private static int FindJsonStringEnd(string json, int quotePosition)
+        {
+            bool escaped = false;
+            for (int index = quotePosition + 1; index < json.Length; index++)
+            {
+                char character = json[index];
+                if (escaped)
+                {
+                    escaped = false;
+                }
+                else if (character == '\\')
+                {
+                    escaped = true;
+                }
+                else if (character == '"')
+                {
+                    return index;
+                }
+            }
+            return -1;
+        }
+
+        private static int FindJsonValueEnd(string json, int valueStart)
+        {
+            if (valueStart < 0 || valueStart >= json.Length)
+                return -1;
+            char first = json[valueStart];
+            if (first == '"')
+            {
+                int stringEnd = FindJsonStringEnd(json, valueStart);
+                return stringEnd < 0 ? -1 : stringEnd + 1;
+            }
+            if (first == '{' || first == '[')
+            {
+                int delimiterEnd = FindMatchingJsonDelimiter(json, valueStart);
+                return delimiterEnd < 0 ? -1 : delimiterEnd + 1;
+            }
+
+            int end = valueStart;
+            while (end < json.Length && json[end] != ',' && json[end] != '}' && json[end] != ']')
+                end++;
+            while (end > valueStart && char.IsWhiteSpace(json[end - 1]))
+                end--;
+            return end;
         }
 
         private static Type ResolveShaderGraphNodeType(string typeName)

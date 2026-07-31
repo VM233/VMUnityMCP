@@ -2,6 +2,18 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.11] - 2026-08-01
+
+- Make Shader Graph inspection follow `GraphData` references so semantic node
+  counts exclude slots and other serialized helper objects, and multiline edge
+  records return exact node and slot IDs.
+- Expose Shader Graph texture-property authoring flags such as Per Renderer
+  Data, Main Texture, tiling/offset generation, and texel-size generation.
+- Make scalar Shader Graph object edits reject missing fields, preserve value
+  types, import synchronously, verify readback, and roll back failed writes.
+- Complete Shader Graph status discovery and add focused parser/edit regression
+  coverage plus route-owned metadata.
+
 ## [5.6.10] - 2026-07-31
 
 - Add exact `referenceSubAssetName` and lossless

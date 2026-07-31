@@ -259,6 +259,117 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ShaderGraphJsonRoutes_UseGraphDataAuthorityAndRejectSilentWrites()
+        {
+            if (!MCPShaderGraphCommands.IsShaderGraphInstalled())
+                Assert.Ignore("Shader Graph is not installed in this test project.");
+
+            const string graphPath = TEST_FOLDER + "/Shader Graph Fixture.txt";
+            File.WriteAllText(GetAbsolutePath(graphPath), @"{
+    ""m_SGVersion"": 3,
+    ""m_Type"": ""UnityEditor.ShaderGraph.GraphData"",
+    ""m_ObjectId"": ""graph-data"",
+    ""m_Properties"": [ { ""m_Id"": ""texture-property"" } ],
+    ""m_Nodes"": [
+        { ""m_Id"": ""property-node"" },
+        { ""m_Id"": ""sample-node"" }
+    ],
+    ""m_Edges"": [
+        {
+            ""m_OutputSlot"": {
+                ""m_Node"": { ""m_Id"": ""property-node"" },
+                ""m_SlotId"": 0
+            },
+            ""m_InputSlot"": {
+                ""m_Node"": { ""m_Id"": ""sample-node"" },
+                ""m_SlotId"": 1
+            }
+        }
+    ]
+}
+
+{
+    ""m_Type"": ""UnityEditor.ShaderGraph.Internal.Texture2DShaderProperty"",
+    ""m_ObjectId"": ""texture-property"",
+    ""m_Name"": ""Main Texture"",
+    ""m_OverrideReferenceName"": ""_MainTex"",
+    ""m_PerRendererData"": true,
+    ""isMainTexture"": true,
+    ""useTilingAndOffset"": true,
+    ""useTexelSize"": true
+}
+
+{
+    ""m_Type"": ""UnityEditor.ShaderGraph.PropertyNode"",
+    ""m_ObjectId"": ""property-node"",
+    ""m_Name"": ""Main Texture"",
+    ""m_Slots"": [ { ""m_Id"": ""property-slot"" } ],
+    ""m_DrawState"": { ""m_Position"": { ""x"": 10.0, ""y"": 20.0 } }
+}
+
+{
+    ""m_Type"": ""UnityEditor.ShaderGraph.SampleTexture2DNode"",
+    ""m_ObjectId"": ""sample-node"",
+    ""m_Name"": ""Sample Texture 2D"",
+    ""m_Slots"": [
+        { ""m_Id"": ""sample-input-slot"" },
+        { ""m_Id"": ""sample-output-slot"" }
+    ],
+    ""m_DrawState"": { ""m_Position"": { ""x"": 30.0, ""y"": 40.0 } }
+}
+
+{
+    ""m_Type"": ""UnityEditor.ShaderGraph.Texture2DMaterialSlot"",
+    ""m_ObjectId"": ""sample-input-slot"",
+    ""m_Id"": 1
+}");
+            AssetDatabase.ImportAsset(graphPath, ImportAssetOptions.ForceSynchronousImport);
+
+            var nodesResult = RequireDictionary(MCPShaderGraphCommands.GetGraphNodes(
+                new Dictionary<string, object> { { "path", graphPath } }));
+            var nodes = ((IEnumerable)nodesResult["nodes"]).Cast<object>()
+                .Select(RequireDictionary).ToArray();
+            Assert.That(nodesResult["nodeCount"], Is.EqualTo(2));
+            Assert.That(nodes.Select(node => node["objectId"].ToString()),
+                Is.EquivalentTo(new[] { "property-node", "sample-node" }));
+            Assert.That(nodes.Any(node => node["objectId"].ToString() == "sample-input-slot"), Is.False);
+
+            var edgesResult = RequireDictionary(MCPShaderGraphCommands.GetGraphEdges(
+                new Dictionary<string, object> { { "path", graphPath } }));
+            var edge = RequireDictionary(((IEnumerable)edgesResult["edges"]).Cast<object>().Single());
+            Assert.That(edge["outputNodeId"], Is.EqualTo("property-node"));
+            Assert.That(edge["outputSlotId"], Is.EqualTo(0));
+            Assert.That(edge["inputNodeId"], Is.EqualTo("sample-node"));
+            Assert.That(edge["inputSlotId"], Is.EqualTo(1));
+
+            var setResult = RequireDictionary(MCPShaderGraphCommands.SetGraphNodeProperty(
+                new Dictionary<string, object>
+                {
+                    { "path", graphPath },
+                    { "objectId", "texture-property" },
+                    { "propertyName", "useTilingAndOffset" },
+                    { "value", false },
+                }));
+            Assert.That(setResult["success"], Is.EqualTo(true));
+            Assert.That(setResult["previousValue"], Is.EqualTo(true));
+            Assert.That(setResult["value"], Is.EqualTo(false));
+            Assert.That(File.ReadAllText(GetAbsolutePath(graphPath)),
+                Does.Contain("\"useTilingAndOffset\": false"));
+
+            byte[] beforeRejectedWrite = File.ReadAllBytes(GetAbsolutePath(graphPath));
+            var rejected = RequireDictionary(MCPShaderGraphCommands.SetGraphNodeProperty(
+                new Dictionary<string, object>
+                {
+                    { "path", graphPath },
+                    { "objectId", "texture-property" },
+                    { "propertyName", "missingProperty" },
+                    { "value", false },
+                }));
+            Assert.That(rejected.ContainsKey("error"), Is.True);
+            Assert.That(File.ReadAllBytes(GetAbsolutePath(graphPath)), Is.EqualTo(beforeRejectedWrite));
+        }
+
+        [Test]
         public void AddGameObject_InvalidParent_DoesNotModifyPrefab()
         {
             CreateTestPrefab();

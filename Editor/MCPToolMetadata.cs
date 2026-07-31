@@ -228,6 +228,16 @@ namespace UnityMCP.Editor
                 "jobs/list",
                 "jobs/get",
                 "material/properties/get",
+                "shadergraph/status",
+                "shadergraph/list-shaders",
+                "shadergraph/list",
+                "shadergraph/info",
+                "shadergraph/get-properties",
+                "shadergraph/list-subgraphs",
+                "shadergraph/list-vfx",
+                "shadergraph/get-nodes",
+                "shadergraph/get-edges",
+                "shadergraph/get-node-types",
                 "audio-mixer/info",
                 "vfxgraph/info",
                 "addressables/info",
@@ -285,6 +295,12 @@ namespace UnityMCP.Editor
                 "asset/transaction",
                 "asset/import-settings/set",
                 "material/properties/set",
+                "shadergraph/create",
+                "shadergraph/add-node",
+                "shadergraph/remove-node",
+                "shadergraph/connect",
+                "shadergraph/disconnect",
+                "shadergraph/set-node-property",
                 "vfxgraph/transaction",
                 "timeline/transaction",
                 "texture/apply-sprite-preset",
@@ -1511,6 +1527,16 @@ namespace UnityMCP.Editor
                     return "Read a Material's shader, typed shader properties, textures, keywords, render queue, and instancing settings through Unity's public Material API.";
                 case "material/properties/set":
                     return "Transactionally set typed Material shader properties, texture references and transforms, keywords, render queue, and instancing settings.";
+                case "shadergraph/info":
+                    return "Inspect a Shader Graph's compiled shader properties plus authoritative node, edge, and blackboard-property counts.";
+                case "shadergraph/get-properties":
+                    return "Read compiled shader properties and Shader Graph texture-property metadata such as Per Renderer Data, Main Texture, tiling/offset, and texel-size generation.";
+                case "shadergraph/get-nodes":
+                    return "Read only the semantic nodes referenced by Shader Graph GraphData, excluding slots, properties, targets, and other serialized helper objects.";
+                case "shadergraph/get-edges":
+                    return "Read Shader Graph connections with exact output/input node IDs and slot IDs from GraphData.";
+                case "shadergraph/set-node-property":
+                    return "Safely set a scalar field on a serialized Shader Graph object, with field/type validation, synchronous import, readback verification, and rollback.";
                 case "physics/raycast":
                     return "Raycast through Physics or Physics2D using one dimension-selectable contract, with deterministic bounded multi-hit results.";
                 case "physics/overlap-sphere":
@@ -1657,6 +1683,25 @@ namespace UnityMCP.Editor
                         Prop("globalIlluminationFlags", "string", "Optional MaterialGlobalIlluminationFlags value."),
                         Prop("dryRun", "boolean", "Validate and return requested changes without modifying the Material.")
                     ), "assetPath");
+                case "shadergraph/info":
+                case "shadergraph/get-nodes":
+                case "shadergraph/get-edges":
+                    return Schema(Props(
+                        Prop("path", "string", "Shader Graph asset path below Assets/.")
+                    ), "path");
+                case "shadergraph/get-properties":
+                    return Schema(Props(
+                        Prop("path", "string", "Optional Shader or Shader Graph asset path below Assets/."),
+                        Prop("shaderName", "string", "Optional loaded shader name when path is omitted.")
+                    ));
+                case "shadergraph/set-node-property":
+                    return Schema(Props(
+                        Prop("path", "string", "Shader Graph asset path below Assets/."),
+                        Prop("objectId", "string", "Serialized graph object ID returned by shadergraph/get-properties or shadergraph/get-nodes."),
+                        Prop("nodeId", "string", "Legacy alias for objectId."),
+                        Prop("propertyName", "string", "Existing top-level scalar field on the target graph object."),
+                        AnyJsonValueProp("value", "Replacement scalar value. Its JSON type must match the existing field.")
+                    ), "path", "propertyName", "value");
                 case "physics/raycast":
                     return Schema(Props(
                         Prop("dimension", "string", "Physics dimension: 2D or 3D. Defaults to Project Settings > Unity MCP > Tool Defaults (3D initially)."),
