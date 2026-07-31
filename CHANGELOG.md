@@ -2,6 +2,12 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.6] - 2026-07-31
+
+- Shorten the repeated expected-project binding descriptions without changing
+  their safety contract, keeping the expanded first-class schema catalog below
+  the companion server's context-size budget.
+
 ## [5.6.5] - 2026-07-31
 
 - Promote the existing rollback-capable `asset/copy` route to the common

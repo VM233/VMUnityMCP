@@ -918,13 +918,13 @@ namespace UnityMCP.Editor
             if (!properties.ContainsKey("expectedProjectPath"))
             {
                 KeyValuePair<string, object> bindingProperty = Prop("expectedProjectPath", "string",
-                    "Expected Unity project root path. The request is rejected before mutation if it reaches another project.");
+                    "Expected Unity project root; rejects cross-project mutation.");
                 properties[bindingProperty.Key] = bindingProperty.Value;
             }
             if (!properties.ContainsKey("expectedProjectName"))
             {
                 KeyValuePair<string, object> bindingProperty = Prop("expectedProjectName", "string",
-                    "Optional expected Unity project name used with expectedProjectPath as an additional target-binding check.");
+                    "Optional project name used as an additional target-binding check.");
                 properties[bindingProperty.Key] = bindingProperty.Value;
             }
             schema["properties"] = properties;
