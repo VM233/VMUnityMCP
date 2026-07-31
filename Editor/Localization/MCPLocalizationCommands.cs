@@ -325,9 +325,8 @@ namespace UnityMCP.Editor.Localization
                 int elapsedMs = (int)((EditorApplication.timeSinceStartup - startedAt) * 1000d);
                 if (elapsedMs >= execution.TimeoutMs)
                 {
-                    FinishPreparedUpserts(state);
                     state.Errors.Add($"Localization upsert timed out after {execution.TimeoutMs} ms");
-                    complete(BuildUpsertResult(state));
+                    complete(FinishAndBuildUpsertResult(state));
                     return;
                 }
 
@@ -345,8 +344,7 @@ namespace UnityMCP.Editor.Localization
                         state.Errors.Add($"entries[{plan.Index}] failed: {exception.Message}");
                         if (!execution.ContinueOnError)
                         {
-                            FinishPreparedUpserts(state);
-                            complete(BuildUpsertResult(state));
+                            complete(FinishAndBuildUpsertResult(state));
                             return;
                         }
                     }
@@ -368,8 +366,7 @@ namespace UnityMCP.Editor.Localization
 
                 if (state.NextPlanIndex < state.Plans.Count)
                     return;
-                FinishPreparedUpserts(state);
-                complete(BuildUpsertResult(state));
+                complete(FinishAndBuildUpsertResult(state));
             };
             EditorApplication.update += tick;
             tick();
@@ -404,8 +401,8 @@ namespace UnityMCP.Editor.Localization
             state = new LocalizationUpsertState
             {
                 Type = type,
-                Collection = collection,
-                AssetCollection = collection as AssetTableCollection,
+                CollectionGuid = collection.SharedData.TableCollectionNameGuid.ToString(),
+                CollectionName = collection.TableCollectionName,
                 Execution = execution,
             };
             var uniqueEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -447,7 +444,7 @@ namespace UnityMCP.Editor.Localization
                 {
                     Index = index,
                     Key = key,
-                    Locale = locale,
+                    LocaleCode = locale.Identifier.Code,
                     HasSmart = entry.ContainsKey("smart"),
                     Smart = GetBool(entry, "smart", false),
                 };
@@ -468,12 +465,14 @@ namespace UnityMCP.Editor.Localization
                         errorResult = Error($"entries[{index}].assetPath under Assets is required");
                         return false;
                     }
-                    plan.Asset = LoadAsset(assetPath, GetString(entry, "subAssetName"));
-                    if (plan.Asset == null)
+                    string subAssetName = GetString(entry, "subAssetName");
+                    if (LoadAsset(assetPath, subAssetName) == null)
                     {
                         errorResult = Error($"entries[{index}] asset was not found at '{assetPath}'");
                         return false;
                     }
+                    plan.AssetPath = assetPath;
+                    plan.SubAssetName = subAssetName;
                 }
                 state.Plans.Add(plan);
                 index++;
@@ -485,25 +484,29 @@ namespace UnityMCP.Editor.Localization
             }
 
             bool createTables = GetBool(args, "createTables", true);
-            foreach (var locale in state.Plans.Select(plan => plan.Locale)
-                         .GroupBy(locale => locale.Identifier.Code, StringComparer.OrdinalIgnoreCase)
-                         .Select(group => group.First()))
+            foreach (string localeCode in state.Plans.Select(plan => plan.LocaleCode)
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var table = collection.GetTable(locale.Identifier);
+                collection = ResolveUpsertCollection(state);
+                if (collection == null)
+                {
+                    errorResult = Error(
+                        $"{type} Table Collection '{state.CollectionName}' was not found after asset creation");
+                    return false;
+                }
+
+                var localeIdentifier = new LocaleIdentifier(localeCode);
+                var table = collection.GetTable(localeIdentifier);
                 if (table == null && !createTables)
                 {
-                    errorResult = Error($"Collection '{collectionName}' has no table for Locale '{locale.Identifier.Code}'");
+                    errorResult = Error($"Collection '{collectionName}' has no table for Locale '{localeCode}'");
                     return false;
                 }
                 if (table == null)
                 {
-                    table = collection.AddNewTable(locale.Identifier);
-                    state.CreatedTables.Add(locale.Identifier.Code);
+                    collection.AddNewTable(localeIdentifier);
+                    state.CreatedTables.Add(localeCode);
                 }
-                if (type == "string")
-                    state.StringTables[locale.Identifier.Code] = (StringTable)table;
-                else
-                    state.AssetTables[locale.Identifier.Code] = (AssetTable)table;
             }
             return true;
         }
@@ -523,32 +526,46 @@ namespace UnityMCP.Editor.Localization
                         break;
                 }
             }
-            FinishPreparedUpserts(state);
-            return BuildUpsertResult(state);
+            return FinishAndBuildUpsertResult(state);
         }
 
         private static void ApplyUpsertPlan(LocalizationUpsertState state, LocalizationUpsertPlan plan)
         {
-            bool createdKey = state.Collection.SharedData.GetEntry(plan.Key) == null;
+            var collection = ResolveUpsertCollection(state);
+            if (collection == null)
+                throw new InvalidOperationException(
+                    $"{state.Type} Table Collection '{state.CollectionName}' is no longer available");
+
+            var localeIdentifier = new LocaleIdentifier(plan.LocaleCode);
+            var table = collection.GetTable(localeIdentifier);
+            if (table == null)
+                throw new InvalidOperationException(
+                    $"Collection '{state.CollectionName}' has no table for Locale '{plan.LocaleCode}'");
+
+            bool createdKey = collection.SharedData.GetEntry(plan.Key) == null;
             bool createdEntry;
             if (state.Type == "string")
             {
-                var table = state.StringTables[plan.Locale.Identifier.Code];
-                var entry = table.GetEntry(plan.Key);
+                var stringTable = (StringTable)table;
+                var entry = stringTable.GetEntry(plan.Key);
                 createdEntry = entry == null;
                 if (entry == null)
-                    entry = table.AddEntry(plan.Key, plan.StringValue);
+                    entry = stringTable.AddEntry(plan.Key, plan.StringValue);
                 entry.Value = plan.StringValue;
                 if (plan.HasSmart)
                     entry.IsSmart = plan.Smart;
-                EditorUtility.SetDirty(table);
+                EditorUtility.SetDirty(stringTable);
             }
             else
             {
-                var table = state.AssetTables[plan.Locale.Identifier.Code];
-                createdEntry = table.GetEntry(plan.Key) == null;
-                state.AssetCollection.AddAssetToTable(plan.Locale.Identifier, plan.Key, plan.Asset);
-                EditorUtility.SetDirty(table);
+                var assetTable = (AssetTable)table;
+                var asset = LoadAsset(plan.AssetPath, plan.SubAssetName);
+                if (asset == null)
+                    throw new InvalidOperationException(
+                        $"Asset for entries[{plan.Index}] is no longer available at '{plan.AssetPath}'");
+                createdEntry = assetTable.GetEntry(plan.Key) == null;
+                ((AssetTableCollection)collection).AddAssetToTable(localeIdentifier, plan.Key, asset);
+                EditorUtility.SetDirty(assetTable);
             }
 
             if (createdKey)
@@ -561,19 +578,42 @@ namespace UnityMCP.Editor.Localization
             {
                 { "index", plan.Index },
                 { "key", plan.Key },
-                { "locale", plan.Locale.Identifier.Code },
+                { "locale", plan.LocaleCode },
                 { "createdKey", createdKey },
                 { "createdEntry", createdEntry },
             });
             state.NextPlanIndex = Math.Max(state.NextPlanIndex, plan.Index + 1);
         }
 
+        private static object FinishAndBuildUpsertResult(LocalizationUpsertState state)
+        {
+            try
+            {
+                FinishPreparedUpserts(state);
+            }
+            catch (Exception exception)
+            {
+                state.Errors.Add($"Failed to save Localization upserts: {exception.Message}");
+            }
+            return BuildUpsertResult(state);
+        }
+
         private static void FinishPreparedUpserts(LocalizationUpsertState state)
         {
-            EditorUtility.SetDirty(state.Collection);
-            EditorUtility.SetDirty(state.Collection.SharedData);
+            var collection = ResolveUpsertCollection(state);
+            if (collection == null)
+                throw new InvalidOperationException(
+                    $"{state.Type} Table Collection '{state.CollectionName}' is no longer available");
+            EditorUtility.SetDirty(collection);
+            EditorUtility.SetDirty(collection.SharedData);
             AssetDatabase.SaveAssets();
             state.Saved = true;
+        }
+
+        private static LocalizationTableCollection ResolveUpsertCollection(LocalizationUpsertState state)
+        {
+            return GetCollection(state.CollectionGuid, state.Type) ??
+                   GetCollection(state.CollectionName, state.Type);
         }
 
         private static Dictionary<string, object> BuildUpsertResult(LocalizationUpsertState state)
@@ -581,7 +621,7 @@ namespace UnityMCP.Editor.Localization
             return new Dictionary<string, object>
             {
                 { "success", state.Errors.Count == 0 && state.Results.Count == state.Plans.Count },
-                { "collection", state.Collection.TableCollectionName },
+                { "collection", state.CollectionName },
                 { "type", state.Type },
                 { "entryCount", state.Plans.Count },
                 { "processedCount", state.Results.Count },
@@ -1309,14 +1349,10 @@ namespace UnityMCP.Editor.Localization
         private sealed class LocalizationUpsertState
         {
             public string Type;
-            public LocalizationTableCollection Collection;
-            public AssetTableCollection AssetCollection;
+            public string CollectionGuid;
+            public string CollectionName;
             public MCPExecutionOptions Execution;
             public readonly List<LocalizationUpsertPlan> Plans = new List<LocalizationUpsertPlan>();
-            public readonly Dictionary<string, StringTable> StringTables =
-                new Dictionary<string, StringTable>(StringComparer.OrdinalIgnoreCase);
-            public readonly Dictionary<string, AssetTable> AssetTables =
-                new Dictionary<string, AssetTable>(StringComparer.OrdinalIgnoreCase);
             public readonly HashSet<string> CreatedKeys = new HashSet<string>(StringComparer.Ordinal);
             public readonly List<string> CreatedTables = new List<string>();
             public readonly List<string> Errors = new List<string>();
@@ -1332,9 +1368,10 @@ namespace UnityMCP.Editor.Localization
         {
             public int Index;
             public string Key;
-            public Locale Locale;
+            public string LocaleCode;
             public string StringValue;
-            public Object Asset;
+            public string AssetPath;
+            public string SubAssetName;
             public bool HasSmart;
             public bool Smart;
         }

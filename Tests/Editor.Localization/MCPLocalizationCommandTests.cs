@@ -204,6 +204,11 @@ namespace UnityMCP.Editor.Localization.Tests
                 },
             }, result => completed = result, _ => { });
 
+            // The deferred workflow must not retain transient Localization objects across
+            // AssetDatabase reload boundaries between batches.
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport |
+                                  ImportAssetOptions.ForceUpdate);
+
             double timeoutAt = EditorApplication.timeSinceStartup + 10d;
             while (completed == null && EditorApplication.timeSinceStartup < timeoutAt)
                 yield return null;

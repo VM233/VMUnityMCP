@@ -140,8 +140,20 @@ namespace UnityMCP.Editor
                 "prefab-asset/hierarchy",
                 "prefab-asset/configure-component",
                 "prefab-asset/transaction-edit",
+                "localization/status",
+                "localization/locales",
+                "localization/create-locale",
+                "localization/set-selected-locale",
+                "localization/collections",
+                "localization/create-collection",
+                "localization/entries",
                 "localization/upsert-entry",
                 "localization/remove-entry",
+                "localization/validate",
+                "localization/settings",
+                "localization/variables",
+                "localization/upsert-variable",
+                "localization/remove-variable",
                 "asset/get-refresh-job",
                 "asset/rename",
                 "asset/move",
@@ -1286,6 +1298,8 @@ namespace UnityMCP.Editor
                     return "Instantiate a prefab asset into the currently open scene.";
                 case "scene/workspace":
                     return "List loaded scenes, open a scene additively or singly, close a loaded scene with an explicit dirty-scene policy, or set the active scene.";
+                case "prefab/create-variant":
+                    return "Create a Prefab Variant from an existing Prefab asset and return its saved asset identity.";
                 case "prefab-asset/add-component":
                     return "Add and optionally initialize a component on a prefab asset, then verify its serialized state after saving. Waits for a newly compiled script type when needed.";
                 case "prefab-asset/configure-component":

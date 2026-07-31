@@ -2,6 +2,16 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.1] - 2026-07-31
+
+- Restore the complete Localization tool family to the first-class public
+  surface so its existing schema contract and package tests stay aligned.
+- Publish a concrete description for the newly first-class Prefab Variant
+  creation route.
+- Make batched Localization entry upserts re-resolve collections, tables,
+  Locales, and assets by stable identifiers between Editor frames, preventing
+  destroyed Unity object references after AssetDatabase reloads.
+
 ## [5.6.0] - 2026-07-31
 
 - Expose the existing folder creation, Prefab Variant creation, Prefab
