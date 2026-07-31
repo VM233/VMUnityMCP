@@ -5091,6 +5091,39 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void BridgeConsumesTargetBindingBeforeStrictBusinessSchemaValidation()
+        {
+            var method = typeof(MCPBridgeServer).GetMethod("RemoveConsumedTargetBindingArguments",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+
+            var importerArguments = new Dictionary<string, object>
+            {
+                { "assetPath", "Assets/Texture.png" },
+                { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
+                { "expectedProjectName", "BattleIdle" },
+                { "_agentId", "regression-agent" },
+            };
+            method.Invoke(null, new object[] { "asset/import-settings/get", importerArguments });
+
+            CollectionAssert.AreEquivalent(new[] { "assetPath", "_agentId" },
+                importerArguments.Keys);
+
+            foreach (string route in new[] { "advanced/execute", "instance/assert-project" })
+            {
+                var preservedArguments = new Dictionary<string, object>
+                {
+                    { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
+                    { "expectedProjectName", "BattleIdle" },
+                };
+                method.Invoke(null, new object[] { route, preservedArguments });
+
+                Assert.That(preservedArguments.Keys,
+                    Is.EquivalentTo(new[] { "expectedProjectPath", "expectedProjectName" }), route);
+            }
+        }
+
+        [Test]
         public void BridgeTransport_AllowsOnlyTheDocumentedQueueMethods()
         {
             var method = typeof(MCPBridgeServer).GetMethod("IsHttpMethodAllowed",

@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.7] - 2026-07-31
+
+- Consume expected-project binding fields at the bridge boundary after target
+  validation, preventing transport metadata from reaching and breaking strict
+  route-owned argument schemas such as semantic importer settings.
+- Preserve binding fields only for `advanced/execute` forwarding and
+  `instance/assert-project`, where they remain part of the route's own work.
+
 ## [5.6.6] - 2026-07-31
 
 - Shorten the repeated expected-project binding descriptions without changing

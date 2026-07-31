@@ -748,6 +748,23 @@ namespace UnityMCP.Editor
             destination[key] = value;
         }
 
+        private static void RemoveConsumedTargetBindingArguments(string route,
+            Dictionary<string, object> args)
+        {
+            if (args == null)
+                return;
+
+            string normalizedRoute = (route ?? "").Trim('/');
+            if (string.Equals(normalizedRoute, "advanced/execute", StringComparison.Ordinal) ||
+                string.Equals(normalizedRoute, "instance/assert-project", StringComparison.Ordinal))
+                return;
+
+            // These fields belong to the transport envelope. Project validation has already
+            // consumed them before route dispatch, so strict business schemas must not see them.
+            args.Remove("expectedProjectPath");
+            args.Remove("expectedProjectName");
+        }
+
         private static void AddExpectedProjectHeaders(HttpListenerRequest request, Dictionary<string, object> args)
         {
             if (request == null || args == null)
@@ -874,6 +891,9 @@ namespace UnityMCP.Editor
             {
                 return projectMismatch;
             }
+
+            RemoveConsumedTargetBindingArguments(path, configuredArguments);
+            body = MiniJson.Serialize(configuredArguments);
 
             // Project context reads EditorPrefs and project paths, so it must run through
             // this main-thread router instead of directly on the HTTP listener thread.
