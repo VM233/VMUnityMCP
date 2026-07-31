@@ -2,6 +2,12 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.12] - 2026-08-01
+
+- Preserve every byte outside the edited Shader Graph scalar token, including
+  original block separators and trailing newlines.
+- Extend the Shader Graph edit regression to reject unrelated text changes.
+
 ## [5.6.11] - 2026-08-01
 
 - Make Shader Graph inspection follow `GraphData` references so semantic node

@@ -265,7 +265,7 @@ namespace UnityMCP.Editor.Tests
                 Assert.Ignore("Shader Graph is not installed in this test project.");
 
             const string graphPath = TEST_FOLDER + "/Shader Graph Fixture.txt";
-            File.WriteAllText(GetAbsolutePath(graphPath), @"{
+            string originalContent = @"{
     ""m_SGVersion"": 3,
     ""m_Type"": ""UnityEditor.ShaderGraph.GraphData"",
     ""m_ObjectId"": ""graph-data"",
@@ -322,7 +322,8 @@ namespace UnityMCP.Editor.Tests
     ""m_Type"": ""UnityEditor.ShaderGraph.Texture2DMaterialSlot"",
     ""m_ObjectId"": ""sample-input-slot"",
     ""m_Id"": 1
-}");
+}" + "\r\n\r\n";
+            File.WriteAllText(GetAbsolutePath(graphPath), originalContent);
             AssetDatabase.ImportAsset(graphPath, ImportAssetOptions.ForceSynchronousImport);
 
             var nodesResult = RequireDictionary(MCPShaderGraphCommands.GetGraphNodes(
@@ -353,8 +354,9 @@ namespace UnityMCP.Editor.Tests
             Assert.That(setResult["success"], Is.EqualTo(true));
             Assert.That(setResult["previousValue"], Is.EqualTo(true));
             Assert.That(setResult["value"], Is.EqualTo(false));
-            Assert.That(File.ReadAllText(GetAbsolutePath(graphPath)),
-                Does.Contain("\"useTilingAndOffset\": false"));
+            Assert.That(File.ReadAllText(GetAbsolutePath(graphPath)), Is.EqualTo(
+                originalContent.Replace("\"useTilingAndOffset\": true",
+                    "\"useTilingAndOffset\": false")));
 
             byte[] beforeRejectedWrite = File.ReadAllBytes(GetAbsolutePath(graphPath));
             var rejected = RequireDictionary(MCPShaderGraphCommands.SetGraphNodeProperty(

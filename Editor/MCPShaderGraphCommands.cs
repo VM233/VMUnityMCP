@@ -1164,28 +1164,30 @@ namespace UnityMCP.Editor
                     };
                 }
 
-                var newBlocks = new List<string>();
-
+                string targetBlock = null;
+                string modifiedBlock = null;
                 foreach (string block in document.Blocks)
                 {
                     string blockId = ExtractJsonString(block, "m_ObjectId") ?? ExtractJsonString(block, "m_Id");
-                    if (blockId == objectId)
+                    if (blockId != objectId)
+                        continue;
+                    if (!TrySetTopLevelJsonProperty(block, propertyName, normalizedValue,
+                            out modifiedBlock))
                     {
-                        if (!TrySetTopLevelJsonProperty(block, propertyName, normalizedValue,
-                                out string modified))
-                        {
-                            throw new InvalidDataException(
-                                $"Could not locate serialized property '{propertyName}' on object '{objectId}'.");
-                        }
-                        newBlocks.Add(modified);
+                        throw new InvalidDataException(
+                            $"Could not locate serialized property '{propertyName}' on object '{objectId}'.");
                     }
-                    else
-                    {
-                        newBlocks.Add(block);
-                    }
+                    targetBlock = block;
+                    break;
                 }
 
-                string newContent = string.Join("\n\n", newBlocks);
+                if (targetBlock == null || modifiedBlock == null)
+                    throw new InvalidDataException($"Serialized block for object '{objectId}' was not found.");
+                int blockOffset = originalContent.IndexOf(targetBlock, StringComparison.Ordinal);
+                if (blockOffset < 0)
+                    throw new InvalidDataException($"Serialized block for object '{objectId}' changed during editing.");
+                string newContent = originalContent.Substring(0, blockOffset) + modifiedBlock +
+                                    originalContent.Substring(blockOffset + targetBlock.Length);
                 File.WriteAllText(fullPath, newContent);
                 wroteFile = true;
                 AssetDatabase.ImportAsset(path,
