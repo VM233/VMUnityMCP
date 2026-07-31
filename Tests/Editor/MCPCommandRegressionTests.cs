@@ -3995,13 +3995,14 @@ namespace UnityMCP.Editor.Tests
         {
             const string agentId = "persistent-project-tool-test-agent";
             string idempotencyKey = Guid.NewGuid().ToString("N");
-            Dictionary<string, object> Start(int value)
+            Dictionary<string, object> Start(
+                int value, string callerAgentId = agentId)
             {
                 return RequireDictionary(MCPProjectToolCommands.Execute(
                     new Dictionary<string, object>
                     {
                         { "toolName", PERSISTENT_PROJECT_TOOL_NAME },
-                        { "_agentId", agentId },
+                        { "_agentId", callerAgentId },
                         { "idempotencyKey", idempotencyKey },
                         { "args", new Dictionary<string, object>
                             {
@@ -4019,11 +4020,15 @@ namespace UnityMCP.Editor.Tests
             string jobId = started["jobId"].ToString();
             string accessToken = started["jobAccessToken"].ToString();
 
-            Dictionary<string, object> reused = Start(7);
+            Dictionary<string, object> reused =
+                Start(7, "reconnected-project-tool-test-agent");
             Assert.That(reused["jobId"], Is.EqualTo(jobId));
+            Assert.That(reused["jobAccessToken"],
+                Is.EqualTo(accessToken));
             Assert.That(HasTag(reused, "reused"), Is.True);
 
-            Dictionary<string, object> conflict = Start(8);
+            Dictionary<string, object> conflict =
+                Start(8, "different-project-tool-test-agent");
             Assert.That(conflict["success"], Is.EqualTo(false));
             Assert.That(conflict["errorCode"], Is.EqualTo("idempotency_conflict"));
 
@@ -7835,6 +7840,54 @@ namespace UnityMCP.Editor.Tests
             Assert.That(result["offset"], Is.EqualTo(0));
             Assert.That(result["limit"], Is.EqualTo(100));
             Assert.That(result["total"], Is.EqualTo(0));
+        }
+
+        [Test]
+        public void TransportCompaction_PreservesProjectToolSchemaInsidePersistentJobResult()
+        {
+            var source = new Dictionary<string, object>
+            {
+                { "ticketId", 45L },
+                { "actionName", "jobs/get" },
+                { "status", "Completed" },
+                {
+                    "result", new Dictionary<string, object>
+                    {
+                        { "jobId", "fixture-job" },
+                        { "status", "succeeded" },
+                        {
+                            "result",
+                            MCPResponse.Success(
+                                new Dictionary<string, object>
+                                {
+                                    {
+                                        "scope", new Dictionary<string, object>
+                                        {
+                                            { "category", "all" },
+                                            { "itemIDs", new List<object>() },
+                                        }
+                                    },
+                                    { "items", new List<object>() },
+                                },
+                                new Dictionary<string, object>
+                                {
+                                    { "toolName", "fixture/item-test" },
+                                })
+                        },
+                    }
+                },
+            };
+
+            var ticket = RequireDictionary(MCPResponse.CompactForTransport(source));
+            var job = RequireDictionary(ticket["result"]);
+            var envelope = RequireDictionary(job["result"]);
+            var projectResult = RequireDictionary(envelope["result"]);
+            var scope = RequireDictionary(projectResult["scope"]);
+
+            Assert.That(envelope["success"], Is.EqualTo(true));
+            Assert.That(envelope["toolName"], Is.EqualTo("fixture/item-test"));
+            Assert.That((IList)scope["itemIDs"], Is.Empty);
+            Assert.That((IList)projectResult["items"], Is.Empty);
         }
 
         [Test]

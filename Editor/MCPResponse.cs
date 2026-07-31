@@ -196,8 +196,12 @@ namespace UnityMCP.Editor
                 MCPCompactValueFormatter.TryFormatDictionary(source, out formattedValue))
                 return formattedValue;
 
-            if (isRoot && IsProjectToolSuccessEnvelope(source))
-                return PreserveProjectToolSchemaShape(source["result"]);
+            if (IsProjectToolSuccessEnvelope(source))
+            {
+                return isRoot
+                    ? PreserveProjectToolSchemaShape(source["result"])
+                    : PreserveProjectToolSchemaShape(source);
+            }
 
             bool isQueueTicketEnvelope = IsQueueTicketEnvelope(source);
             var compacted = new Dictionary<string, object>();

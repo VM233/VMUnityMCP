@@ -2,6 +2,17 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.5.4] - 2026-07-31
+
+- Enforce the documented project-scoped idempotency contract for persistent
+  Jobs. An exact retry from a reconnected MCP agent now recovers the original
+  Job and access token instead of creating a duplicate operation.
+- Keep exact-argument conflict detection across agents and add regression
+  coverage for both recovery and collision paths.
+- Preserve required empty collections inside a completed persistent
+  project-tool Job result, rather than compacting the already validated
+  business payload a second time.
+
 ## [5.5.3] - 2026-07-31
 
 - Add semantic descriptions to every shared persistent Job output field so

@@ -199,6 +199,8 @@ The full ownership matrix and authoritative built-in route audit are in
 - Project-tool success envelopes are unwrapped without compacting the validated
   result object. Required empty collections, counts, flags, and nested members
   therefore retain the exact shape declared by the tool's `outputSchema`.
+  The same preservation applies when that envelope is nested in a persistent
+  Job snapshot returned by `jobs/get`.
 - Published `inputSchema` and `outputSchema` objects are transported without
   response compaction. Business properties named `tags` or `sideEffects` and
   JSON Schema keywords such as `readOnly` therefore retain their declared
@@ -210,7 +212,9 @@ The full ownership matrix and authoritative built-in route audit are in
 - `editor/execute-code` always returns a persistent Job. Poll `jobs/get`; use
   `jobs/cancel` before execution or between incremental steps; and use
   `jobs/cleanup` only when the Job reports an available cleanup contract.
-  Reusing an `idempotencyKey` with different arguments is rejected.
+  Idempotency keys are project-scoped recovery capabilities: an exact retry
+  after an MCP reconnect returns the original Job and access token, while
+  reusing a key with different arguments is rejected.
 - Job capability and positive state flags use the same presence-only `tags`
   contract (`incrementalJob`, `cleanupDeclared`, `cleanupAvailable`,
   `cancellationRequested`, and `reused`). Fields that do not yet have a value

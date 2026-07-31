@@ -121,7 +121,6 @@ namespace UnityMCP.Editor
                     Dictionary<string, object> existing = Jobs
                         .Where(job => GetString(job, "jobType") == jobType &&
                                       GetString(job, "operation") == operation &&
-                                      GetString(job, "ownerAgentId", "anonymous") == ownerAgentId &&
                                       GetString(job, "idempotencyKey") == idempotencyKey)
                         .OrderByDescending(job => ParseDate(GetString(job, "createdAt")))
                         .FirstOrDefault();
