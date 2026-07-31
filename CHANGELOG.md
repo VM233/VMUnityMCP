@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.4] - 2026-07-31
+
+- Preserve signed 64-bit serialized component fields as invariant decimal
+  strings when reading and writing prefab, component, and nested generic
+  property data instead of truncating them through `Int32`.
+- Add a round-trip regression for an Int64 value beyond JavaScript's
+  safe-integer range.
+
 ## [5.6.3] - 2026-07-31
 
 - Return Localization `keyId` values as invariant decimal strings from entry

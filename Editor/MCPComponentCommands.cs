@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using UnityEditor;
 using UnityEngine;
@@ -662,7 +663,10 @@ namespace UnityMCP.Editor
 
             switch (prop.propertyType)
             {
-                case SerializedPropertyType.Integer: return prop.intValue;
+                case SerializedPropertyType.Integer:
+                    return IsSignedInt64Property(prop)
+                        ? prop.longValue.ToString(CultureInfo.InvariantCulture)
+                        : prop.intValue;
                 case SerializedPropertyType.Boolean: return prop.boolValue;
                 case SerializedPropertyType.Float: return prop.floatValue;
                 case SerializedPropertyType.String: return prop.stringValue;
@@ -739,7 +743,10 @@ namespace UnityMCP.Editor
             switch (prop.propertyType)
             {
                 case SerializedPropertyType.Integer:
-                    prop.intValue = Convert.ToInt32(value);
+                    if (IsSignedInt64Property(prop))
+                        prop.longValue = ConvertToInt64(value);
+                    else
+                        prop.intValue = Convert.ToInt32(value);
                     break;
                 case SerializedPropertyType.Boolean:
                     prop.boolValue = Convert.ToBoolean(value);
@@ -848,6 +855,22 @@ namespace UnityMCP.Editor
                 default:
                     return false;
             }
+        }
+
+        private static bool IsSignedInt64Property(SerializedProperty property)
+        {
+            string type = property?.type;
+            return string.Equals(type, "long", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(type, "Int64", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(type, "SInt64", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static long ConvertToInt64(object value)
+        {
+            if (value is string text)
+                return long.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
+
+            return Convert.ToInt64(value, CultureInfo.InvariantCulture);
         }
 
         private static object GetSerializedArrayValue(SerializedProperty prop, int depth, int maxDepth, int maxArrayElements)

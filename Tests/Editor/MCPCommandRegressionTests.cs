@@ -33,6 +33,11 @@ namespace UnityMCP.Editor.Tests
         public ScalarEnvelopeTestConfig config = new ScalarEnvelopeTestConfig();
     }
 
+    public sealed class SerializedInt64TestObject : ScriptableObject
+    {
+        public long keyId;
+    }
+
     [Flags]
     public enum SerializedEnumFlagsTestValue
     {
@@ -6310,6 +6315,34 @@ namespace UnityMCP.Editor.Tests
                 serialized.ApplyModifiedProperties();
 
                 Assert.That(target.config.mode, Is.EqualTo(ScalarEnvelopeTestMode.Second));
+            }
+            finally
+            {
+                Object.DestroyImmediate(target);
+            }
+        }
+
+        [Test]
+        public void SerializedProperties_RoundTripInt64BeyondJavaScriptSafeIntegerAsString()
+        {
+            const long initialValue = 9007199254740993L;
+            const long updatedValue = 111578554957451265L;
+            var target = ScriptableObject.CreateInstance<SerializedInt64TestObject>();
+            try
+            {
+                target.keyId = initialValue;
+                var serialized = new SerializedObject(target);
+                var property = serialized.FindProperty(nameof(SerializedInt64TestObject.keyId));
+                Assert.That(property, Is.Not.Null);
+                Assert.That(property.propertyType, Is.EqualTo(SerializedPropertyType.Integer));
+
+                object readValue = MCPComponentCommands.GetSerializedValue(property);
+                Assert.That(readValue, Is.TypeOf<string>());
+                Assert.That(readValue, Is.EqualTo(initialValue.ToString()));
+
+                MCPComponentCommands.SetSerializedValue(property, updatedValue.ToString());
+                serialized.ApplyModifiedProperties();
+                Assert.That(target.keyId, Is.EqualTo(updatedValue));
             }
             finally
             {
