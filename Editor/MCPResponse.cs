@@ -59,6 +59,10 @@ namespace UnityMCP.Editor
             if (dictionary == null)
                 return false;
 
+            bool hasExplicitSuccess = dictionary.TryGetValue("success", out var explicitSuccess);
+            if (hasExplicitSuccess && ToBool(explicitSuccess))
+                return false;
+
             if (dictionary.TryGetValue("retryable", out var retryableValue))
                 retryable = ToBool(retryableValue);
 
@@ -67,10 +71,24 @@ namespace UnityMCP.Editor
 
             if (dictionary.TryGetValue("error", out var errorValue) && errorValue != null)
             {
-                message = errorValue.ToString();
-                if (string.IsNullOrEmpty(errorCode))
-                    errorCode = "error";
-                return !string.IsNullOrEmpty(message);
+                if (errorValue is string errorText)
+                {
+                    message = errorText;
+                    if (string.IsNullOrEmpty(errorCode))
+                        errorCode = "error";
+                    return !string.IsNullOrEmpty(message);
+                }
+
+                if (hasExplicitSuccess && !ToBool(explicitSuccess) &&
+                    TryGetError(errorValue, out string nestedMessage, out string nestedCode,
+                        out bool nestedRetryable))
+                {
+                    message = nestedMessage;
+                    if (string.IsNullOrEmpty(errorCode))
+                        errorCode = nestedCode;
+                    retryable |= nestedRetryable;
+                    return true;
+                }
             }
 
             if (dictionary.TryGetValue("success", out var successValue) && ToBool(successValue) == false)

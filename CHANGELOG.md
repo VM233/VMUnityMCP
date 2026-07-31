@@ -2,6 +2,20 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.5] - 2026-07-31
+
+- Promote the existing rollback-capable `asset/copy` route to the common
+  first-class tool surface so routine Unity asset duplication no longer
+  requires arbitrary Editor code or the advanced fallback.
+- Give `asset/copy` an explicit single-or-batch input contract and compact
+  success results containing only source/target paths and the new GUID;
+  failures now use `asset_copy_failed` with rollback facts.
+- Let `prefab-asset/configure-component` optionally create a missing semantic
+  `prefabPath` hierarchy in the same atomic transaction, inheriting layers and
+  reporting only paths actually created.
+- Preserve structured terminal Job errors inside successful `jobs/get`
+  snapshots instead of converting the nested dictionary to its CLR type name.
+
 ## [5.6.4] - 2026-07-31
 
 - Preserve signed 64-bit serialized component fields as invariant decimal

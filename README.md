@@ -51,12 +51,13 @@ second list, and reading metadata does not initialize the HTTP listener.
 | Optional packages | Localization, Shader Graph, VFX Graph, Addressables, Timeline, Cinemachine, and Build Profiles publish only when their capability is available. |
 
 Common asset-authoring composition is intentionally available without arbitrary
-Editor code: create folders and Prefab Variants, inspect a Prefab hierarchy,
-apply one atomic Prefab transaction, then create or update framework-owned
-configuration through a project/package tool. Localization entry upsert and
-removal are concrete tools when Unity Localization is installed. Project code
-should not retain one-off Editor builders that mirror checked-in asset values;
-temporary migrations are removed after asset readback succeeds.
+Editor code: create folders, copy assets, and create Prefab Variants; inspect a
+Prefab hierarchy; apply one atomic Prefab transaction; then create or update
+framework-owned configuration through a project/package tool. Localization
+entry upsert and removal are concrete tools when Unity Localization is
+installed. Project code should not retain one-off Editor builders that mirror
+checked-in asset values; temporary migrations are removed after asset readback
+succeeds.
 
 Major route families include:
 
@@ -251,7 +252,9 @@ The full ownership matrix and authoritative built-in route audit are in
   it before the first save. Success is returned only after serialized
   readback confirms both the new component and its requested initial values;
   use `prefab-asset/configure-component` for idempotent ensure/update work or
-  ObjectReference wiring.
+  ObjectReference wiring. Pass `createPathIfMissing=true` when the component's
+  semantic GameObject path does not exist yet; the path and component are then
+  created and configured in one rollback-capable transaction.
 - Potentially large raw graph, stack, serialized, and metadata diagnostics are
   opt-in.
 - Mutating requests validate the expected project before dispatch. Stable

@@ -136,6 +136,7 @@ namespace UnityMCP.Editor
                 "serialized-object/set",
                 "component/set-reference",
                 "asset/create-folder",
+                "asset/copy",
                 "prefab/create-variant",
                 "prefab-asset/hierarchy",
                 "prefab-asset/configure-component",
@@ -1706,12 +1707,36 @@ namespace UnityMCP.Editor
                         Prop("path", "string", "Folder path below Assets/."),
                         Prop("dryRun", "boolean", "Validate and report without creating folders.")), "path");
                 case "asset/copy":
-                    return Schema(Props(
-                        Prop("sourcePath", "string", "Single source asset path."),
-                        Prop("targetPath", "string", "Single target asset path."),
-                        ArrayProp("copies", "object", "Optional batch of sourcePath/targetPath objects."),
-                        Prop("overwrite", "boolean", "Replace existing targets with rollback snapshots."),
-                        Prop("dryRun", "boolean", "Preflight without copying.")));
+                {
+                    var copyProperties = Props(
+                        Prop("sourcePath", "string", "Source asset path."),
+                        Prop("targetPath", "string", "Target asset path."));
+                    var properties = Props(
+                        Prop("sourcePath", "string", "Source asset path for a single copy."),
+                        Prop("targetPath", "string", "Target asset path for a single copy."),
+                        Prop("overwrite", "boolean", "Replace existing targets with rollback snapshots. Defaults to false."),
+                        Prop("dryRun", "boolean", "Preflight without copying. Defaults to false."));
+                    properties["copies"] = new Dictionary<string, object>
+                    {
+                        { "type", "array" },
+                        { "description", "Batch of sourcePath/targetPath copy requests." },
+                        { "minItems", 1 },
+                        { "items", Schema(copyProperties, "sourcePath", "targetPath") },
+                    };
+                    var schema = Schema(properties);
+                    schema["oneOf"] = new List<object>
+                    {
+                        new Dictionary<string, object>
+                        {
+                            { "required", new List<object> { "sourcePath", "targetPath" } },
+                        },
+                        new Dictionary<string, object>
+                        {
+                            { "required", new List<object> { "copies" } },
+                        },
+                    };
+                    return schema;
+                }
                 case "asset/dependencies":
                     return Schema(Props(
                         Prop("path", "string", "Asset whose references should be inspected."),
@@ -3051,6 +3076,7 @@ namespace UnityMCP.Editor
                 Prop("componentType", "string", "Component type name or full name."),
                 Prop("componentIndex", "number", "Component index when multiple components of the same type exist. Defaults to 0."),
                 Prop("addIfMissing", "boolean", "Add the component when componentIndex equals the current component count. Defaults to true."),
+                Prop("createPathIfMissing", "boolean", "Create missing prefabPath GameObjects before configuring the component. New children inherit their parent layer. Defaults to false."),
                 JsonValueMapProp("properties", "Serialized property names/paths mapped to JSON values."),
                 Prop("waitForTypes", "boolean", "Wait for referenced component types before editing. Defaults to true."),
                 Prop("typeResolveTimeoutMs", "number", "Maximum type wait time in milliseconds. Defaults to 30000."),

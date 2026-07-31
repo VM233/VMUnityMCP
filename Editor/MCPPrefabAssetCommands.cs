@@ -2264,6 +2264,7 @@ namespace UnityMCP.Editor
                 { "componentType", GetString(args, "componentType") },
                 { "componentIndex", GetInt(args, "componentIndex", 0) },
                 { "addIfMissing", GetBool(args, "addIfMissing", true) },
+                { "createPathIfMissing", GetBool(args, "createPathIfMissing", false) },
             };
 
             var properties = GetDictionary(args, "properties");
@@ -3580,10 +3581,11 @@ namespace UnityMCP.Editor
                 return false;
             }
 
-            var go = FindInPrefab(root, prefabPath);
-            if (go == null)
+            if (!TryResolveConfigureTarget(root, prefabPath,
+                    GetBool(operation, "createPathIfMissing", false),
+                    out var go, out var createdPrefabPaths, out string targetError))
             {
-                error = $"Operation {operationIndex}: GameObject '{prefabPath}' not found in prefab";
+                error = $"Operation {operationIndex}: {targetError}";
                 return false;
             }
 
@@ -3675,6 +3677,73 @@ namespace UnityMCP.Editor
             summary["added"] = added;
             summary["properties"] = changedProperties;
             summary["references"] = changedReferences;
+            if (createdPrefabPaths.Count > 0)
+                summary["createdPrefabPaths"] = createdPrefabPaths;
+            return true;
+        }
+
+        private static bool TryResolveConfigureTarget(GameObject root, string prefabPath,
+            bool createPathIfMissing, out GameObject gameObject, out List<string> createdPrefabPaths,
+            out string error)
+        {
+            gameObject = null;
+            createdPrefabPaths = new List<string>();
+            error = "";
+
+            if (!createPathIfMissing)
+            {
+                gameObject = FindInPrefab(root, prefabPath);
+                if (gameObject != null)
+                    return true;
+                error = $"GameObject '{prefabPath}' not found in prefab";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(prefabPath))
+            {
+                gameObject = root;
+                return true;
+            }
+            if (prefabPath.IndexOf('\\') >= 0)
+            {
+                error = "prefabPath must use '/' separators";
+                return false;
+            }
+
+            string[] parts = prefabPath.Split('/');
+            if (parts.Any(part => string.IsNullOrWhiteSpace(part) || part == "." || part == ".."))
+            {
+                error = $"prefabPath '{prefabPath}' contains an empty or traversal segment";
+                return false;
+            }
+
+            Transform current = root.transform;
+            int startIndex = parts.Length > 0 && parts[0] == root.name ? 1 : 0;
+            for (int partIndex = startIndex; partIndex < parts.Length; partIndex++)
+            {
+                Transform next = null;
+                for (int childIndex = 0; childIndex < current.childCount; childIndex++)
+                {
+                    Transform child = current.GetChild(childIndex);
+                    if (child.name == parts[partIndex])
+                    {
+                        next = child;
+                        break;
+                    }
+                }
+
+                if (next == null)
+                {
+                    var child = new GameObject(parts[partIndex]);
+                    child.layer = current.gameObject.layer;
+                    child.transform.SetParent(current, false);
+                    next = child.transform;
+                    createdPrefabPaths.Add(GetPrefabPath(root, child));
+                }
+                current = next;
+            }
+
+            gameObject = current.gameObject;
             return true;
         }
 

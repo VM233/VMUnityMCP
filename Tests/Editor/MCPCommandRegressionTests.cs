@@ -790,6 +790,63 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ConfigureComponent_CreatesMissingSemanticPathAndRollsBackFailedCreation()
+        {
+            CreateTestPrefab();
+
+            var created = RequireDictionary(MCPPrefabAssetCommands.ConfigureComponent(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Sources/Buff Source" },
+                    { "createPathIfMissing", true },
+                    { "componentType", typeof(BoxCollider).FullName },
+                }));
+
+            Assert.That(created["success"], Is.EqualTo(true));
+            var summaries = (List<Dictionary<string, object>>)created["operationSummaries"];
+            var summary = summaries.Single();
+            CollectionAssert.AreEqual(new[] { "Sources", "Sources/Buff Source" },
+                (List<string>)summary["createdPrefabPaths"]);
+            Assert.That(summary["added"], Is.EqualTo(true));
+
+            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+            try
+            {
+                var buffSource = root.transform.Find("Sources/Buff Source");
+                Assert.That(buffSource, Is.Not.Null);
+                Assert.That(buffSource.gameObject.layer, Is.EqualTo(root.layer));
+                Assert.That(buffSource.GetComponents<BoxCollider>(), Has.Length.EqualTo(1));
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+
+            var failed = RequireDictionary(MCPPrefabAssetCommands.ConfigureComponent(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Transient/Invalid" },
+                    { "createPathIfMissing", true },
+                    { "componentType", typeof(Camera).FullName },
+                    { "properties", new Dictionary<string, object> { { "missingProperty", 1 } } },
+                }));
+            Assert.That(failed["success"], Is.EqualTo(false));
+
+            root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+            try
+            {
+                Assert.That(root.transform.Find("Transient"), Is.Null,
+                    "A failed atomic configure operation must not leave its created path behind.");
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        [Test]
         public void UnifiedExecutionRoutes_AreDeferredAndRetiredBatchRoutesAreRemoved()
         {
             var deferredRegistry = typeof(MCPToolMetadata).Assembly.GetType(
@@ -4182,6 +4239,12 @@ namespace UnityMCP.Editor.Tests
             }));
             Assert.That(copy["success"], Is.EqualTo(true));
             Assert.That(AssetDatabase.LoadAssetAtPath<TextAsset>(copiedPath), Is.Not.Null);
+            var copiedEntries = (List<Dictionary<string, object>>)copy["copies"];
+            Assert.That(copiedEntries.Single()["targetGuid"], Is.EqualTo(
+                AssetDatabase.AssetPathToGUID(copiedPath)));
+            Assert.That(copiedEntries.Single()["targetGuid"], Is.Not.EqualTo(
+                AssetDatabase.AssetPathToGUID(sourcePath)));
+            CollectionAssert.AreEquivalent(new[] { "success", "copies" }, copy.Keys);
 
             const string ussPath = TEST_FOLDER + "/Dependency.uss";
             const string uxmlPath = TEST_FOLDER + "/Dependent.uxml";
@@ -7050,6 +7113,7 @@ namespace UnityMCP.Editor.Tests
                 "serialized-object/set",
                 "component/set-reference",
                 "asset/create-folder",
+                "asset/copy",
                 "prefab/create-variant",
                 "prefab-asset/hierarchy",
                 "prefab-asset/configure-component",
@@ -7209,6 +7273,7 @@ namespace UnityMCP.Editor.Tests
             var properties = RequireDictionary(schema["properties"]);
             Assert.That(properties.Keys, Does.Contain("properties"));
             Assert.That(properties.Keys, Does.Contain("references"));
+            Assert.That(properties.Keys, Does.Contain("createPathIfMissing"));
             Assert.That(properties.Keys, Does.Contain("expectedProjectPath"));
         }
 
@@ -7221,6 +7286,7 @@ namespace UnityMCP.Editor.Tests
             string[] routes =
             {
                 "asset/create-folder",
+                "asset/copy",
                 "prefab/create-variant",
                 "prefab-asset/hierarchy",
                 "prefab-asset/transaction-edit",
@@ -8553,6 +8619,41 @@ namespace UnityMCP.Editor.Tests
             Assert.That(compacted["errorCode"], Is.EqualTo("fixture_error"));
             Assert.That(compacted["retryable"], Is.EqualTo(true));
             Assert.That(compacted.ContainsKey("message"), Is.False);
+        }
+
+        [Test]
+        public void BridgeResponsePreparation_PreservesStructuredErrorInsideSuccessfulJobSnapshot()
+        {
+            var source = new Dictionary<string, object>
+            {
+                { "success", true },
+                { "jobId", "failed-job" },
+                { "jobType", "execute-code" },
+                { "operation", "editor/execute-code" },
+                { "status", "failed" },
+                { "createdAt", "2026-07-31T00:00:00Z" },
+                { "updatedAt", "2026-07-31T00:00:01Z" },
+                { "error", MCPResponse.Error("Compilation failed", "execute_code_compilation_failed", false,
+                    new Dictionary<string, object>
+                    {
+                        { "errors", new List<object> { "CS0103: MissingName" } },
+                        { "userCodeExecuted", false },
+                    })
+                },
+            };
+
+            var transported = RequireDictionary(
+                MCPBridgeServer.PrepareJsonResponseForTransport(200, source));
+
+            Assert.That(transported.ContainsKey("success"), Is.False);
+            Assert.That(transported["status"], Is.EqualTo("failed"));
+            var structuredError = RequireDictionary(transported["error"]);
+            Assert.That(structuredError["success"], Is.EqualTo(false));
+            Assert.That(structuredError["error"], Is.EqualTo("Compilation failed"));
+            Assert.That(structuredError["errorCode"], Is.EqualTo("execute_code_compilation_failed"));
+            CollectionAssert.AreEqual(new[] { "CS0103: MissingName" },
+                (IList)structuredError["errors"]);
+            Assert.That(structuredError["userCodeExecuted"], Is.EqualTo(false));
         }
 
         private static void CreateTestPrefab(bool addCollider = false, bool addRenderer = false,

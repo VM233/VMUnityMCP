@@ -507,17 +507,38 @@ namespace UnityMCP.Editor
         private static object BuildCopyResult(List<CopyRequest> requests, bool dryRun, bool rolledBack,
             List<string> errors)
         {
-            return new Dictionary<string, object>
+            var copies = requests.Select(item =>
             {
-                { "success", errors.Count == 0 }, { "dryRun", dryRun }, { "rolledBack", rolledBack },
-                { "copyCount", requests.Count }, { "copiedCount", requests.Count(item => item.Copied) },
-                { "copies", requests.Select(item => new Dictionary<string, object>
-                    {
-                        { "sourcePath", item.SourcePath }, { "targetPath", item.TargetPath },
-                        { "copied", item.Copied },
-                    }).ToList() },
-                { "errors", errors },
+                var copy = new Dictionary<string, object>
+                {
+                    { "sourcePath", item.SourcePath },
+                    { "targetPath", item.TargetPath },
+                };
+                if (item.Copied && !rolledBack)
+                    copy["targetGuid"] = AssetDatabase.AssetPathToGUID(item.TargetPath);
+                return copy;
+            }).ToList();
+
+            if (errors.Count > 0)
+            {
+                var extra = new Dictionary<string, object>
+                {
+                    { "rolledBack", rolledBack },
+                    { "copies", copies },
+                };
+                if (errors.Count > 1)
+                    extra["rollbackErrors"] = errors.Skip(1).ToList();
+                return MCPResponse.Error(errors[0], "asset_copy_failed", false, extra);
+            }
+
+            var result = new Dictionary<string, object>
+            {
+                { "success", true },
+                { "copies", copies },
             };
+            if (dryRun)
+                result["dryRun"] = true;
+            return result;
         }
 
         private static FileSnapshot CaptureFileSnapshot(string assetPath)
