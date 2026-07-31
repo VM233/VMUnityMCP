@@ -197,6 +197,10 @@ The full ownership matrix and authoritative built-in route audit are in
 - Project-tool success envelopes are unwrapped without compacting the validated
   result object. Required empty collections, counts, flags, and nested members
   therefore retain the exact shape declared by the tool's `outputSchema`.
+- Published `inputSchema` and `outputSchema` objects are transported without
+  response compaction. Business properties named `tags` or `sideEffects` and
+  JSON Schema keywords such as `readOnly` therefore retain their declared
+  schema shapes.
 - `editor/execute-code` reports invalid submissions and compiler diagnostics as
   non-retryable structured errors. Compilation failures use
   `execute_code_compilation_failed` and return `userCodeExecuted=false`, so

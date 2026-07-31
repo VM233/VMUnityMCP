@@ -7671,6 +7671,106 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void TransportCompaction_PreservesJsonSchemaBusinessFields()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    {
+                        "tool", new Dictionary<string, object>
+                        {
+                            {
+                                "inputSchema", new Dictionary<string, object>
+                                {
+                                    { "type", "object" },
+                                    {
+                                        "properties", new Dictionary<string, object>
+                                        {
+                                            {
+                                                "readOnly", new Dictionary<string, object>
+                                                {
+                                                    { "type", "boolean" },
+                                                }
+                                            },
+                                        }
+                                    },
+                                    { "additionalProperties", false },
+                                }
+                            },
+                            {
+                                "outputSchema", new Dictionary<string, object>
+                                {
+                                    { "type", "object" },
+                                    {
+                                        "properties", new Dictionary<string, object>
+                                        {
+                                            {
+                                                "tags", new Dictionary<string, object>
+                                                {
+                                                    { "type", "array" },
+                                                    {
+                                                        "items", new Dictionary<string, object>
+                                                        {
+                                                            { "type", "object" },
+                                                            { "additionalProperties", true },
+                                                        }
+                                                    },
+                                                }
+                                            },
+                                            {
+                                                "sideEffects", new Dictionary<string, object>
+                                                {
+                                                    { "type", "array" },
+                                                    {
+                                                        "items", new Dictionary<string, object>
+                                                        {
+                                                            { "type", "string" },
+                                                        }
+                                                    },
+                                                }
+                                            },
+                                            {
+                                                "status", new Dictionary<string, object>
+                                                {
+                                                    { "type", "string" },
+                                                    { "readOnly", true },
+                                                }
+                                            },
+                                        }
+                                    },
+                                    {
+                                        "required", new List<object>
+                                        {
+                                            "tags", "sideEffects", "status",
+                                        }
+                                    },
+                                    { "additionalProperties", false },
+                                }
+                            },
+                        }
+                    },
+                }));
+
+            var tool = RequireDictionary(compacted["tool"]);
+            var inputSchema = RequireDictionary(tool["inputSchema"]);
+            var inputProperties = RequireDictionary(inputSchema["properties"]);
+            Assert.That(inputProperties["readOnly"],
+                Is.InstanceOf<Dictionary<string, object>>());
+
+            var outputSchema = RequireDictionary(tool["outputSchema"]);
+            var outputProperties = RequireDictionary(outputSchema["properties"]);
+            Assert.That(outputProperties["tags"],
+                Is.InstanceOf<Dictionary<string, object>>());
+            Assert.That(outputProperties["sideEffects"],
+                Is.InstanceOf<Dictionary<string, object>>());
+            var statusSchema = RequireDictionary(outputProperties["status"]);
+            Assert.That(statusSchema["readOnly"], Is.EqualTo(true));
+            Assert.That((IList)outputSchema["required"],
+                Is.EquivalentTo(new[] { "tags", "sideEffects", "status" }));
+        }
+
+        [Test]
         public void TransportCompaction_PreservesCompleteProjectToolSchemaInsideCompletedTicket()
         {
             var source = new Dictionary<string, object>

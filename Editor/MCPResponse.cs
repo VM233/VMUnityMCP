@@ -202,8 +202,12 @@ namespace UnityMCP.Editor
             bool isQueueTicketEnvelope = IsQueueTicketEnvelope(source);
             var compacted = new Dictionary<string, object>();
             foreach (KeyValuePair<string, object> pair in source)
-                compacted[pair.Key] = CompactValue(
-                    pair.Value, isQueueTicketEnvelope && pair.Key == "result");
+            {
+                compacted[pair.Key] = IsJsonSchemaContractKey(pair.Key)
+                    ? PreserveProjectToolSchemaShape(pair.Value)
+                    : CompactValue(
+                        pair.Value, isQueueTicketEnvelope && pair.Key == "result");
+            }
             string emptyPrimaryCollectionKey = isRoot
                 ? FindUniqueEmptyCollectionKeyMatchingCount(compacted, "count")
                 : null;
@@ -299,6 +303,11 @@ namespace UnityMCP.Editor
             }
 
             return true;
+        }
+
+        private static bool IsJsonSchemaContractKey(string key)
+        {
+            return key == "inputSchema" || key == "outputSchema";
         }
 
         private static bool IsQueueTicketEnvelope(Dictionary<string, object> dictionary)

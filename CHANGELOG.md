@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.5.1] - 2026-07-31
+
+- Preserve `inputSchema` and `outputSchema` as exact machine-readable
+  contracts at the transport boundary. JSON Schema properties named `tags` or
+  `sideEffects`, and schema keywords such as `readOnly`, are no longer mistaken
+  for schema-v5 transport metadata during recursive response compaction.
+- Add regression coverage for business fields whose names overlap the
+  presence-only metadata vocabulary.
+
 ## [5.5.0] - 2026-07-31
 
 - Replace public tool-capability booleans with one presence-only `tags` array.
