@@ -59,6 +59,12 @@ installed. Project code should not retain one-off Editor builders that mirror
 checked-in asset values; temporary migrations are removed after asset readback
 succeeds.
 
+Filename-changing `asset/rename` and `asset/move` operations keep Sprite asset
+identity coherent as well as preserving the `.meta` GUID. Single Sprite names
+follow the filename. Multiple Sprite names that use the previous filename as
+their prefix are migrated to the new prefix while retaining every Sprite ID,
+so AnimationClip and Prefab references remain valid.
+
 Major route families include:
 
 - scene workspaces, GameObjects, components, Prefabs, materials, importers, and

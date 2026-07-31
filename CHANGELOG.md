@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.15] - 2026-08-01
+
+- Make filename-changing `asset/rename` and `asset/move` migrate matching
+  Multiple Sprite prefixes as well as Single Sprite names while preserving the
+  existing Sprite IDs and both importer name-fileID tables.
+- Add focused rename and move regressions proving Multiple Sprite local file IDs
+  survive the semantic rename, and refresh the configuration audit fingerprint
+  and route total.
+
 ## [5.6.14] - 2026-08-01
 
 - Preserve real serialized fields named `type`, `childrenTruncated`, or

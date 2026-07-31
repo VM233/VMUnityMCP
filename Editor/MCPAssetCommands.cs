@@ -1321,6 +1321,7 @@ namespace UnityMCP.Editor
             string directory = Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "";
             string extension = isFolder ? "" : Path.GetExtension(path);
             string newExtension = isFolder ? "" : Path.GetExtension(newName);
+            string oldAssetName = isFolder ? "" : Path.GetFileNameWithoutExtension(path);
 
             if (!isFolder && !string.IsNullOrEmpty(newExtension) &&
                 !string.Equals(newExtension, extension, StringComparison.OrdinalIgnoreCase))
@@ -1361,7 +1362,32 @@ namespace UnityMCP.Editor
             if (!string.IsNullOrEmpty(error))
                 return new { error };
 
-            bool synchronizedSingleSpriteName = SynchronizeSingleSpriteName(expectedPath, renameName);
+            SpriteNameSynchronizationResult spriteNameSynchronization =
+                SynchronizeSpriteNames(expectedPath, oldAssetName, renameName);
+            if (spriteNameSynchronization.Attempted && spriteNameSynchronization.Success == false)
+            {
+                string rollbackError = AssetDatabase.RenameAsset(expectedPath, oldAssetName);
+                bool pathRolledBack = string.IsNullOrEmpty(rollbackError);
+                SpriteNameSynchronizationResult restoration = pathRolledBack
+                    ? SynchronizeSpriteNames(path, renameName, oldAssetName)
+                    : new SpriteNameSynchronizationResult();
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+                return new Dictionary<string, object>
+                {
+                    { "success", false },
+                    {
+                        "error",
+                        spriteNameSynchronization.Error ??
+                        $"Failed to synchronize Sprite names at '{expectedPath}'."
+                    },
+                    { "oldPath", path },
+                    { "expectedPath", expectedPath },
+                    { "pathRolledBack", pathRolledBack },
+                    { "spriteNamesRolledBack", pathRolledBack && restoration.Success },
+                    { "rollbackError", rollbackError ?? "" },
+                };
+            }
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
 
@@ -1387,9 +1413,58 @@ namespace UnityMCP.Editor
                 { "newMetaPath", newMetaPath },
                 { "oldMetaExists", oldMetaExists },
                 { "newMetaExists", newMetaExists },
-                { "synchronizedSingleSpriteName", synchronizedSingleSpriteName },
+                { "spriteNameSynchronizationAttempted", spriteNameSynchronization.Attempted },
+                { "synchronizedSpriteNames", spriteNameSynchronization.Success },
+                { "synchronizedSpriteCount", spriteNameSynchronization.SynchronizedCount },
+                { "spriteImportMode", spriteNameSynchronization.SpriteImportMode },
+                { "spriteNameSynchronizationError", spriteNameSynchronization.Error ?? "" },
+                {
+                    "synchronizedSingleSpriteName",
+                    spriteNameSynchronization.SpriteImportMode == nameof(SpriteImportMode.Single) &&
+                    spriteNameSynchronization.Success
+                },
+                {
+                    "synchronizedMultipleSpriteNames",
+                    spriteNameSynchronization.SpriteImportMode == nameof(SpriteImportMode.Multiple) &&
+                    spriteNameSynchronization.Success
+                },
                 { "subAssets", DescribeSubAssets(newPath) },
             };
+        }
+
+        private static SpriteNameSynchronizationResult SynchronizeSpriteNames(string assetPath,
+            string oldAssetName, string newAssetName)
+        {
+            var result = new SpriteNameSynchronizationResult();
+            if (AssetImporter.GetAtPath(assetPath) is not TextureImporter importer ||
+                importer.textureType != TextureImporterType.Sprite)
+                return result;
+
+            result.Attempted = true;
+            result.SpriteImportMode = importer.spriteImportMode.ToString();
+            if (importer.spriteImportMode == SpriteImportMode.Single)
+            {
+                result.Success = SynchronizeSingleSpriteName(assetPath, newAssetName);
+                result.SynchronizedCount = result.Success
+                    ? AssetDatabase.LoadAllAssetsAtPath(assetPath).OfType<Sprite>().Count()
+                    : 0;
+                if (result.Success == false)
+                    result.Error = $"Failed to synchronize Single Sprite internal names at '{assetPath}'.";
+                return result;
+            }
+
+            if (importer.spriteImportMode == SpriteImportMode.Multiple)
+            {
+                result.Success = MCPSpriteSheetCommands.TryRenameSpritePrefixPreservingIds(
+                    assetPath, oldAssetName, newAssetName, out int synchronizedCount,
+                    out string synchronizationError);
+                result.SynchronizedCount = synchronizedCount;
+                result.Error = synchronizationError;
+                return result;
+            }
+
+            result.Success = true;
+            return result;
         }
 
         private static bool SynchronizeSingleSpriteName(string assetPath, string spriteName)
@@ -1547,7 +1622,7 @@ namespace UnityMCP.Editor
                 {
                     string timeoutError = $"Asset moves timed out after {execution.TimeoutMs} ms";
                     errors.Add(timeoutError);
-                    var rollbackErrors = RollbackMovesAndRestoreSingleSpriteNames(entries);
+                    var rollbackErrors = RollbackMovesAndRestoreSpriteNames(entries);
                     errors.AddRange(rollbackErrors);
                     FinishAssetMoves();
                     complete(BuildMoveFailure(entries, execution, timeoutError, errors));
@@ -1592,7 +1667,7 @@ namespace UnityMCP.Editor
 
                 if (errors.Count > 0 && !execution.ContinueOnError)
                 {
-                    errors.AddRange(RollbackMovesAndRestoreSingleSpriteNames(entries));
+                    errors.AddRange(RollbackMovesAndRestoreSpriteNames(entries));
                     FinishAssetMoves();
                     complete(BuildMoveFailure(entries, execution, errors[0], errors));
                     return;
@@ -1600,10 +1675,10 @@ namespace UnityMCP.Editor
                 if (nextIndex < entries.Count)
                     return;
 
-                SynchronizeMovedSingleSpriteNames(entries, errors);
+                SynchronizeMovedSpriteNames(entries, errors);
                 if (errors.Count > 0 && !execution.ContinueOnError)
                 {
-                    errors.AddRange(RollbackMovesAndRestoreSingleSpriteNames(entries));
+                    errors.AddRange(RollbackMovesAndRestoreSpriteNames(entries));
                     FinishAssetMoves();
                     complete(BuildMoveFailure(entries, execution, errors[0], errors));
                     return;
@@ -1737,9 +1812,9 @@ namespace UnityMCP.Editor
             }
 
             if (errors.Count == 0 || execution.ContinueOnError)
-                SynchronizeMovedSingleSpriteNames(entries, errors);
+                SynchronizeMovedSpriteNames(entries, errors);
             if (errors.Count > 0 && !execution.ContinueOnError)
-                errors.AddRange(RollbackMovesAndRestoreSingleSpriteNames(entries));
+                errors.AddRange(RollbackMovesAndRestoreSpriteNames(entries));
             FinishAssetMoves();
             return errors.Count == 0
                 ? BuildMoveResult(entries, execution, false, errors)
@@ -1771,36 +1846,38 @@ namespace UnityMCP.Editor
             return rollbackErrors;
         }
 
-        private static List<string> RollbackMovesAndRestoreSingleSpriteNames(List<BatchMoveEntry> entries)
+        private static List<string> RollbackMovesAndRestoreSpriteNames(List<BatchMoveEntry> entries)
         {
             var rollbackErrors = RollbackMoves(entries);
             foreach (var entry in entries)
             {
-                if (!entry.RolledBack || !entry.SingleSpriteNameSynchronizationAttempted)
+                if (!entry.RolledBack || !entry.SpriteNameSynchronizationAttempted)
                     continue;
 
                 try
                 {
-                    string oldSpriteName = Path.GetFileNameWithoutExtension(entry.OldPath);
-                    entry.SynchronizedSingleSpriteName =
-                        SynchronizeSingleSpriteName(entry.OldPath, oldSpriteName);
-                    if (!entry.SynchronizedSingleSpriteName)
+                    string oldAssetName = Path.GetFileNameWithoutExtension(entry.OldPath);
+                    string movedAssetName = Path.GetFileNameWithoutExtension(entry.TargetPath);
+                    SpriteNameSynchronizationResult restoration =
+                        SynchronizeSpriteNames(entry.OldPath, movedAssetName, oldAssetName);
+                    ApplySpriteNameSynchronization(entry, restoration);
+                    if (!entry.SynchronizedSpriteNames)
                     {
                         rollbackErrors.Add(
-                            $"Rollback {entry.Index} restored the asset path but not its Single Sprite internal name.");
+                            $"Rollback {entry.Index} restored the asset path but not its Sprite internal names.");
                     }
                 }
                 catch (Exception exception)
                 {
                     rollbackErrors.Add(
-                        $"Rollback {entry.Index} could not restore its Single Sprite internal name: {exception.Message}");
+                        $"Rollback {entry.Index} could not restore its Sprite internal names: {exception.Message}");
                 }
             }
 
             return rollbackErrors;
         }
 
-        private static void SynchronizeMovedSingleSpriteNames(List<BatchMoveEntry> entries, List<string> errors)
+        private static void SynchronizeMovedSpriteNames(List<BatchMoveEntry> entries, List<string> errors)
         {
             foreach (var entry in entries)
             {
@@ -1809,31 +1886,55 @@ namespace UnityMCP.Editor
                         Path.GetFileNameWithoutExtension(entry.TargetPath), StringComparison.Ordinal))
                     continue;
                 if (AssetImporter.GetAtPath(entry.TargetPath) is not TextureImporter importer ||
-                    importer.textureType != TextureImporterType.Sprite ||
-                    importer.spriteImportMode != SpriteImportMode.Single)
+                    importer.textureType != TextureImporterType.Sprite)
                     continue;
 
-                entry.SingleSpriteNameSynchronizationAttempted = true;
+                entry.SpriteNameSynchronizationAttempted = true;
+                entry.SpriteImportMode = importer.spriteImportMode.ToString();
+                entry.SingleSpriteNameSynchronizationAttempted =
+                    importer.spriteImportMode == SpriteImportMode.Single;
                 try
                 {
-                    string spriteName = Path.GetFileNameWithoutExtension(entry.TargetPath);
-                    entry.SynchronizedSingleSpriteName =
-                        SynchronizeSingleSpriteName(entry.TargetPath, spriteName);
-                    if (entry.SynchronizedSingleSpriteName)
+                    string oldAssetName = Path.GetFileNameWithoutExtension(entry.OldPath);
+                    string newAssetName = Path.GetFileNameWithoutExtension(entry.TargetPath);
+                    SpriteNameSynchronizationResult synchronization =
+                        SynchronizeSpriteNames(entry.TargetPath, oldAssetName, newAssetName);
+                    ApplySpriteNameSynchronization(entry, synchronization);
+                    if (entry.SynchronizedSpriteNames)
                         continue;
 
                     entry.Error =
-                        $"Move {entry.Index} left Single Sprite internal names unsynchronized at '{entry.TargetPath}'.";
+                        $"Move {entry.Index} left Sprite internal names unsynchronized at '{entry.TargetPath}': " +
+                        (entry.SpriteNameSynchronizationError ?? "unknown synchronization error");
                 }
                 catch (Exception exception)
                 {
                     entry.Error =
-                        $"Move {entry.Index} could not synchronize Single Sprite internal names at " +
+                        $"Move {entry.Index} could not synchronize Sprite internal names at " +
                         $"'{entry.TargetPath}': {exception.Message}";
                 }
 
                 errors.Add(entry.Error);
             }
+        }
+
+        private static void ApplySpriteNameSynchronization(BatchMoveEntry entry,
+            SpriteNameSynchronizationResult synchronization)
+        {
+            entry.SpriteNameSynchronizationAttempted = synchronization.Attempted;
+            entry.SynchronizedSpriteNames = synchronization.Success;
+            entry.SynchronizedSpriteCount = synchronization.SynchronizedCount;
+            entry.SpriteImportMode = synchronization.SpriteImportMode;
+            entry.SpriteNameSynchronizationError = synchronization.Error;
+            entry.SingleSpriteNameSynchronizationAttempted =
+                synchronization.SpriteImportMode == nameof(SpriteImportMode.Single) &&
+                synchronization.Attempted;
+            entry.SynchronizedSingleSpriteName =
+                synchronization.SpriteImportMode == nameof(SpriteImportMode.Single) &&
+                synchronization.Success;
+            entry.SynchronizedMultipleSpriteNames =
+                synchronization.SpriteImportMode == nameof(SpriteImportMode.Multiple) &&
+                synchronization.Success;
         }
 
         private static void FinishAssetMoves()
@@ -2254,8 +2355,14 @@ namespace UnityMCP.Editor
                 { "currentMetaExists", !string.IsNullOrEmpty(currentMetaPath) && File.Exists(GetAbsolutePath(currentMetaPath)) },
                 { "moved", entry.Moved },
                 { "rolledBack", entry.RolledBack },
+                { "spriteNameSynchronizationAttempted", entry.SpriteNameSynchronizationAttempted },
+                { "synchronizedSpriteNames", entry.SynchronizedSpriteNames },
+                { "synchronizedSpriteCount", entry.SynchronizedSpriteCount },
+                { "spriteImportMode", entry.SpriteImportMode ?? "" },
+                { "spriteNameSynchronizationError", entry.SpriteNameSynchronizationError ?? "" },
                 { "singleSpriteNameSynchronizationAttempted", entry.SingleSpriteNameSynchronizationAttempted },
                 { "synchronizedSingleSpriteName", entry.SynchronizedSingleSpriteName },
+                { "synchronizedMultipleSpriteNames", entry.SynchronizedMultipleSpriteNames },
                 { "error", entry.Error ?? "" },
             };
         }
@@ -2271,8 +2378,23 @@ namespace UnityMCP.Editor
             public bool OldMetaExists;
             public bool Moved;
             public bool RolledBack;
+            public bool SpriteNameSynchronizationAttempted;
+            public bool SynchronizedSpriteNames;
+            public int SynchronizedSpriteCount;
+            public string SpriteImportMode;
+            public string SpriteNameSynchronizationError;
             public bool SingleSpriteNameSynchronizationAttempted;
             public bool SynchronizedSingleSpriteName;
+            public bool SynchronizedMultipleSpriteNames;
+            public string Error;
+        }
+
+        private sealed class SpriteNameSynchronizationResult
+        {
+            public bool Attempted;
+            public bool Success;
+            public int SynchronizedCount;
+            public string SpriteImportMode = "";
             public string Error;
         }
 

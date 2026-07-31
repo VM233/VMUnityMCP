@@ -1,6 +1,6 @@
 # Unity MCP configuration architecture and tool audit
 
-This document records the configuration review for the 405 built-in routes
+This document records the configuration review for the 406 built-in routes
 published by `MCPRouteRegistry`. The registry composes its catalog from a
 non-deferred manifest and `MCPDeferredRouteRegistry`, which owns both deferred
 names and executable handlers. The two sources must be disjoint, their union
@@ -8,7 +8,7 @@ must exactly equal the published catalog, and metadata inspection does not
 initialize `MCPBridgeServer`.
 
 The audited manifest SHA-256 is
-`8010bd6ec922b7fb31608bf7b252120b1666952e9e19c52349fed06783a32fbf`.
+`605809562e5412cb10f0ba48671d78aaeb24ca61ab387b91a3303fe95e25ed0c`.
 The regression suite compares that fingerprint with the authoritative route
 manifest, so adding, removing, or renaming a route requires another
 configuration review.
@@ -126,14 +126,14 @@ Every route in the manifest was checked. The result by tool family is:
 |---|---:|---|
 | `_meta`, `ping`, `agents`, `instance`, `queue`, `mcp`, `wait`, `advanced`, `mppm` | 19 | Port discovery and compact result defaults are preferences. Queue limits, ownership, transport size, ticket retention, and execution deadlines remain invariants. `mcp/health` is compact by default and reports effective configuration. |
 | `editor`, `console`, `compilation`, `debug`, `debugger`, `profiler`, `undo`, `selection`, `search` | 40 | Primary diagnostic result budgets may use the user override. Play-mode actions, attach waits, stack traces, snapshots, evaluation, and mutations remain explicit. |
-| `asset`, `texture`, `sprite`, `spriteatlas`, `material`, `serialized-object`, `scriptableobject`, `script`, `asmdef`, `taglayer` | 62 | Read-result budgets may use the preference. Importer values, presets, roots, overwrite, dedupe, reimport, refresh, raw serialization, and file mutations stay request-owned. Sprite slicing authoritatively owns the complete SpriteRect and name-fileID tables; removed frames and renamed entries are not retained as compatibility aliases. The pixel-sprite preset preserves the target's current Single/Multiple mode unless a supplied reference importer explicitly owns that setting. |
+| `asset`, `texture`, `sprite`, `spriteatlas`, `material`, `serialized-object`, `scriptableobject`, `script`, `asmdef`, `taglayer` | 62 | Read-result budgets may use the preference. Importer values, presets, roots, overwrite, dedupe, reimport, refresh, raw serialization, and file mutations stay request-owned. Sprite slicing authoritatively owns the complete SpriteRect and name-fileID tables; removed frames and renamed entries are not retained as compatibility aliases. Filename-changing asset rename/move operations synchronize Single Sprite names and matching Multiple Sprite filename prefixes while preserving Sprite IDs. The pixel-sprite preset preserves the target's current Single/Multiple mode unless a supplied reference importer explicitly owns that setting. |
 | `prefab`, `prefab-asset`, `component`, `gameobject`, `renderer`, `constraint`, `lod` | 43 | Prefab YAML response detail is a user preference; hierarchy/find budgets may use the result preference. Selectors, references, transforms, apply/revert/unpack, and transaction operations stay explicit. |
 | `scene`, `sceneview`, `physics`, `navigation`, `lighting`, `particle`, `terrain`, `scenario` | 71 | Physics read queries have a project dimension default. Scene replacement/save/discard, runtime simulation, baking, clearing, placement, scenario activation, and terrain edits stay explicit. |
-| `build`, `testing`, `jobs`, `packages`, `project-tools`, `project`, `settings`, `editorprefs`, `playerprefs` | 39 | Read pages and histories may use preferences. Build target/output/run/overwrite, test mode/filter, package ref/resolve, the generic project-tool envelope, and preference mutations remain explicit. A project-tool package may resolve its own omitted domain defaults after schema validation. |
+| `build`, `testing`, `jobs`, `packages`, `project-tools`, `project`, `settings`, `editorprefs`, `playerprefs` | 40 | Read pages and histories may use preferences. Build target/output/run/overwrite, test mode/filter, package ref/resolve, the generic project-tool envelope, and preference mutations remain explicit. A project-tool package may resolve its own omitted domain defaults after schema validation. |
 | `ui`, `uitoolkit`, `gameview`, `screenshot`, `graphics` | 47 | Screenshot directory is a project default; bounded read results may use the preference; UI audit keeps its dedicated project policy. Capture dimensions, transports, tolerances, expected images, refresh, and runtime/editor target selection stay explicit. |
 | `animation`, `audio`, `audio-mixer`, `input`, `shadergraph`, `vfxgraph`, `timeline`, `cinemachine`, `addressables`, `localization` | 84 | Simple list pages may use the result preference. Graph/mixer/timeline multi-axis budgets, raw serialized detail, operations, package capability behavior, locale/table values, labels, addresses, and runtime overrides stay explicit. |
 
-The counts total 405. Complex graph tools deliberately retain independent
+The counts total 406. Complex graph tools deliberately retain independent
 budgets such as nodes, edges, slots, clips, markers, groups, effects, and
 properties. Collapsing those into one global number would make response shape
 less predictable rather than easier to use.

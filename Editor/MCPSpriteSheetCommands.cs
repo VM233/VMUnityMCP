@@ -290,6 +290,108 @@ namespace UnityMCP.Editor
                 .ToList();
         }
 
+        internal static bool TryRenameSpritePrefixPreservingIds(string texturePath,
+            string oldBaseName, string newBaseName, out int renamedCount, out string error)
+        {
+            renamedCount = 0;
+            error = null;
+            if (string.IsNullOrWhiteSpace(oldBaseName) || string.IsNullOrWhiteSpace(newBaseName))
+            {
+                error = "Old and new Sprite base names are required.";
+                return false;
+            }
+
+            if (AssetImporter.GetAtPath(texturePath) is not TextureImporter importer ||
+                importer.textureType != TextureImporterType.Sprite ||
+                importer.spriteImportMode != SpriteImportMode.Multiple)
+            {
+                error = $"Texture at '{texturePath}' is not a Multiple Sprite sheet.";
+                return false;
+            }
+
+            var provider = GetSpriteDataProvider(importer);
+            var spriteRects = provider.GetSpriteRects() ?? Array.Empty<SpriteRect>();
+            var expectedNamesBySpriteId = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var spriteRect in spriteRects)
+            {
+                if (TryReplaceSpriteBaseName(spriteRect.name, oldBaseName, newBaseName,
+                        out string renamed))
+                {
+                    spriteRect.name = renamed;
+                    renamedCount++;
+                }
+
+                expectedNamesBySpriteId[spriteRect.spriteID.ToString()] = spriteRect.name;
+            }
+
+            if (renamedCount == 0)
+                return true;
+            if (spriteRects.Select(rect => rect.name).Distinct(StringComparer.Ordinal).Count() !=
+                spriteRects.Length)
+            {
+                error = $"Renaming Sprite prefix '{oldBaseName}' to '{newBaseName}' would create duplicate names.";
+                return false;
+            }
+
+            provider.SetSpriteRects(spriteRects);
+            var nameFileIdProvider = provider.GetDataProvider<ISpriteNameFileIdDataProvider>();
+            nameFileIdProvider?.SetNameFileIdPairs(spriteRects
+                .Select(rect => new SpriteNameFileIdPair(rect.name, rect.spriteID)));
+            provider.Apply();
+            importer.SaveAndReimport();
+
+            if (SynchronizeImportedSpriteNameTable(texturePath) == false)
+            {
+                error = $"Failed to synchronize Sprite name-fileID metadata for '{texturePath}'.";
+                return false;
+            }
+
+            importer = AssetImporter.GetAtPath(texturePath) as TextureImporter;
+            if (importer == null)
+            {
+                error = $"TextureImporter disappeared after renaming Sprite names at '{texturePath}'.";
+                return false;
+            }
+
+            var reimportedRects = GetSpriteRects(importer);
+            if (reimportedRects.Length != expectedNamesBySpriteId.Count)
+            {
+                error = $"Sprite count changed while renaming '{texturePath}'.";
+                return false;
+            }
+
+            foreach (var spriteRect in reimportedRects)
+            {
+                if (expectedNamesBySpriteId.TryGetValue(spriteRect.spriteID.ToString(),
+                        out string expectedName) == false ||
+                    string.Equals(spriteRect.name, expectedName, StringComparison.Ordinal) == false)
+                {
+                    error = $"Sprite IDs or names changed unexpectedly while renaming '{texturePath}'.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryReplaceSpriteBaseName(string spriteName, string oldBaseName,
+            string newBaseName, out string renamed)
+        {
+            renamed = spriteName;
+            if (string.Equals(spriteName, oldBaseName, StringComparison.Ordinal))
+            {
+                renamed = newBaseName;
+                return true;
+            }
+
+            string oldPrefix = oldBaseName + "_";
+            if (spriteName.StartsWith(oldPrefix, StringComparison.Ordinal) == false)
+                return false;
+
+            renamed = newBaseName + spriteName.Substring(oldBaseName.Length);
+            return true;
+        }
+
         private static bool SynchronizeImportedSpriteNameTable(string texturePath)
         {
             var identities = new List<KeyValuePair<long, string>>();

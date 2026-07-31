@@ -1533,6 +1533,56 @@ namespace UnityMCP.Editor.Tests
             AssertSingleSpriteInternalNames(newPath, "Immediate New Sprite", "Immediate Old Sprite");
         }
 
+        [Test]
+        public void AssetMove_ImmediateModeRenamesMultipleSpritePrefixAndPreservesIds()
+        {
+            string externalPath = CreateExternalSparseSpriteSheetPng();
+            const string oldPath = TEST_FOLDER + "/Move Old Spearman.png";
+            const string newPath = TEST_FOLDER + "/Move Blue Spearman.png";
+            try
+            {
+                File.Copy(externalPath, GetAbsolutePath(oldPath), true);
+                AssetDatabase.ImportAsset(oldPath, ImportAssetOptions.ForceSynchronousImport);
+                RequireDictionary(MCPSpriteSheetCommands.SliceSheet(new Dictionary<string, object>
+                {
+                    { "texturePath", oldPath },
+                    { "frameWidth", 48 },
+                    { "frameHeight", 48 },
+                    { "frameCount", 4 },
+                    { "baseName", "Move Old Spearman" },
+                }));
+                string oldGuid = AssetDatabase.AssetPathToGUID(oldPath);
+                var oldLocalIds = GetSpriteLocalIdsByName(oldPath);
+
+                var result = RequireDictionary(MCPAssetCommands.Move(new Dictionary<string, object>
+                {
+                    { "moves", new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "path", oldPath }, { "destinationPath", newPath }
+                            },
+                        }
+                    },
+                    { "execution", new Dictionary<string, object> { { "mode", "immediate" } } },
+                }));
+
+                Assert.That(result["success"], Is.EqualTo(true));
+                var move = ((List<Dictionary<string, object>>)result["moves"]).Single();
+                Assert.That(move["spriteNameSynchronizationAttempted"], Is.EqualTo(true));
+                Assert.That(move["synchronizedSpriteNames"], Is.EqualTo(true));
+                Assert.That(move["synchronizedSpriteCount"], Is.EqualTo(4));
+                Assert.That(move["spriteImportMode"], Is.EqualTo("Multiple"));
+                Assert.That(move["synchronizedMultipleSpriteNames"], Is.EqualTo(true));
+                Assert.That(AssetDatabase.AssetPathToGUID(newPath), Is.EqualTo(oldGuid));
+                AssertRenamedSpriteIds(oldLocalIds, newPath, "Move Old Spearman", "Move Blue Spearman", 4);
+            }
+            finally
+            {
+                if (File.Exists(externalPath)) File.Delete(externalPath);
+            }
+        }
+
         [UnityTest]
         public IEnumerator AssetMoveDeferred_BatchedModeMovesAllAssets()
         {
@@ -6581,6 +6631,51 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void AssetRename_RenamesMultipleSpritePrefixAndPreservesIds()
+        {
+            string externalPath = CreateExternalSparseSpriteSheetPng();
+            const string oldPath = TEST_FOLDER + "/Old Blue Soldier.png";
+            const string newPath = TEST_FOLDER + "/Blue Spearman.png";
+            try
+            {
+                File.Copy(externalPath, GetAbsolutePath(oldPath), true);
+                AssetDatabase.ImportAsset(oldPath, ImportAssetOptions.ForceSynchronousImport);
+                RequireDictionary(MCPSpriteSheetCommands.SliceSheet(new Dictionary<string, object>
+                {
+                    { "texturePath", oldPath },
+                    { "frameWidth", 48 },
+                    { "frameHeight", 48 },
+                    { "frameCount", 4 },
+                    { "baseName", "Old Blue Soldier" },
+                }));
+                string oldGuid = AssetDatabase.AssetPathToGUID(oldPath);
+                var oldLocalIds = GetSpriteLocalIdsByName(oldPath);
+
+                var result = RequireDictionary(MCPAssetCommands.Rename(new Dictionary<string, object>
+                {
+                    { "path", oldPath }, { "newName", "Blue Spearman.png" },
+                }));
+
+                Assert.That(result["success"], Is.EqualTo(true));
+                Assert.That(result["spriteNameSynchronizationAttempted"], Is.EqualTo(true));
+                Assert.That(result["synchronizedSpriteNames"], Is.EqualTo(true));
+                Assert.That(result["synchronizedSpriteCount"], Is.EqualTo(4));
+                Assert.That(result["spriteImportMode"], Is.EqualTo("Multiple"));
+                Assert.That(result["synchronizedSingleSpriteName"], Is.EqualTo(false));
+                Assert.That(result["synchronizedMultipleSpriteNames"], Is.EqualTo(true));
+                Assert.That(AssetDatabase.AssetPathToGUID(newPath), Is.EqualTo(oldGuid));
+                AssertRenamedSpriteIds(oldLocalIds, newPath, "Old Blue Soldier", "Blue Spearman", 4);
+                string metaText = File.ReadAllText(GetAbsolutePath(newPath) + ".meta");
+                Assert.That(metaText, Does.Not.Contain("Old Blue Soldier"));
+                Assert.That(metaText, Does.Contain("Blue Spearman_0"));
+            }
+            finally
+            {
+                if (File.Exists(externalPath)) File.Delete(externalPath);
+            }
+        }
+
+        [Test]
         public void CleanupMissingVariantOverrides_RemovesOnlyInvalidPaths()
         {
             const string basePath = TEST_FOLDER + "/Base.prefab";
@@ -9450,6 +9545,34 @@ namespace UnityMCP.Editor.Tests
             string metaText = File.ReadAllText(GetAbsolutePath(assetPath) + ".meta");
             Assert.That(metaText, Does.Contain(expectedName));
             Assert.That(metaText, Does.Not.Contain(staleName));
+        }
+
+        private static Dictionary<string, long> GetSpriteLocalIdsByName(string assetPath)
+        {
+            var result = new Dictionary<string, long>(StringComparer.Ordinal);
+            foreach (var sprite in AssetDatabase.LoadAllAssetsAtPath(assetPath).OfType<Sprite>())
+            {
+                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(sprite, out string _,
+                    out long localId), Is.True);
+                result.Add(sprite.name, localId);
+            }
+
+            return result;
+        }
+
+        private static void AssertRenamedSpriteIds(IReadOnlyDictionary<string, long> oldLocalIds,
+            string newAssetPath, string oldBaseName, string newBaseName, int spriteCount)
+        {
+            var newLocalIds = GetSpriteLocalIdsByName(newAssetPath);
+            Assert.That(newLocalIds, Has.Count.EqualTo(spriteCount));
+            for (int index = 0; index < spriteCount; index++)
+            {
+                string oldName = $"{oldBaseName}_{index}";
+                string newName = $"{newBaseName}_{index}";
+                Assert.That(oldLocalIds.ContainsKey(oldName), Is.True);
+                Assert.That(newLocalIds.ContainsKey(newName), Is.True);
+                Assert.That(newLocalIds[newName], Is.EqualTo(oldLocalIds[oldName]));
+            }
         }
 
         private static int AssertSerializedArrayEntryNames(SerializedProperty entries, string expectedName,
