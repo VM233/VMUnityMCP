@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.2] - 2026-07-31
+
+- Align the complete first-class catalog regression snapshot with the newly
+  published composable asset-authoring and Localization routes.
+
 ## [5.6.1] - 2026-07-31
 
 - Restore the complete Localization tool family to the first-class public
