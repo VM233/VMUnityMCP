@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.9] - 2026-07-31
+
+- Keep the validated transport envelope on normal persistent queue requests
+  until the main-thread router performs its target revalidation, while still
+  consuming it before deferred handlers that execute directly from the queue.
+- Add a regression distinguishing `testing/run-tests` from deferred
+  `testing/list-tests` so transport cleanup cannot move to the wrong lifecycle
+  boundary again.
+
 ## [5.6.8] - 2026-07-31
 
 - Consume queue request identity together with expected-project binding at the

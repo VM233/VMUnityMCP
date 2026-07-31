@@ -561,10 +561,11 @@ namespace UnityMCP.Editor
                     ? null
                     : agentId + "|" + apiPath + "|" + requestId;
 
-                // Target binding and request identity belong to the queue/transport envelope.
-                // Validate and derive the queue idempotency key first, then expose only the
-                // context explicitly owned by the destination route.
-                RemoveConsumedTransportArguments(apiPath, innerArgs);
+                // Deferred handlers execute directly from the queue callback. Consume their
+                // transport envelope here after validation and request-key derivation. Normal
+                // persistent routes must retain it until RouteRequest performs its own
+                // main-thread target validation.
+                RemoveTransportArgumentsForDirectQueueDispatch(apiPath, innerArgs);
                 innerBody = MiniJson.Serialize(innerArgs);
 
                 MCPRequestQueue.RequestTicket ticket;
@@ -784,6 +785,15 @@ namespace UnityMCP.Editor
 
             if (!RouteConsumesRequestId(normalizedRoute))
                 args.Remove("_requestId");
+        }
+
+        private static void RemoveTransportArgumentsForDirectQueueDispatch(string route,
+            Dictionary<string, object> args)
+        {
+            string normalizedRoute = (route ?? "").Trim('/');
+            if (string.Equals(normalizedRoute, "wait/editor-idle", StringComparison.Ordinal) ||
+                MCPDeferredRouteRegistry.Contains(normalizedRoute))
+                RemoveConsumedTransportArguments(normalizedRoute, args);
         }
 
         private static bool RouteConsumesRequestId(string normalizedRoute)

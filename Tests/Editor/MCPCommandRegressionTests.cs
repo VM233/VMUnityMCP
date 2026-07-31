@@ -5140,6 +5140,30 @@ namespace UnityMCP.Editor.Tests
                 if (route != "advanced/execute")
                     Assert.That(requestArguments.ContainsKey("expectedProjectPath"), Is.False, route);
             }
+
+            var queueMethod = typeof(MCPBridgeServer).GetMethod(
+                "RemoveTransportArgumentsForDirectQueueDispatch",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(queueMethod, Is.Not.Null);
+
+            var persistentArguments = new Dictionary<string, object>
+            {
+                { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
+                { "_requestId", "persistent-request" },
+            };
+            queueMethod.Invoke(null, new object[] { "testing/run-tests", persistentArguments });
+            Assert.That(persistentArguments.Keys,
+                Is.EquivalentTo(new[] { "expectedProjectPath", "_requestId" }),
+                "Persistent routes need their envelope until RouteRequest revalidates the target.");
+
+            var deferredArguments = new Dictionary<string, object>
+            {
+                { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
+                { "_requestId", "deferred-request" },
+            };
+            queueMethod.Invoke(null, new object[] { "testing/list-tests", deferredArguments });
+            Assert.That(deferredArguments, Is.Empty,
+                "Deferred handlers execute directly and must receive business arguments only.");
         }
 
         [Test]
