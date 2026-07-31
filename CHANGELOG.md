@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.5.3] - 2026-07-31
+
+- Add semantic descriptions to every shared persistent Job output field so
+  execute-code, project tools, status, cancellation, and cleanup publish a
+  self-describing machine contract.
+- Add regression coverage preventing an undocumented Job output field from
+  entering live tool metadata.
+
 ## [5.5.2] - 2026-07-31
 
 - Keep presence-only Editor-state response compaction while making the compact

@@ -6483,6 +6483,13 @@ namespace UnityMCP.Editor.Tests
             Assert.That(executeCodeOutputProperties.ContainsKey("cleanupToken"),
                 Is.True);
             Assert.That(executeCodeOutputProperties.ContainsKey("tags"), Is.True);
+            foreach (var entry in executeCodeOutputProperties)
+            {
+                var propertySchema = RequireDictionary(entry.Value);
+                Assert.That(propertySchema.TryGetValue("description", out object description),
+                    Is.True, entry.Key);
+                Assert.That(description?.ToString(), Is.Not.Empty, entry.Key);
+            }
             foreach (string retiredField in new[]
                      {
                          "cleanupAvailable", "cleanupDeclared",

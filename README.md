@@ -191,7 +191,9 @@ The full ownership matrix and authoritative built-in route audit are in
 
 - Tool metadata publishes an `outputSchema` for every route. The companion
   server exposes the actual result through MCP `structuredContent`; the text
-  block remains a short human-readable summary.
+  block remains a short human-readable summary. Shared persistent Job fields
+  include semantic descriptions so clients can compose status, cancellation,
+  and cleanup without relying on route-specific prose.
 - Successful bridge responses may omit redundant `success=true`; errors keep a
   stable error code and retryability.
 - Project-tool success envelopes are unwrapped without compacting the validated

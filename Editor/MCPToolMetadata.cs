@@ -680,26 +680,31 @@ namespace UnityMCP.Editor
                     {
                         { "type", "string" },
                         { "minLength", 1 },
+                        { "description", "Opaque identifier of the persistent Job." },
                     }
                 },
                 { "jobAccessToken", new Dictionary<string, object>
                     {
                         { "type", "string" },
+                        { "description", "Capability token used to access the Job after its originating agent disconnects." },
                     }
                 },
                 { "jobType", new Dictionary<string, object>
                     {
                         { "type", "string" },
+                        { "description", "Durable Job owner type used to resume the correct workflow." },
                     }
                 },
                 { "operation", new Dictionary<string, object>
                     {
                         { "type", "string" },
+                        { "description", "Originating execute-code or project-tool operation." },
                     }
                 },
                 { "status", new Dictionary<string, object>
                     {
                         { "type", "string" },
+                        { "description", "Current persistent Job lifecycle state." },
                         { "enum", new List<object>
                             {
                                 "queued",
@@ -715,6 +720,7 @@ namespace UnityMCP.Editor
                 { "tags", new Dictionary<string, object>
                     {
                         { "type", "array" },
+                        { "description", "Presence-only Job capabilities and positive lifecycle facts." },
                         { "items", new Dictionary<string, object> { { "type", "string" } } },
                         { "uniqueItems", true },
                     }
@@ -722,6 +728,7 @@ namespace UnityMCP.Editor
                 { "cleanupStatus", new Dictionary<string, object>
                     {
                         { "type", "string" },
+                        { "description", "Current lifecycle state of the Job's explicit cleanup workflow." },
                         { "enum", new List<object>
                             {
                                 "available",
@@ -738,11 +745,13 @@ namespace UnityMCP.Editor
                 { "cleanupToken", new Dictionary<string, object>
                     {
                         { "type", "string" },
+                        { "description", "Opaque tool-defined token consumed by the explicit cleanup contract." },
                     }
                 },
                 { "progress", new Dictionary<string, object>
                     {
                         { "type", "number" },
+                        { "description", "Normalized Job progress from zero through one." },
                         { "minimum", 0 },
                         { "maximum", 1 },
                     }
@@ -750,30 +759,79 @@ namespace UnityMCP.Editor
                 { "statusMessage", new Dictionary<string, object>
                     {
                         { "type", "string" },
+                        { "description", "Current human-readable progress or terminal-status summary." },
                     }
                 },
                 { "stepCount", new Dictionary<string, object>
                     {
                         { "type", "integer" },
+                        { "description", "Number of incremental continuation steps executed by the Job." },
                         { "minimum", 1 },
                     }
                 },
-                { "nextRunAt", new Dictionary<string, object> { { "type", "string" } } },
-                { "idempotencyKey", new Dictionary<string, object> { { "type", "string" } } },
-                { "createdAt", new Dictionary<string, object> { { "type", "string" } } },
-                { "startedAt", new Dictionary<string, object> { { "type", "string" } } },
-                { "completedAt", new Dictionary<string, object> { { "type", "string" } } },
-                { "updatedAt", new Dictionary<string, object> { { "type", "string" } } },
+                { "nextRunAt", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "description", "UTC timestamp after which the next incremental step may run." },
+                    }
+                },
+                { "idempotencyKey", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "description", "Caller key bound to the exact operation arguments for safe reuse." },
+                    }
+                },
+                { "createdAt", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "description", "UTC timestamp when the Job record was created." },
+                    }
+                },
+                { "startedAt", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "description", "UTC timestamp when execution first crossed the Job boundary." },
+                    }
+                },
+                { "completedAt", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "description", "UTC timestamp when the Job reached a terminal state." },
+                    }
+                },
+                { "updatedAt", new Dictionary<string, object>
+                    {
+                        { "type", "string" },
+                        { "description", "UTC timestamp of the latest persisted Job mutation." },
+                    }
+                },
                 { "sideEffects", new Dictionary<string, object>
                     {
                         { "type", "array" },
+                        { "description", "Exact side-effect categories declared by the originating operation." },
                         { "items", new Dictionary<string, object> { { "type", "string" } } },
                     }
                 },
-                { "result", new Dictionary<string, object>() },
-                { "error", new Dictionary<string, object>() },
-                { "cleanupResult", new Dictionary<string, object>() },
-                { "cleanupError", new Dictionary<string, object>() },
+                { "result", new Dictionary<string, object>
+                    {
+                        { "description", "Validated terminal result produced by the originating operation." },
+                    }
+                },
+                { "error", new Dictionary<string, object>
+                    {
+                        { "description", "Structured failure produced when the Job cannot complete." },
+                    }
+                },
+                { "cleanupResult", new Dictionary<string, object>
+                    {
+                        { "description", "Terminal result produced by the explicit cleanup workflow." },
+                    }
+                },
+                { "cleanupError", new Dictionary<string, object>
+                    {
+                        { "description", "Structured failure produced when explicit cleanup cannot complete." },
+                    }
+                },
             };
             return new Dictionary<string, object>
             {
