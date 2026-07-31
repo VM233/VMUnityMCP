@@ -5579,16 +5579,15 @@ namespace UnityMCP.Editor.Tests
                     Object.DestroyImmediate(prefabRoot);
                 }
 
-                var ambiguous = RequireDictionary(MCPPrefabAssetCommands.SetReference(
+                var ambiguous = MCPPrefabAssetCommands.SetReference(
                     new Dictionary<string, object>
                     {
                         { "assetPath", PREFAB_PATH },
                         { "componentType", typeof(SpriteRenderer).FullName },
                         { "propertyName", "m_Sprite" },
                         { "referenceAssetPath", spritePath },
-                    }));
-                Assert.That(ambiguous.ContainsKey("success"), Is.False);
-                Assert.That(ambiguous["error"].ToString(), Does.Contain("referenceSubAssetName"));
+                    });
+                Assert.That(MiniJson.Serialize(ambiguous), Does.Contain("referenceSubAssetName"));
 
                 var configured = RequireDictionary(MCPPrefabAssetCommands.ConfigureComponent(
                     new Dictionary<string, object>
