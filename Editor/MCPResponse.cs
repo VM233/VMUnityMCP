@@ -221,9 +221,11 @@ namespace UnityMCP.Editor
                 CompactCollectionAndPaginationMetadata(compacted);
                 CompactNamedResultPagination(compacted);
                 RemoveFalseTruncationFlags(compacted);
+                RemoveDerivedEditorStateAliases(compacted);
                 MCPContractMetadata.CompactTransportFlags(compacted);
                 CompactJobAliases(compacted);
                 RemoveIdleCompilationDiagnostics(compacted);
+                CompactSuccessfulWaitMetadata(compacted);
             }
 
             if (isRoot)
@@ -671,13 +673,24 @@ namespace UnityMCP.Editor
             }
         }
 
+        private static void RemoveDerivedEditorStateAliases(Dictionary<string, object> dictionary)
+        {
+            if (dictionary.ContainsKey("isPlaying") &&
+                dictionary.ContainsKey("isChangingPlayMode"))
+            {
+                dictionary.Remove("isPlayingOrWillChangePlaymode");
+            }
+        }
+
         private static void RemoveIdleCompilationDiagnostics(Dictionary<string, object> dictionary)
         {
             if (!dictionary.TryGetValue("compilationDiagnostics", out object diagnosticsValue) ||
                 !(diagnosticsValue is Dictionary<string, object> diagnostics))
                 return;
 
-            bool compiling = diagnostics.TryGetValue("isCompiling", out object compilingValue) &&
+            bool compiling = MCPContractMetadata.HasTag(
+                                 diagnostics, MCPContractMetadata.Tag.Compiling) ||
+                             diagnostics.TryGetValue("isCompiling", out object compilingValue) &&
                              ToBool(compilingValue);
             long errors = 0;
             long warnings = 0;
@@ -692,6 +705,17 @@ namespace UnityMCP.Editor
 
             if (!compiling && errors == 0 && warnings == 0)
                 dictionary.Remove("compilationDiagnostics");
+        }
+
+        private static void CompactSuccessfulWaitMetadata(Dictionary<string, object> dictionary)
+        {
+            if (!MCPContractMetadata.HasTag(dictionary, MCPContractMetadata.Tag.Idle))
+                return;
+
+            dictionary.Remove("timeoutMs");
+            dictionary.Remove("stableFrames");
+            dictionary.Remove("stableMs");
+            dictionary.Remove("currentStableFrames");
         }
 
         private static void RemoveEmptyContainers(Dictionary<string, object> dictionary,

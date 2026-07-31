@@ -30,6 +30,13 @@ namespace UnityMCP.Editor
             internal const string Invalid = "invalid";
             internal const string CancellationRequested = "cancellationRequested";
             internal const string Reused = "reused";
+            internal const string ChangingPlayMode = "changingPlayMode";
+            internal const string Compiling = "compiling";
+            internal const string Idle = "idle";
+            internal const string Paused = "paused";
+            internal const string Playing = "playing";
+            internal const string Reloading = "reloading";
+            internal const string Updating = "updating";
             internal const string CancelableBeforeStart = "cancelableBeforeStart";
             internal const string CaptureMayStillComplete = "captureMayStillComplete";
             internal const string Cleared = "cleared";
@@ -67,6 +74,13 @@ namespace UnityMCP.Editor
                 { "cancellationRequested", Tag.CancellationRequested },
                 { "cancelRequested", Tag.CancellationRequested },
                 { "reused", Tag.Reused },
+                { "isChangingPlayMode", Tag.ChangingPlayMode },
+                { "isCompiling", Tag.Compiling },
+                { "isIdle", Tag.Idle },
+                { "isPaused", Tag.Paused },
+                { "isPlaying", Tag.Playing },
+                { "isReloading", Tag.Reloading },
+                { "isUpdating", Tag.Updating },
                 { "cancelableBeforeStart", Tag.CancelableBeforeStart },
                 { "captureMayStillComplete", Tag.CaptureMayStillComplete },
                 { "cleared", Tag.Cleared },

@@ -7505,7 +7505,7 @@ namespace UnityMCP.Editor.Tests
                     { "entries", new List<object>() },
                 }));
 
-            Assert.That(compilation.Keys, Is.EquivalentTo(new[] { "isCompiling", "counts" }));
+            Assert.That(compilation.Keys, Is.EquivalentTo(new[] { "counts" }));
 
             var assetSearch = RequireDictionary(MCPResponse.CompactForTransport(
                 new Dictionary<string, object>
@@ -7617,6 +7617,57 @@ namespace UnityMCP.Editor.Tests
             Assert.That(compacted["visible"], Is.EqualTo(false));
             Assert.That(compacted["valid"], Is.EqualTo(false));
             Assert.That(compacted["fileExists"], Is.EqualTo(false));
+        }
+
+        [Test]
+        public void TransportCompaction_UsesPresenceTagsForEditorProcessState()
+        {
+            var editorState = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "isPlaying", false },
+                    { "isPaused", false },
+                    { "isCompiling", true },
+                    { "isUpdating", false },
+                    { "isChangingPlayMode", false },
+                    { "isPlayingOrWillChangePlaymode", false },
+                    { "activeScene", "Main" },
+                }));
+            Assert.That((IList)editorState["tags"],
+                Is.EquivalentTo(new[] { "compiling" }));
+            foreach (string retired in new[]
+                     {
+                         "isPlaying", "isPaused", "isCompiling", "isUpdating",
+                         "isChangingPlayMode", "isPlayingOrWillChangePlaymode",
+                     })
+            {
+                Assert.That(editorState.ContainsKey(retired), Is.False, retired);
+            }
+
+            var waitResult = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "isIdle", true },
+                    { "isCompiling", false },
+                    { "isUpdating", false },
+                    { "isPlaying", false },
+                    { "isChangingPlayMode", false },
+                    { "isPlayingOrWillChangePlaymode", false },
+                    { "timeoutMs", 30000 },
+                    { "stableFrames", 3 },
+                    { "stableMs", 500 },
+                    { "currentStableFrames", 3 },
+                    { "stableDurationMs", 721 },
+                    { "elapsedMs", 804 },
+                }));
+            Assert.That((IList)waitResult["tags"],
+                Is.EquivalentTo(new[] { "idle" }));
+            Assert.That(waitResult.Keys, Is.EquivalentTo(new[]
+            {
+                "tags", "stableDurationMs", "elapsedMs",
+            }));
         }
 
         [Test]

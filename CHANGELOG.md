@@ -24,6 +24,8 @@ All notable changes to this package will be documented in this file.
   import, refresh, and profiler workflows: positive lifecycle metadata is
   merged into sorted `tags`, derived polling/state aliases are omitted, and
   idle compilation diagnostics are suppressed.
+- Represent Editor process state as presence-only tags and remove the derived
+  play-mode transition alias plus successful wait-configuration echoes.
 - Advance live tool metadata to schema version 5.
 
 ## [5.4.0] - 2026-07-31

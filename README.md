@@ -215,6 +215,10 @@ The full ownership matrix and authoritative built-in route audit are in
   status-derived booleans, idle compilation diagnostics, and false lifecycle
   markers are omitted. Business facts whose false value is meaningful—such as
   `valid`, `visible`, `found`, or `fileExists`—remain explicit.
+- Editor process state uses the same presence vocabulary (`playing`, `paused`,
+  `compiling`, `updating`, `changingPlayMode`, and `idle`). The composite
+  `isPlayingOrWillChangePlaymode` alias and successful wait-configuration
+  echoes are not sent.
 - Execute-code uses compact Unity value strings by default. Pass
   `unityStructFormat="structured"` for typed objects with stable fields.
 - Completed pagination aliases and exact duplicate counts are removed on the
