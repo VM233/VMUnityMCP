@@ -977,8 +977,7 @@ namespace UnityMCP.Editor
 
             foreach (var pair in values)
             {
-                if (pair.Key == "type" || pair.Key == "childrenTruncated" || pair.Key == "maxDepth" ||
-                    pair.Key == ManagedReferenceTypeKey)
+                if (pair.Key == ManagedReferenceTypeKey)
                     continue;
 
                 var child = prop.FindPropertyRelative(pair.Key);

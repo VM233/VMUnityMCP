@@ -38,6 +38,31 @@ namespace UnityMCP.Editor.Tests
         public long keyId;
     }
 
+    public enum ManagedReferenceTargetType
+    {
+        Component,
+        GameObject
+    }
+
+    [Serializable]
+    public sealed class ManagedReferenceTargetConfig
+    {
+        public ManagedReferenceTargetType type = ManagedReferenceTargetType.Component;
+    }
+
+    [Serializable]
+    public sealed class ManagedReferencePropertyConfig
+    {
+        public ManagedReferenceTargetConfig target = new ManagedReferenceTargetConfig();
+        public string parameterName;
+    }
+
+    public sealed class ManagedReferencePropertyTestComponent : MonoBehaviour
+    {
+        [SerializeReference]
+        public ManagedReferencePropertyConfig config = new ManagedReferencePropertyConfig();
+    }
+
     [Flags]
     public enum SerializedEnumFlagsTestValue
     {
@@ -895,6 +920,53 @@ namespace UnityMCP.Editor.Tests
                 Assert.That(cameras, Has.Length.EqualTo(1));
                 Assert.That(cameras[0].depth, Is.EqualTo(9f));
                 Assert.That(cameras[0].targetTexture, Is.EqualTo(renderTexture));
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        [Test]
+        public void ConfigureComponent_WritesRealTypeFieldInsideManagedReference()
+        {
+            CreateTestPrefab();
+            string managedReferenceType =
+                $"{typeof(ManagedReferencePropertyConfig).Assembly.GetName().Name}::" +
+                typeof(ManagedReferencePropertyConfig).FullName;
+
+            var result = RequireDictionary(MCPPrefabAssetCommands.ConfigureComponent(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Target" },
+                    { "componentType", typeof(ManagedReferencePropertyTestComponent).FullName },
+                    { "properties", new Dictionary<string, object>
+                    {
+                        { "config", new Dictionary<string, object>
+                        {
+                            { "$managedReferenceType", managedReferenceType },
+                            { "target", new Dictionary<string, object>
+                            {
+                                { "type", "GameObject" }
+                            } },
+                            { "parameterName", "Default Real Time" }
+                        } }
+                    } }
+                }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+
+            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+            try
+            {
+                var component = root.transform.Find("Target")
+                    .GetComponent<ManagedReferencePropertyTestComponent>();
+                Assert.That(component, Is.Not.Null);
+                Assert.That(component.config.target.type,
+                    Is.EqualTo(ManagedReferenceTargetType.GameObject));
+                Assert.That(component.config.parameterName,
+                    Is.EqualTo("Default Real Time"));
             }
             finally
             {

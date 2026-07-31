@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.14] - 2026-08-01
+
+- Preserve real serialized fields named `type`, `childrenTruncated`, or
+  `maxDepth` when writing generic and `SerializeReference` objects instead of
+  silently treating them as readback metadata.
+- Add a Prefab component regression covering a nested enum field named `type`
+  inside a managed-reference configuration object.
+
 ## [5.6.13] - 2026-08-01
 
 - Rebuild both modern and legacy texture-importer name-fileID tables from the
