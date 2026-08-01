@@ -190,14 +190,7 @@ namespace UnityMCP.Editor
                 UnregisterUpdate();
             }
 
-            var response = BuildResponse(_workflow);
-            response["cancelRequested"] = true;
-            response["cancelMode"] = string.IsNullOrEmpty(_workflow.TestJobId)
-                ? "workflow"
-                : "unity-test-runner";
-            if (underlyingResult != null)
-                response["underlyingJob"] = underlyingResult;
-            return response;
+            return BuildAcceptedCancellationResponse(_workflow, underlyingResult);
         }
 
         internal static bool TryGetActiveWorkflow(out string workflowId, out string packageName,
@@ -485,6 +478,25 @@ namespace UnityMCP.Editor
                 response["error"] = workflow.Error;
             if (workflow.TestResult != null)
                 response["testResult"] = workflow.TestResult;
+            return response;
+        }
+
+        private static Dictionary<string, object> BuildAcceptedCancellationResponse(
+            PackageTestWorkflow workflow, object underlyingResult)
+        {
+            var response = BuildResponse(workflow);
+
+            // This route reports whether the cancellation request was accepted. A canceled
+            // workflow remains a non-successful terminal result when read through jobs/get,
+            // but accepting the cancellation itself is a successful jobs/cancel operation.
+            response["success"] = true;
+            response.Remove("error");
+            response["cancelRequested"] = true;
+            response["cancelMode"] = string.IsNullOrEmpty(workflow.TestJobId)
+                ? "workflow"
+                : "unity-test-runner";
+            if (underlyingResult != null)
+                response["underlyingJob"] = underlyingResult;
             return response;
         }
 

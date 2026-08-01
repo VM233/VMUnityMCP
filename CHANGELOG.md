@@ -2,6 +2,13 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.18] - 2026-08-01
+
+- Report an accepted package-test cancellation as a successful `jobs/cancel` operation instead of
+  exposing the workflow's eventual `Canceled by request` outcome as `editor_command_failed`.
+- Keep the terminal canceled workflow available through `jobs/get`, and add a focused response-
+  contract regression for immediate and Test Runner-backed package cancellation metadata.
+
 ## [5.6.17] - 2026-08-01
 
 - Save asset changes produced by Unity deletion callbacks before `asset/delete` reports success, so

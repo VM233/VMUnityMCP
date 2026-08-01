@@ -245,6 +245,9 @@ The full ownership matrix and authoritative built-in route audit are in
   Idempotency keys are project-scoped recovery capabilities: an exact retry
   after an MCP reconnect returns the original Job and access token, while
   reusing a key with different arguments is rejected.
+- `jobs/cancel` reports success when the target accepts cancellation, including
+  workflows that reach `canceled` immediately. Read the terminal outcome through
+  `jobs/get`; cancellation acceptance is not returned as a command failure.
 - Job capability and positive state flags use the same presence-only `tags`
   contract (`incrementalJob`, `cleanupDeclared`, `cleanupAvailable`,
   `cancellationRequested`, and `reused`). Fields that do not yet have a value

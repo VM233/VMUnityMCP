@@ -304,6 +304,45 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void AcceptedPackageCancellation_IsASuccessfulCancelOperation()
+        {
+            Type workflowType = typeof(MCPPackageTestCommands).GetNestedType(
+                "PackageTestWorkflow", BindingFlags.NonPublic);
+            MethodInfo method = typeof(MCPPackageTestCommands).GetMethod(
+                "BuildAcceptedCancellationResponse",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(workflowType, Is.Not.Null);
+            Assert.That(method, Is.Not.Null);
+
+            object workflow = Activator.CreateInstance(workflowType, true);
+            workflowType.GetField("WorkflowId")?.SetValue(workflow, "cancel-contract-test");
+            workflowType.GetField("State")?.SetValue(workflow, "canceled");
+            workflowType.GetField("PackageName")?.SetValue(workflow, "com.example.tests");
+            workflowType.GetField("Mode")?.SetValue(workflow, "EditMode");
+            workflowType.GetField("Assemblies")?.SetValue(workflow, Array.Empty<string>());
+            workflowType.GetField("TestJobId")?.SetValue(workflow, "test-job");
+            workflowType.GetField("CancelRequested")?.SetValue(workflow, true);
+            workflowType.GetField("Error")?.SetValue(workflow, "Canceled by request.");
+            workflowType.GetField("StartedAt")?.SetValue(workflow, DateTime.UtcNow);
+            workflowType.GetField("UpdatedAt")?.SetValue(workflow, DateTime.UtcNow);
+
+            var underlyingJob = new Dictionary<string, object>
+            {
+                { "success", true },
+                { "status", "canceling" },
+            };
+            var response = (Dictionary<string, object>)method.Invoke(
+                null, new object[] { workflow, underlyingJob });
+
+            Assert.That(response["success"], Is.EqualTo(true));
+            Assert.That(response["status"], Is.EqualTo("canceled"));
+            Assert.That(response["cancelRequested"], Is.EqualTo(true));
+            Assert.That(response["cancelMode"], Is.EqualTo("unity-test-runner"));
+            Assert.That(response["underlyingJob"], Is.SameAs(underlyingJob));
+            Assert.That(response, Does.Not.ContainKey("error"));
+        }
+
+        [Test]
         public void ExplicitFilters_WithNoMatchedTests_FailInsteadOfReportingSuccess()
         {
             Type jobType = typeof(MCPTestRunnerCommands).GetNestedType("TestJob",
