@@ -12,7 +12,7 @@ namespace UnityMCP.Editor
     /// </summary>
     internal static class MCPContractMetadata
     {
-        internal const int ToolMetadataSchemaVersion = 5;
+        internal const int ToolMetadataSchemaVersion = 6;
 
         internal static class Tag
         {
@@ -105,6 +105,7 @@ namespace UnityMCP.Editor
             {
                 { "mutatesAssets", "writesAssets" },
                 { "mutatesRuntime", "changesRuntimeState" },
+                { "mutatesProjectFiles", "writesProjectFiles" },
                 { "mayReloadDomain", "reloadsDomain" },
             };
 

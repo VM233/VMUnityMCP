@@ -117,8 +117,12 @@ public static class ProjectMcpTools
 }
 ```
 
-Declare exactly one operation kind: `ReadOnly`, `MutatesAssets`, or
-`MutatesRuntime`. Add `RequiresPlayMode`, `Dangerous`, `LongRunning`, or
+Declare exactly one operation kind: `ReadOnly`, `MutatesAssets`,
+`MutatesRuntime`, or `MutatesProjectFiles`. Use `MutatesProjectFiles` for writes
+to project-owned files outside Unity's `Assets` database, such as generated
+reports or repository configuration; discovery exposes it as the exact
+`writesProjectFiles` side effect. Add `RequiresPlayMode`, `Dangerous`,
+`LongRunning`, or
 `MayReloadDomain` when applicable. Strict schemas should describe every
 property and reject unknown business arguments. The bridge recursively enforces
 the supported JSON Schema subset before invocation, including
@@ -131,7 +135,8 @@ tool.
 These booleans are authoring inputs, not public response fields. Discovery
 serializes positive capabilities as a sorted `tags` array, for example
 `["dangerous", "longRunning"]`; absence means false. Concrete effects such as
-`writesAssets`, `changesRuntimeState`, or `reloadsDomain` are reported once in
+`writesAssets`, `writesProjectFiles`, `changesRuntimeState`, or `reloadsDomain`
+are reported once in
 `sideEffects`. Empty tags/effects, empty cleanup names, valid-state aliases, and
 standard project-tool error codes are omitted. `project-tools/get` includes
 only tool-specific extra `errorCodes`.

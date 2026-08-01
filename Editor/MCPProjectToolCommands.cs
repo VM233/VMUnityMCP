@@ -24,6 +24,7 @@ namespace UnityMCP.Editor
         PerformsExternalIO = 1 << 8,
         ReloadsDomain = 1 << 9,
         ExecutesArbitraryCode = 1 << 10,
+        WritesProjectFiles = 1 << 11,
     }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
@@ -50,6 +51,8 @@ namespace UnityMCP.Editor
         public bool MutatesAssets { get; set; }
 
         public bool MutatesRuntime { get; set; }
+
+        public bool MutatesProjectFiles { get; set; }
 
         public bool Dangerous { get; set; }
 
@@ -675,6 +678,7 @@ namespace UnityMCP.Editor
             public bool ReadOnly;
             public bool MutatesAssets;
             public bool MutatesRuntime;
+            public bool MutatesProjectFiles;
             public bool Dangerous;
             public bool LongRunning;
             public bool MayReloadDomain;
@@ -700,6 +704,7 @@ namespace UnityMCP.Editor
                     ReadOnly = attribute.ReadOnly,
                     MutatesAssets = attribute.MutatesAssets,
                     MutatesRuntime = attribute.MutatesRuntime,
+                    MutatesProjectFiles = attribute.MutatesProjectFiles,
                     Dangerous = attribute.Dangerous,
                     LongRunning = attribute.LongRunning,
                     MayReloadDomain = attribute.MayReloadDomain,
@@ -733,6 +738,7 @@ namespace UnityMCP.Editor
                     ReadOnly = attribute.ReadOnly,
                     MutatesAssets = attribute.MutatesAssets,
                     MutatesRuntime = attribute.MutatesRuntime,
+                    MutatesProjectFiles = attribute.MutatesProjectFiles,
                     Dangerous = attribute.Dangerous,
                     LongRunning = attribute.LongRunning,
                     MayReloadDomain = attribute.MayReloadDomain,
@@ -1000,12 +1006,15 @@ namespace UnityMCP.Editor
 
             private string ValidateOperationProfile()
             {
-                int operationKinds = (ReadOnly ? 1 : 0) + (MutatesAssets ? 1 : 0) + (MutatesRuntime ? 1 : 0);
+                int operationKinds = (ReadOnly ? 1 : 0) +
+                                     (MutatesAssets ? 1 : 0) +
+                                     (MutatesRuntime ? 1 : 0) +
+                                     (MutatesProjectFiles ? 1 : 0);
                 if (operationKinds > 1)
                     return $"Project tool '{ToolName}' declares conflicting operation kinds.";
 
                 if (operationKinds == 0)
-                    return $"Project tool '{ToolName}' must explicitly declare ReadOnly, MutatesAssets, or MutatesRuntime.";
+                    return $"Project tool '{ToolName}' must explicitly declare ReadOnly, MutatesAssets, MutatesRuntime, or MutatesProjectFiles.";
 
                 MCPProjectToolSideEffect effects = GetEffectiveSideEffects();
                 MCPProjectToolSideEffect writes = MCPProjectToolSideEffect.WritesAssets |
@@ -1016,7 +1025,8 @@ namespace UnityMCP.Editor
                                                    MCPProjectToolSideEffect.CreatesTemporaryObjects |
                                                    MCPProjectToolSideEffect.PerformsExternalIO |
                                                    MCPProjectToolSideEffect.ReloadsDomain |
-                                                   MCPProjectToolSideEffect.ExecutesArbitraryCode;
+                                                   MCPProjectToolSideEffect.ExecutesArbitraryCode |
+                                                   MCPProjectToolSideEffect.WritesProjectFiles;
                 if (ReadOnly && (effects & writes) != 0)
                     return $"Read-only project tool '{ToolName}' declares mutating side effects.";
 
@@ -1077,6 +1087,8 @@ namespace UnityMCP.Editor
                     effects |= MCPProjectToolSideEffect.WritesAssets;
                 if (MutatesRuntime)
                     effects |= MCPProjectToolSideEffect.ChangesRuntimeState;
+                if (MutatesProjectFiles)
+                    effects |= MCPProjectToolSideEffect.WritesProjectFiles;
                 if (MayReloadDomain)
                     effects |= MCPProjectToolSideEffect.ReloadsDomain;
                 return effects;

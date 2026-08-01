@@ -72,6 +72,9 @@ namespace UnityMCP.Editor.Tests
         private const string UNTITLED_SCENE_PATH = TEST_FOLDER + "/Saved Untitled Scene.unity";
         private const string TEST_HOST_SCENE_PATH = TEST_FOLDER + "/Test Host Scene.unity";
         private const string RUNTIME_MUTATION_TOOL_NAME = "unity-mcp-tests/set-runtime-state";
+        private const string PROJECT_FILE_MUTATION_TOOL_NAME = "unity-mcp-tests/write-project-report";
+        private const string READ_ONLY_PROJECT_FILE_WRITE_TOOL_NAME =
+            "unity-mcp-tests/read-only-project-file-write";
         private const string LAZY_READ_TOOL_NAME = "unity-mcp-tests/read-lazy-state";
         private const string NESTED_SCHEMA_TOOL_NAME = "unity-mcp-tests/validate-nested-schema";
         private const string STRICT_COMBINATOR_SCHEMA_TOOL_NAME =
@@ -98,6 +101,30 @@ namespace UnityMCP.Editor.Tests
                 { "success", true },
                 { "receivedKeys", args.Keys.OrderBy(key => key).ToArray() }
             };
+        }
+
+        [MCPProjectTool(PROJECT_FILE_MUTATION_TOOL_NAME,
+            Description = "Regression fixture for explicit project-file mutation metadata.",
+            InputSchemaJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
+            MutatesProjectFiles = true,
+            FirstClass = true)]
+        private static object WriteProjectReportFixture(Dictionary<string, object> args)
+        {
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "receivedKeys", args.Keys.OrderBy(key => key).ToArray() }
+            };
+        }
+
+        [MCPProjectTool(READ_ONLY_PROJECT_FILE_WRITE_TOOL_NAME,
+            Description = "Regression fixture for rejecting read-only file writes.",
+            InputSchemaJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
+            SideEffects = MCPProjectToolSideEffect.WritesProjectFiles,
+            ReadOnly = true)]
+        private static object ReadOnlyProjectFileWriteFixture(Dictionary<string, object> args)
+        {
+            return new Dictionary<string, object> { { "success", true } };
         }
 
         [MCPProjectTool(LAZY_READ_TOOL_NAME,
@@ -4024,6 +4051,37 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ProjectFileMutatingProjectTool_IsExplicitAndNotMisclassified()
+        {
+            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
+                .Single(tool => tool["toolName"].ToString() == PROJECT_FILE_MUTATION_TOOL_NAME);
+            Assert.That(HasTag(descriptor, "readOnly"), Is.False);
+            Assert.That(HasSideEffect(descriptor, "writesProjectFiles"), Is.True);
+            Assert.That(HasSideEffect(descriptor, "writesAssets"), Is.False);
+            Assert.That(HasSideEffect(descriptor, "changesRuntimeState"), Is.False);
+
+            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
+                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
+            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
+            var tool = tools.Single(item =>
+                item["route"].ToString() == "project-tools/call/" + PROJECT_FILE_MUTATION_TOOL_NAME);
+            Assert.That(HasTag(tool, "firstClass"), Is.True);
+            Assert.That(HasSideEffect(tool, "writesProjectFiles"), Is.True);
+            Assert.That(HasSideEffect(tool, "writesAssets"), Is.False);
+            Assert.That(HasSideEffect(tool, "changesRuntimeState"), Is.False);
+        }
+
+        [Test]
+        public void ProjectTool_ReadOnlyCannotDeclareProjectFileWrites()
+        {
+            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: false)
+                .Single(tool => tool["toolName"].ToString() == READ_ONLY_PROJECT_FILE_WRITE_TOOL_NAME);
+            Assert.That(HasTag(descriptor, "invalid"), Is.True);
+            Assert.That(descriptor["validationError"].ToString(),
+                Does.Contain("declares mutating side effects"));
+        }
+
+        [Test]
         public void ProjectTool_FirstClassExposureMustBeExplicit()
         {
             var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
@@ -4045,7 +4103,7 @@ namespace UnityMCP.Editor.Tests
                 .Single(tool => tool["toolName"].ToString() == MISSING_OPERATION_KIND_TOOL_NAME);
             Assert.That(HasTag(descriptor, "invalid"), Is.True);
             Assert.That(descriptor["validationError"].ToString(),
-                Does.Contain("must explicitly declare ReadOnly, MutatesAssets, or MutatesRuntime"));
+                Does.Contain("must explicitly declare ReadOnly, MutatesAssets, MutatesRuntime, or MutatesProjectFiles"));
 
             Assert.That(MCPProjectToolCommands.GetToolDetails(validOnly: true)
                 .Any(tool => tool["toolName"].ToString() == MISSING_OPERATION_KIND_TOOL_NAME), Is.False);
@@ -7602,7 +7660,7 @@ namespace UnityMCP.Editor.Tests
         public void ToolMetadata_DefaultIsCompactPaginatedAndSchemaFree()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools());
-            Assert.That(System.Convert.ToInt32(result["schemaVersion"]), Is.EqualTo(5));
+            Assert.That(System.Convert.ToInt32(result["schemaVersion"]), Is.EqualTo(6));
             Assert.That(result.ContainsKey("compact"), Is.False);
             Assert.That(result.ContainsKey("firstClassOnly"), Is.False);
             Assert.That(result.ContainsKey("includeSchema"), Is.False);

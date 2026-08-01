@@ -2,6 +2,17 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.16] - 2026-08-01
+
+- Add `MutatesProjectFiles` as a fourth, mutually exclusive project-tool
+  operation kind for repository configuration, documentation, and generated
+  report writes outside Unity's `Assets` database.
+- Publish the exact `writesProjectFiles` side effect through three-stage and
+  first-class discovery, persistent Jobs, and arbitrary-code metadata without
+  misclassifying those writes as asset or runtime mutations.
+- Add focused regressions for valid project-file writers and rejection of
+  read-only tools that declare project-file writes.
+
 ## [5.6.15] - 2026-08-01
 
 - Make filename-changing `asset/rename` and `asset/move` migrate matching

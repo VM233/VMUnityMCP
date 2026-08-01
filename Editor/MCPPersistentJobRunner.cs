@@ -91,6 +91,7 @@ namespace UnityMCP.Editor
                         "createsTemporaryObjects",
                         "capturesArtifacts",
                         "performsExternalIO",
+                        "writesProjectFiles",
                         "reloadsDomain",
                     } },
                 });
