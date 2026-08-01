@@ -450,7 +450,9 @@ namespace UnityMCP.Editor
         {
             var response = new Dictionary<string, object>
             {
-                { "success", workflow.IsTerminal ? workflow.State == "succeeded" : true },
+                // Reading a workflow snapshot succeeded even when the workflow outcome did not.
+                // Callers inspect status and error for the package-test result itself.
+                { "success", true },
                 { "workflowId", workflow.WorkflowId },
                 { "status", workflow.State },
                 { "packageName", workflow.PackageName },

@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.19] - 2026-08-01
+
+- Separate successful status retrieval from Unity Test Runner and package-test outcomes, so polling
+  a `failed` or `canceled` job preserves that business status instead of turning the queue ticket
+  into `Failed` and overwriting it.
+- Add regressions proving both polling contracts retain terminal errors as data while the snapshot
+  read itself remains successful.
+
 ## [5.6.18] - 2026-08-01
 
 - Report an accepted package-test cancellation as a successful `jobs/cancel` operation instead of

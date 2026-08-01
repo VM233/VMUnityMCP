@@ -248,6 +248,10 @@ The full ownership matrix and authoritative built-in route audit are in
 - `jobs/cancel` reports success when the target accepts cancellation, including
   workflows that reach `canceled` immediately. Read the terminal outcome through
   `jobs/get`; cancellation acceptance is not returned as a command failure.
+- `jobs/get`, `testing/get-job`, and `testing/get-package-job` report a successful
+  snapshot read independently from the observed job outcome. Inspect `status` and
+  `error` for `failed` or `canceled` jobs; those outcomes do not turn polling into
+  a queue-command failure or overwrite the business status.
 - Job capability and positive state flags use the same presence-only `tags`
   contract (`incrementalJob`, `cleanupDeclared`, `cleanupAvailable`,
   `cancellationRequested`, and `reused`). Fields that do not yet have a value

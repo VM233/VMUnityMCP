@@ -563,6 +563,9 @@ namespace UnityMCP.Editor
         {
             var result = new Dictionary<string, object>
             {
+                // Polling found and serialized the requested job. Its own outcome is represented
+                // independently by status and error.
+                { "success", true },
                 { "jobId", job.JobId },
                 { "status", job.Status.ToString().ToLowerInvariant() },
                 { "mode", job.Mode.ToString() },

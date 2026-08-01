@@ -343,6 +343,67 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void PackageWorkflowPoll_PreservesCanceledOutcomeWithoutFailingTheRead()
+        {
+            Type workflowType = typeof(MCPPackageTestCommands).GetNestedType(
+                "PackageTestWorkflow", BindingFlags.NonPublic);
+            MethodInfo method = typeof(MCPPackageTestCommands).GetMethod(
+                "BuildResponse", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(workflowType, Is.Not.Null);
+            Assert.That(method, Is.Not.Null);
+
+            object workflow = Activator.CreateInstance(workflowType, true);
+            workflowType.GetField("WorkflowId")?.SetValue(workflow, "canceled-workflow");
+            workflowType.GetField("State")?.SetValue(workflow, "canceled");
+            workflowType.GetField("PackageName")?.SetValue(workflow, "com.example.tests");
+            workflowType.GetField("Mode")?.SetValue(workflow, "EditMode");
+            workflowType.GetField("Assemblies")?.SetValue(workflow, Array.Empty<string>());
+            workflowType.GetField("CancelRequested")?.SetValue(workflow, true);
+            workflowType.GetField("Error")?.SetValue(workflow, "Canceled by request.");
+            workflowType.GetField("StartedAt")?.SetValue(workflow, DateTime.UtcNow);
+            workflowType.GetField("UpdatedAt")?.SetValue(workflow, DateTime.UtcNow);
+
+            var response = (Dictionary<string, object>)method.Invoke(
+                null, new[] { workflow });
+
+            Assert.That(response["success"], Is.EqualTo(true));
+            Assert.That(response["status"], Is.EqualTo("canceled"));
+            Assert.That(response["error"], Is.EqualTo("Canceled by request."));
+            Assert.That(MCPResponse.TryGetError(response, out _, out _, out _), Is.False);
+        }
+
+        [Test]
+        public void UnityTestPoll_PreservesFailedOutcomeWithoutFailingTheRead()
+        {
+            Type jobType = typeof(MCPTestRunnerCommands).GetNestedType(
+                "TestJob", BindingFlags.NonPublic);
+            MethodInfo method = typeof(MCPTestRunnerCommands).GetMethod(
+                "SerializeJob", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(jobType, Is.Not.Null);
+            Assert.That(method, Is.Not.Null);
+
+            object job = Activator.CreateInstance(jobType, true);
+            jobType.GetField("JobId")?.SetValue(job, "failed-test-job");
+            jobType.GetField("Status")?.SetValue(
+                job, Enum.Parse(jobType.GetField("Status").FieldType, "Failed"));
+            jobType.GetField("StartedAt")?.SetValue(job, DateTime.UtcNow);
+            jobType.GetField("CompletedAt")?.SetValue(job, DateTime.UtcNow);
+            jobType.GetField("Error")?.SetValue(job, "One test failed.");
+            jobType.GetField("ErrorCode")?.SetValue(job, "test_failures");
+            jobType.GetField("TotalTests")?.SetValue(job, 1);
+            jobType.GetField("CompletedTests")?.SetValue(job, 1);
+            jobType.GetField("FailedCount")?.SetValue(job, 1);
+
+            var response = (Dictionary<string, object>)method.Invoke(
+                null, new object[] { job, false, false, false, 0, 100, 20 });
+
+            Assert.That(response["success"], Is.EqualTo(true));
+            Assert.That(response["status"], Is.EqualTo("failed"));
+            Assert.That(response["error"], Is.EqualTo("One test failed."));
+            Assert.That(MCPResponse.TryGetError(response, out _, out _, out _), Is.False);
+        }
+
+        [Test]
         public void ExplicitFilters_WithNoMatchedTests_FailInsteadOfReportingSuccess()
         {
             Type jobType = typeof(MCPTestRunnerCommands).GetNestedType("TestJob",
