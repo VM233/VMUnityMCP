@@ -38,6 +38,34 @@ namespace UnityMCP.Editor.Tests
         public long keyId;
     }
 
+    public sealed class AssetDeletePersistenceTestObject : ScriptableObject
+    {
+        public int deletionCount;
+    }
+
+    internal sealed class AssetDeletePersistenceProcessor : AssetModificationProcessor
+    {
+        internal static string WatchedAssetPath;
+        internal static AssetDeletePersistenceTestObject Target;
+
+        private static AssetDeleteResult OnWillDeleteAsset(string assetPath, RemoveAssetOptions options)
+        {
+            if (Target != null && string.Equals(assetPath, WatchedAssetPath, StringComparison.Ordinal))
+            {
+                Target.deletionCount++;
+                EditorUtility.SetDirty(Target);
+            }
+
+            return AssetDeleteResult.DidNotDelete;
+        }
+
+        internal static void Reset()
+        {
+            WatchedAssetPath = null;
+            Target = null;
+        }
+    }
+
     [Flags]
     public enum SerializedEnumFlagsTestValue
     {
@@ -250,6 +278,8 @@ namespace UnityMCP.Editor.Tests
         [SetUp]
         public void SetUp()
         {
+            AssetDeletePersistenceProcessor.Reset();
+
             string projectConfigurationPath =
                 MCPProjectConfiguration.GetFullPath();
             projectConfigurationExisted =
@@ -265,6 +295,8 @@ namespace UnityMCP.Editor.Tests
         [TearDown]
         public void TearDown()
         {
+            AssetDeletePersistenceProcessor.Reset();
+
             var builderType = Type.GetType("Unity.UI.Builder.Builder, UnityEditor.UIBuilderModule", false);
             if (builderType != null)
             {
@@ -283,6 +315,40 @@ namespace UnityMCP.Editor.Tests
             else if (File.Exists(projectConfigurationPath))
                 File.Delete(projectConfigurationPath);
             MCPSettingsManager.ReloadProjectConfiguration();
+        }
+
+        [Test]
+        public void AssetDelete_SavesAssetChangesProducedByDeletionCallbacks()
+        {
+            const string deletedAssetPath = TEST_FOLDER + "/Delete Trigger.txt";
+            const string dependentAssetPath = TEST_FOLDER + "/Delete Side Effect.asset";
+
+            File.WriteAllText(Path.GetFullPath(deletedAssetPath), "delete me");
+            AssetDatabase.ImportAsset(deletedAssetPath, ImportAssetOptions.ForceSynchronousImport);
+
+            var dependentAsset = ScriptableObject.CreateInstance<AssetDeletePersistenceTestObject>();
+            AssetDatabase.CreateAsset(dependentAsset, dependentAssetPath);
+            AssetDatabase.SaveAssets();
+
+            AssetDeletePersistenceProcessor.WatchedAssetPath = deletedAssetPath;
+            AssetDeletePersistenceProcessor.Target = dependentAsset;
+
+            try
+            {
+                var result = RequireDictionary(MCPAssetCommands.Delete(
+                    new Dictionary<string, object> { { "path", deletedAssetPath } }));
+
+                Assert.That(result["success"], Is.EqualTo(true));
+                Assert.That(result["savedAssets"], Is.EqualTo(true));
+                Assert.That(AssetDatabase.LoadMainAssetAtPath(deletedAssetPath), Is.Null);
+                Assert.That(dependentAsset.deletionCount, Is.EqualTo(1));
+                Assert.That(EditorUtility.IsDirty(dependentAsset), Is.False);
+                StringAssert.Contains("deletionCount: 1", File.ReadAllText(Path.GetFullPath(dependentAssetPath)));
+            }
+            finally
+            {
+                AssetDeletePersistenceProcessor.Reset();
+            }
         }
 
         [Test]

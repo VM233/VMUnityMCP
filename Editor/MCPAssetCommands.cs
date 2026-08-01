@@ -1296,7 +1296,15 @@ namespace UnityMCP.Editor
                 return sceneMutationError;
 
             bool deleted = AssetDatabase.DeleteAsset(path);
-            return new { success = deleted, path };
+            if (deleted)
+                AssetDatabase.SaveAssets();
+
+            return new Dictionary<string, object>
+            {
+                { "success", deleted },
+                { "path", path },
+                { "savedAssets", deleted },
+            };
         }
 
         public static object Rename(Dictionary<string, object> args)

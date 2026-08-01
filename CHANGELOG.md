@@ -2,6 +2,13 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.17] - 2026-08-01
+
+- Save asset changes produced by Unity deletion callbacks before `asset/delete` reports success, so
+  dependent configuration such as Addressables entry removal survives an Editor restart.
+- Return `savedAssets` from successful deletion responses and add a regression that dirties a
+  dependent asset from `OnWillDeleteAsset`, then verifies the change is clean and persisted on disk.
+
 ## [5.6.16] - 2026-08-01
 
 - Add `MutatesProjectFiles` as a fourth, mutually exclusive project-tool

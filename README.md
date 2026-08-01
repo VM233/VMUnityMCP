@@ -59,6 +59,10 @@ installed. Project code should not retain one-off Editor builders that mirror
 checked-in asset values; temporary migrations are removed after asset readback
 succeeds.
 
+Successful `asset/delete` operations save asset changes produced by Unity deletion callbacks before
+returning. Dependent configuration such as Addressables entries is therefore persisted together with
+the deletion instead of remaining only in the current Editor session.
+
 Filename-changing `asset/rename` and `asset/move` operations keep Sprite asset
 identity coherent as well as preserving the `.meta` GUID. Single Sprite names
 follow the filename. Multiple Sprite names that use the previous filename as
