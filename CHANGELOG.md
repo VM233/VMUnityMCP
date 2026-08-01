@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.20] - 2026-08-01
+
+- Retain the explicit successful-read discriminator when a transported status snapshot carries an
+  observed job error, preventing downstream clients from reclassifying `failed` or `canceled`
+  outcome data as an `editor_command_failed` polling error.
+- Extend transport regressions for both structured persistent-job errors and string package-test
+  cancellation outcomes.
+
 ## [5.6.19] - 2026-08-01
 
 - Separate successful status retrieval from Unity Test Runner and package-test outcomes, so polling

@@ -9337,7 +9337,7 @@ namespace UnityMCP.Editor.Tests
             var transported = RequireDictionary(
                 MCPBridgeServer.PrepareJsonResponseForTransport(200, source));
 
-            Assert.That(transported.ContainsKey("success"), Is.False);
+            Assert.That(transported["success"], Is.EqualTo(true));
             Assert.That(transported["status"], Is.EqualTo("failed"));
             var structuredError = RequireDictionary(transported["error"]);
             Assert.That(structuredError["success"], Is.EqualTo(false));
@@ -9346,6 +9346,26 @@ namespace UnityMCP.Editor.Tests
             CollectionAssert.AreEqual(new[] { "CS0103: MissingName" },
                 (IList)structuredError["errors"]);
             Assert.That(structuredError["userCodeExecuted"], Is.EqualTo(false));
+        }
+
+        [Test]
+        public void TransportCompaction_RetainsSuccessForStatusSnapshotWithObservedError()
+        {
+            var source = new Dictionary<string, object>
+            {
+                { "success", true },
+                { "workflowId", "canceled-workflow" },
+                { "status", "canceled" },
+                { "error", "Canceled by request." },
+            };
+
+            var transported = RequireDictionary(
+                MCPBridgeServer.PrepareJsonResponseForTransport(200, source));
+
+            Assert.That(transported["success"], Is.EqualTo(true));
+            Assert.That(transported["status"], Is.EqualTo("canceled"));
+            Assert.That(transported["error"], Is.EqualTo("Canceled by request."));
+            Assert.That(MCPResponse.TryGetError(transported, out _, out _, out _), Is.False);
         }
 
         private static void CreateTestPrefab(bool addCollider = false, bool addRenderer = false,

@@ -256,7 +256,13 @@ namespace UnityMCP.Editor
 
             if (isRoot)
             {
-                if (compacted.TryGetValue("success", out object success) && ToBool(success))
+                // Successful status snapshots may carry an error from the observed job as data.
+                // Keep the discriminator so downstream clients do not reinterpret that business
+                // error as a failure of the polling command itself.
+                bool carriesObservedError = compacted.TryGetValue("error", out object observedError) &&
+                                            observedError != null;
+                if (compacted.TryGetValue("success", out object success) && ToBool(success) &&
+                    !carriesObservedError)
                     compacted.Remove("success");
                 if (compacted.TryGetValue("stateConfirmed", out object stateConfirmed) &&
                     ToBool(stateConfirmed))
