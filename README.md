@@ -299,6 +299,11 @@ The full ownership matrix and authoritative built-in route audit are in
   idempotency keys, non-reused ticket identities, and persistent queue snapshots
   protect reload-sensitive workflows. The allocator high-water survives even
   when replay-safe read ticket payloads are intentionally discarded.
+- HTTP listener startup is transactional: partial binds and registrations are
+  rolled back before retry. Shutdown publishes stopped state first, closes the
+  exact listener generation, and tolerates clients disconnecting while a
+  response is in flight. Project paths compare case-insensitively on Windows and
+  preserve casing on Linux and macOS.
 - Use `unity_wait_editor_idle` after compilation, package changes, refreshes, or
   domain reloads before issuing dependent work.
 

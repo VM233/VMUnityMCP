@@ -22,7 +22,7 @@ namespace UnityMCP.Editor
     {
         private static HttpListener _listener;
         private static Thread _listenerThread;
-        private static bool _isRunning;
+        private static volatile bool _isRunning;
 
         /// <summary>
         /// The actual port this server is running on.
@@ -173,27 +173,33 @@ namespace UnityMCP.Editor
                 }
             }
 
+            HttpListener candidateListener = null;
+            Thread candidateThread = null;
             try
             {
-                _listener = new HttpListener();
-                _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-                _listener.Start();
-                _isRunning = true;
-                _activePort = port;
+                candidateListener = new HttpListener();
+                candidateListener.Prefixes.Add($"http://127.0.0.1:{port}/");
+                candidateListener.Start();
 
-                // Update the settings so the UI reflects the actual port
-                MCPSettingsManager.Port = port;
-
-                _listenerThread = new Thread(ListenLoop)
+                var boundListener = candidateListener;
+                candidateThread = new Thread(() => ListenLoop(boundListener))
                 {
                     IsBackground = true,
                     Name = "AB Unity MCP Server"
                 };
 
+                _listener = candidateListener;
+                _listenerThread = candidateThread;
+                _activePort = port;
+                _isRunning = true;
+
                 // Register and cache instance identity on the main thread before the
                 // listener can serve the infrastructure ping endpoint.
                 MCPInstanceRegistry.Register(port);
-                _listenerThread.Start();
+                candidateThread.Start();
+
+                // Update the settings only after the complete listener transaction succeeds.
+                MCPSettingsManager.Port = port;
 
                 // Successful bind — clear any pending manual-port retry state.
                 _manualPortRetryCount = 0;
@@ -203,6 +209,8 @@ namespace UnityMCP.Editor
             }
             catch (Exception ex)
             {
+                RollBackFailedStart(candidateListener, candidateThread, port);
+
                 if (MCPSettingsManager.UseManualPort)
                 {
                     // Manual port: do NOT fall back to another port — the user
@@ -253,23 +261,87 @@ namespace UnityMCP.Editor
         {
             _queueReady = false;
             _isRunning = false;
+            _activePort = 0;
+
+            HttpListener listener = _listener;
+            Thread listenerThread = _listenerThread;
+            _listener = null;
+            _listenerThread = null;
 
             // Cancel any pending manual-port restart retry.
             _manualPortRetryPending = false;
             _manualPortRetryCount = 0;
 
+            CloseListener(listener, listenerThread);
+
             if (unregisterInstance)
                 MCPInstanceRegistry.Unregister();
 
+            Debug.Log("[AB-UMCP] Server stopped");
+        }
+
+        private static void RollBackFailedStart(HttpListener listener, Thread listenerThread, int port)
+        {
+            _queueReady = false;
+            _isRunning = false;
+            _activePort = 0;
+            if (ReferenceEquals(_listener, listener))
+                _listener = null;
+            if (ReferenceEquals(_listenerThread, listenerThread))
+                _listenerThread = null;
+
+            CloseListener(listener, listenerThread);
+            if (MCPInstanceRegistry.RegisteredPort == port)
+                MCPInstanceRegistry.Unregister();
+        }
+
+        private static void CloseListener(HttpListener listener, Thread listenerThread)
+        {
+            if (listener != null)
+            {
+                try
+                {
+                    listener.Stop();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Already closed by another lifecycle edge.
+                }
+                catch (HttpListenerException)
+                {
+                    // Listener shutdown can race a blocked GetContext call.
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[AB-UMCP] Failed to stop HTTP listener cleanly: {ex.Message}");
+                }
+
+                try
+                {
+                    listener.Close();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Close is intentionally idempotent.
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[AB-UMCP] Failed to dispose HTTP listener cleanly: {ex.Message}");
+                }
+            }
+
+            if (listenerThread == null || listenerThread == Thread.CurrentThread || !listenerThread.IsAlive)
+                return;
+
             try
             {
-                _listener?.Stop();
-                _listener?.Close();
-                _listenerThread?.Join(1000);
+                if (!listenerThread.Join(1000))
+                    Debug.LogWarning("[AB-UMCP] HTTP listener thread did not stop within 1 second.");
             }
-            catch { }
-            _activePort = 0;
-            Debug.Log("[AB-UMCP] Server stopped");
+            catch (ThreadStateException ex)
+            {
+                Debug.LogWarning($"[AB-UMCP] Failed to join HTTP listener thread: {ex.Message}");
+            }
         }
 
         // ─── EditorApplication.update — processes the ticket queue on the main thread ───
@@ -307,21 +379,24 @@ namespace UnityMCP.Editor
 
         // ─── HTTP Listener ───
 
-        private static void ListenLoop()
+        private static void ListenLoop(HttpListener listener)
         {
-            while (_isRunning)
+            while (_isRunning && ReferenceEquals(_listener, listener))
             {
                 try
                 {
-                    var context = _listener.GetContext();
+                    var context = listener.GetContext();
                     ThreadPool.QueueUserWorkItem(_ => HandleRequest(context));
                 }
-                catch (HttpListenerException) when (!_isRunning) { break; }
+                catch (HttpListenerException) when (!_isRunning || !ReferenceEquals(_listener, listener))
+                {
+                    break;
+                }
                 catch (ThreadAbortException) { break; }
                 catch (ObjectDisposedException) { break; }
                 catch (Exception ex)
                 {
-                    if (_isRunning)
+                    if (_isRunning && ReferenceEquals(_listener, listener))
                         Debug.LogError($"[AB-UMCP] Listener error: {ex.Message}");
                 }
             }
@@ -538,25 +613,19 @@ namespace UnityMCP.Editor
                 innerArgs["_agentId"] = agentId;
                 CopyArgumentIfMissing(args, innerArgs, "expectedProjectPath");
                 CopyArgumentIfMissing(args, innerArgs, "expectedProjectName");
-                innerBody = MiniJson.Serialize(innerArgs);
                 if (TryBuildProjectMismatchResponse(apiPath, innerArgs, out var projectMismatch))
                 {
                     SendJson(response, 409, projectMismatch);
                     return;
                 }
 
-                innerArgs["_agentId"] = agentId;
-                innerBody = MiniJson.Serialize(innerArgs);
                 string requestId = GetArgumentString(args, "_requestId");
                 if (string.IsNullOrEmpty(requestId))
                     requestId = GetArgumentString(args, "requestId");
                 if (string.IsNullOrEmpty(requestId))
                     requestId = GetArgumentString(innerArgs, "requestId");
                 if (!string.IsNullOrEmpty(requestId))
-                {
                     innerArgs["_requestId"] = requestId;
-                    innerBody = MiniJson.Serialize(innerArgs);
-                }
                 string requestKey = string.IsNullOrEmpty(requestId)
                     ? null
                     : agentId + "|" + apiPath + "|" + requestId;
@@ -1918,10 +1987,8 @@ namespace UnityMCP.Editor
         private const int ResponseSoftLimitBytes = 512 * 1024;
         private const int ResponseHardLimitBytes = 2 * 1024 * 1024;
 
-        private static void SendJson(HttpListenerResponse response, int statusCode, object data)
+        internal static void SendJson(HttpListenerResponse response, int statusCode, object data)
         {
-            response.StatusCode = statusCode;
-            response.ContentType = "application/json";
             data = PrepareJsonResponseForTransport(statusCode, data);
             string json = MiniJson.Serialize(data);
             byte[] buffer = Encoding.UTF8.GetBytes(json);
@@ -1940,16 +2007,42 @@ namespace UnityMCP.Editor
                 data = MCPResponse.CompactForTransport(errorData);
                 json = MiniJson.Serialize(data);
                 buffer = Encoding.UTF8.GetBytes(json);
-                response.StatusCode = 413; // Payload Too Large
+                statusCode = 413; // Payload Too Large
             }
             else if (buffer.Length > ResponseSoftLimitBytes)
             {
                 Debug.LogWarning($"[AB-UMCP] Large response ({buffer.Length / (1024 * 1024)}MB). Consider using pagination parameters.");
             }
 
-            response.ContentLength64 = buffer.Length;
-            response.OutputStream.Write(buffer, 0, buffer.Length);
-            response.OutputStream.Close();
+            try
+            {
+                response.StatusCode = statusCode;
+                response.ContentType = "application/json";
+                response.ContentLength64 = buffer.Length;
+                response.OutputStream.Write(buffer, 0, buffer.Length);
+            }
+            catch (HttpListenerException)
+            {
+                // The client disconnected while the response was being written.
+            }
+            catch (IOException)
+            {
+                // The response stream was closed by the remote client.
+            }
+            catch (ObjectDisposedException)
+            {
+                // Bridge shutdown disposed this in-flight response.
+            }
+            finally
+            {
+                try
+                {
+                    response.OutputStream.Close();
+                }
+                catch (HttpListenerException) { }
+                catch (IOException) { }
+                catch (ObjectDisposedException) { }
+            }
         }
 
         internal static object PrepareJsonResponseForTransport(int statusCode,

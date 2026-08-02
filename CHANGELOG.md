@@ -2,6 +2,22 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.23] - 2026-08-02
+
+- Make HTTP listener startup transactional: a failure after binding now closes
+  the candidate listener, clears published running state, removes any partial
+  instance registration, and leaves manual or automatic retry able to proceed.
+- Make listener shutdown deterministic across domain reloads by publishing the
+  stopped state before closing, disposing static listener references, joining
+  the exact listener thread, and reporting unexpected cleanup failures.
+- Treat client disconnects and bridge shutdown during response writes as normal
+  transport completion instead of attempting a second response from the worker
+  thread.
+- Preserve project-path casing on Linux and macOS while keeping Windows project
+  identity case-insensitive, aligned with the companion server's binding rules.
+- Remove redundant queue-envelope serialization and add regressions for closed
+  responses plus Windows, Linux, and macOS path semantics.
+
 ## [5.6.22] - 2026-08-02
 
 - Enforce project-tool `RequiresPlayMode` declarations at ordinary, direct, persistent-job, inline,

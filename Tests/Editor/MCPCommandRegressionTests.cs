@@ -3,7 +3,10 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEditor;
@@ -1196,6 +1199,37 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void BridgeTransport_ClosedClientResponseDoesNotEscape()
+        {
+            int port;
+            var portProbe = new TcpListener(IPAddress.Loopback, 0);
+            portProbe.Start();
+            port = ((IPEndPoint)portProbe.LocalEndpoint).Port;
+            portProbe.Stop();
+
+            using (var listener = new HttpListener())
+            {
+                listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+                listener.Start();
+
+                using (var client = new TcpClient())
+                {
+                    client.Connect(IPAddress.Loopback, port);
+                    byte[] request = Encoding.ASCII.GetBytes(
+                        $"GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+                    client.GetStream().Write(request, 0, request.Length);
+
+                    HttpListenerContext context = listener.GetContext();
+                    context.Response.Close();
+                    Assert.DoesNotThrow(() => MCPBridgeServer.SendJson(
+                        context.Response,
+                        200,
+                        new Dictionary<string, object> { { "success", true } }));
+                }
+            }
+        }
+
+        [Test]
         public void TransportContract_UsesOnlyAsyncQueueExecution()
         {
             Assert.That(typeof(MCPRequestQueue).GetField("_waiters",
@@ -1570,6 +1604,28 @@ namespace UnityMCP.Editor.Tests
             var missingReloadTimestamp = Entry(true, nowUtc);
             missingReloadTimestamp.Remove("reloadStartedAt");
             Assert.That(Remove(missingReloadTimestamp, true, false), Is.True);
+        }
+
+        [Test]
+        public void InstanceRegistry_ProjectIdentityHonorsHostPathCaseSemantics()
+        {
+            Assert.That(MCPInstanceRegistry.ProjectPathEquals(
+                @"D:\UnityProjects\BattleIdle\Assets",
+                "d:/unityprojects/battleidle",
+                RuntimePlatform.WindowsEditor), Is.True);
+
+            Assert.That(MCPInstanceRegistry.ProjectPathEquals(
+                "/Projects/BattleIdle",
+                "/projects/battleidle",
+                RuntimePlatform.LinuxEditor), Is.False);
+            Assert.That(MCPInstanceRegistry.ProjectPathEquals(
+                "/Projects/BattleIdle",
+                "/projects/battleidle",
+                RuntimePlatform.OSXEditor), Is.False);
+            string normalizedLinuxPath = MCPInstanceRegistry.NormalizeProjectPath(
+                "/Projects/BattleIdle/Assets/",
+                RuntimePlatform.LinuxEditor);
+            Assert.That(normalizedLinuxPath, Does.EndWith("/Projects/BattleIdle"));
         }
 
         [Test]

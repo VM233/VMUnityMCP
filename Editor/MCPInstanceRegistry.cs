@@ -667,11 +667,19 @@ namespace UnityMCP.Editor
 
         public static string NormalizeProjectPath(string path)
         {
+            return NormalizeProjectPath(path, Application.platform);
+        }
+
+        internal static string NormalizeProjectPath(string path, RuntimePlatform platform)
+        {
             if (string.IsNullOrEmpty(path))
                 return "";
 
             string normalized = path.Replace('\\', '/').TrimEnd('/');
-            if (normalized.EndsWith("/Assets", StringComparison.OrdinalIgnoreCase))
+            StringComparison comparison = platform == RuntimePlatform.WindowsEditor
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            if (normalized.EndsWith("/Assets", comparison))
                 normalized = normalized.Substring(0, normalized.Length - "/Assets".Length);
 
             try
@@ -688,8 +696,18 @@ namespace UnityMCP.Editor
 
         public static bool ProjectPathEquals(string left, string right)
         {
-            return string.Equals(NormalizeProjectPath(left), NormalizeProjectPath(right),
-                StringComparison.OrdinalIgnoreCase);
+            return ProjectPathEquals(left, right, Application.platform);
+        }
+
+        internal static bool ProjectPathEquals(string left, string right, RuntimePlatform platform)
+        {
+            StringComparison comparison = platform == RuntimePlatform.WindowsEditor
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            return string.Equals(
+                NormalizeProjectPath(left, platform),
+                NormalizeProjectPath(right, platform),
+                comparison);
         }
 
         private static Dictionary<string, object> BuildCurrentInstanceEntry(int port, string registeredAt,
