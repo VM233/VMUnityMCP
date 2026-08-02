@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.22] - 2026-08-02
+
+- Enforce project-tool `RequiresPlayMode` declarations at ordinary, direct, persistent-job, inline,
+  and incremental-step execution boundaries before any tool code runs or an invalid job is queued.
+- Require stable Play Mode, publish the structured precondition error through discovery, and add
+  regressions for stopped, entering, exiting, stable, and non-Play-mode tool paths.
+- Separate package-test assembly publication from Editor adoption before starting Test Runner, so
+  freshly compiled editor hooks are active for the first unfiltered test without per-test delays.
+
 ## [5.6.21] - 2026-08-02
 
 - Persist a reserved queue-ticket ID high-water independently of filtered ticket payloads, so

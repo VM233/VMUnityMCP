@@ -377,6 +377,9 @@ namespace UnityMCP.Editor
                     new Dictionary<string, object> { { "toolName", descriptor.ToolName } });
             }
 
+            if (!TryValidateExecutionPreconditions(descriptor, out MCPProjectToolException preconditionError))
+                return CreateProjectToolErrorResponse(preconditionError, descriptor.ToolName);
+
             if (descriptor.LongRunning || GetBool(executionArguments, "runAsJob"))
             {
                 var metadata = descriptor.ToJobMetadata();
@@ -410,6 +413,9 @@ namespace UnityMCP.Editor
             if (!descriptor.TryValidateArguments(toolArgs, out var argumentError))
                 return MCPResponse.Error(argumentError, "invalid_arguments");
 
+            if (!TryValidateExecutionPreconditions(descriptor, out MCPProjectToolException preconditionError))
+                return CreateProjectToolErrorResponse(preconditionError, descriptor.ToolName);
+
             return InvokeTool(descriptor, toolArgs);
         }
 
@@ -434,6 +440,9 @@ namespace UnityMCP.Editor
                 throw new MCPProjectToolException("invalid_project_tool", descriptor.ValidationError);
             if (!descriptor.TryValidateArguments(toolArgs, out string argumentError))
                 throw new MCPProjectToolException("invalid_arguments", argumentError);
+
+            if (!TryValidateExecutionPreconditions(descriptor, out MCPProjectToolException preconditionError))
+                throw preconditionError;
 
             if (!descriptor.SupportsIncrementalJobs)
                 return MCPProjectToolJobStep.Complete(InvokeTool(descriptor, toolArgs));
@@ -500,13 +509,7 @@ namespace UnityMCP.Editor
                 Exception inner = ex.InnerException ?? ex;
                 Debug.LogException(inner);
                 if (inner is MCPProjectToolException projectToolException)
-                {
-                    return MCPResponse.Error(
-                        projectToolException.Message,
-                        projectToolException.ErrorCode,
-                        projectToolException.Retryable,
-                        MergeErrorDetails(projectToolException.Details, descriptor.ToolName));
-                }
+                    return CreateProjectToolErrorResponse(projectToolException, descriptor.ToolName);
                 return MCPResponse.Error(inner.Message, "project_tool_exception", false,
                     new Dictionary<string, object>
                     {
@@ -517,19 +520,42 @@ namespace UnityMCP.Editor
             {
                 Debug.LogException(ex);
                 if (ex is MCPProjectToolException projectToolException)
-                {
-                    return MCPResponse.Error(
-                        projectToolException.Message,
-                        projectToolException.ErrorCode,
-                        projectToolException.Retryable,
-                        MergeErrorDetails(projectToolException.Details, descriptor.ToolName));
-                }
+                    return CreateProjectToolErrorResponse(projectToolException, descriptor.ToolName);
                 return MCPResponse.Error(ex.Message, "project_tool_exception", false,
                     new Dictionary<string, object>
                     {
                         { "toolName", descriptor.ToolName }
                     });
             }
+        }
+
+        private static bool TryValidateExecutionPreconditions(ProjectToolDescriptor descriptor,
+            out MCPProjectToolException error)
+        {
+            if (!descriptor.RequiresPlayMode || MCPRuntimePreconditions.IsStablePlayMode)
+            {
+                error = null;
+                return true;
+            }
+
+            Dictionary<string, object> details = MCPRuntimePreconditions.CreatePlayModeStateDetails();
+            details["toolName"] = descriptor.ToolName;
+            error = new MCPProjectToolException(
+                MCPRuntimePreconditions.PlayModeRequiredErrorCode,
+                $"Project tool '{descriptor.ToolName}' requires stable Play Mode.",
+                false,
+                details);
+            return false;
+        }
+
+        private static object CreateProjectToolErrorResponse(MCPProjectToolException error,
+            string toolName)
+        {
+            return MCPResponse.Error(
+                error.Message,
+                error.ErrorCode,
+                error.Retryable,
+                MergeErrorDetails(error.Details, toolName));
         }
 
         private static Dictionary<string, object> MergeErrorDetails(
@@ -712,7 +738,7 @@ namespace UnityMCP.Editor
                     FirstClass = attribute.FirstClass,
                     CleanupToolName = attribute.CleanupToolName ?? "",
                     SideEffects = attribute.SideEffects,
-                    ErrorCodes = NormalizeErrorCodes(attribute.ErrorCodes),
+                    ErrorCodes = NormalizeErrorCodes(attribute.ErrorCodes, attribute.RequiresPlayMode),
                     method = method
                 };
 
@@ -746,7 +772,7 @@ namespace UnityMCP.Editor
                     FirstClass = attribute.FirstClass,
                     CleanupToolName = attribute.CleanupToolName ?? "",
                     SideEffects = attribute.SideEffects,
-                    ErrorCodes = NormalizeErrorCodes(attribute.ErrorCodes),
+                    ErrorCodes = NormalizeErrorCodes(attribute.ErrorCodes, attribute.RequiresPlayMode),
                     type = type
                 };
 
@@ -1121,7 +1147,8 @@ namespace UnityMCP.Editor
                     : char.ToLowerInvariant(value[0]) + value.Substring(1);
             }
 
-            private static List<string> NormalizeErrorCodes(IEnumerable<string> errorCodes)
+            private static List<string> NormalizeErrorCodes(IEnumerable<string> errorCodes,
+                bool requiresPlayMode)
             {
                 var result = new List<string>
                 {
@@ -1134,6 +1161,8 @@ namespace UnityMCP.Editor
                     result.AddRange(errorCodes.Where(code => string.IsNullOrWhiteSpace(code) == false)
                         .Select(code => code.Trim()));
                 }
+                if (requiresPlayMode)
+                    result.Add(MCPRuntimePreconditions.PlayModeRequiredErrorCode);
                 return result.Distinct(StringComparer.Ordinal).OrderBy(code => code, StringComparer.Ordinal).ToList();
             }
 

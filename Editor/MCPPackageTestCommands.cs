@@ -17,6 +17,8 @@ namespace UnityMCP.Editor
         private const string DefaultPackageName = "com.vm233.unity-mcp";
         private const string DefaultTestAssembly = "VMUnityMCP.Editor.Tests";
         private const double WorkflowTimeoutMinutes = 10;
+        private const string WaitingForAssemblyState = "waiting-for-assembly";
+        private const string WaitingForEditorAdoptionState = "waiting-for-editor-adoption";
 
         private static PackageTestWorkflow _workflow;
         private static bool _updateRegistered;
@@ -86,7 +88,7 @@ namespace UnityMCP.Editor
                 OriginalManifestBase64 = Convert.ToBase64String(manifestBytes),
                 OriginalManifestHadUtf8Bom = HasUtf8Bom(manifestBytes),
                 ManifestChanged = !alreadyTestable,
-                State = alreadyTestable ? "waiting-for-assembly" : "enabling",
+                State = alreadyTestable ? WaitingForAssemblyState : "enabling",
                 StartedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
                 OwnerAgentId = GetString(args, "_agentId", "anonymous"),
@@ -238,7 +240,7 @@ namespace UnityMCP.Editor
                 string updatedManifest = SerializePrettyJson(manifest, 0) + "\n";
                 File.WriteAllText(_workflow.ManifestPath, updatedManifest,
                     new UTF8Encoding(_workflow.OriginalManifestHadUtf8Bom));
-                _workflow.State = "waiting-for-assembly";
+                _workflow.State = WaitingForAssemblyState;
                 TouchAndSaveWorkflow();
                 Client.Resolve();
             }
@@ -273,7 +275,7 @@ namespace UnityMCP.Editor
                     case "enabling":
                         if (ManifestContainsPackageTestable(_workflow.ManifestPath, _workflow.PackageName))
                         {
-                            _workflow.State = "waiting-for-assembly";
+                            _workflow.State = WaitingForAssemblyState;
                             TouchAndSaveWorkflow();
                         }
                         else
@@ -281,23 +283,9 @@ namespace UnityMCP.Editor
                             EnablePackageTests();
                         }
                         break;
-                    case "waiting-for-assembly":
-                        if (!TryValidatePackageAssemblyNames(
-                                _workflow.PackageName,
-                                _workflow.Assemblies,
-                                out string assemblyError,
-                                out _))
-                        {
-                            FailWorkflow(assemblyError);
-                        }
-                        else if (AreAssembliesAvailable(_workflow.Assemblies))
-                        {
-                            StartTestRun();
-                        }
-                        else if (TryGetCompilationFailure(out string compilationError))
-                        {
-                            FailWorkflow(compilationError);
-                        }
+                    case WaitingForAssemblyState:
+                    case WaitingForEditorAdoptionState:
+                        AdvanceAssemblyAdoption();
                         break;
                     case "running":
                         UpdateRunningTestJob();
@@ -342,6 +330,51 @@ namespace UnityMCP.Editor
             TouchAndSaveWorkflow();
             Debug.Log($"[MCP Package Tests] Workflow {_workflow.WorkflowId} started test job " +
                       _workflow.TestJobId);
+        }
+
+        private static void AdvanceAssemblyAdoption()
+        {
+            if (!TryValidatePackageAssemblyNames(
+                    _workflow.PackageName,
+                    _workflow.Assemblies,
+                    out string assemblyError,
+                    out _))
+            {
+                FailWorkflow(assemblyError);
+                return;
+            }
+
+            bool assembliesAvailable = AreAssembliesAvailable(_workflow.Assemblies);
+            if (!assembliesAvailable)
+            {
+                if (TryGetCompilationFailure(out string compilationError))
+                {
+                    FailWorkflow(compilationError);
+                    return;
+                }
+
+                if (_workflow.State != WaitingForAssemblyState)
+                {
+                    _workflow.State = WaitingForAssemblyState;
+                    TouchAndSaveWorkflow();
+                }
+                return;
+            }
+
+            if (!CanStartTestRunFromAssemblyState(_workflow.State, assembliesAvailable))
+            {
+                _workflow.State = WaitingForEditorAdoptionState;
+                TouchAndSaveWorkflow();
+                return;
+            }
+
+            StartTestRun();
+        }
+
+        internal static bool CanStartTestRunFromAssemblyState(string state,
+            bool assembliesAvailable)
+        {
+            return assembliesAvailable && state == WaitingForEditorAdoptionState;
         }
 
         private static void UpdateRunningTestJob()

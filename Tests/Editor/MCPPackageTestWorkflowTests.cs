@@ -188,6 +188,19 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void TestRunStart_RequiresAssemblyPublicationAndLaterEditorAdoption()
+        {
+            Assert.That(MCPPackageTestCommands.CanStartTestRunFromAssemblyState(
+                "waiting-for-assembly", assembliesAvailable: false), Is.False);
+            Assert.That(MCPPackageTestCommands.CanStartTestRunFromAssemblyState(
+                "waiting-for-assembly", assembliesAvailable: true), Is.False);
+            Assert.That(MCPPackageTestCommands.CanStartTestRunFromAssemblyState(
+                "waiting-for-editor-adoption", assembliesAvailable: false), Is.False);
+            Assert.That(MCPPackageTestCommands.CanStartTestRunFromAssemblyState(
+                "waiting-for-editor-adoption", assembliesAvailable: true), Is.True);
+        }
+
+        [Test]
         public void MissingCompiledAssemblyArtifact_IsNotReady()
         {
             MethodInfo method = typeof(MCPPackageTestCommands).GetMethod(

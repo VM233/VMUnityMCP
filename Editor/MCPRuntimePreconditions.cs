@@ -5,26 +5,45 @@ namespace UnityMCP.Editor
 {
     internal static class MCPRuntimePreconditions
     {
+        internal const string PlayModeRequiredErrorCode = "requires_play_mode";
+
+        internal static bool IsStablePlayMode => IsStablePlayModeState(
+            EditorApplication.isPlaying,
+            EditorApplication.isPlayingOrWillChangePlaymode);
+
+        internal static bool IsStablePlayModeState(bool isPlaying,
+            bool isPlayingOrWillChangePlaymode)
+        {
+            return isPlaying && isPlayingOrWillChangePlaymode == isPlaying;
+        }
+
+        internal static Dictionary<string, object> CreatePlayModeStateDetails()
+        {
+            return new Dictionary<string, object>
+            {
+                { "requiresPlayMode", true },
+                { "isPlaying", EditorApplication.isPlaying },
+                { "isPlayingOrWillChangePlaymode", EditorApplication.isPlayingOrWillChangePlaymode },
+                { "isPaused", EditorApplication.isPaused },
+            };
+        }
+
         public static bool TryRequirePlayMode(string route, string purpose,
             out Dictionary<string, object> error)
         {
-            if (EditorApplication.isPlaying)
+            if (IsStablePlayMode)
             {
                 error = null;
                 return true;
             }
 
+            Dictionary<string, object> details = CreatePlayModeStateDetails();
+            details["route"] = route;
             error = MCPResponse.Error(
-                $"{route} requires Play Mode because {purpose}.",
-                "requires_play_mode",
+                $"{route} requires stable Play Mode because {purpose}.",
+                PlayModeRequiredErrorCode,
                 false,
-                new Dictionary<string, object>
-                {
-                    { "route", route },
-                    { "requiresPlayMode", true },
-                    { "isPlaying", false },
-                    { "isPaused", EditorApplication.isPaused },
-                });
+                details);
             return false;
         }
     }

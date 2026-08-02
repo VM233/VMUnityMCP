@@ -113,6 +113,7 @@ namespace UnityMCP.Editor.Tests
         private const string PERSISTENT_PROJECT_TOOL_NAME = "unity-mcp-tests/persistent-step";
         private const string PERSISTENT_PROJECT_TOOL_CLEANUP_NAME =
             "unity-mcp-tests/persistent-step-cleanup";
+        private static int runtimeMutationInvocationCount;
         private bool projectConfigurationExisted;
         private string projectConfigurationContents;
 
@@ -124,6 +125,7 @@ namespace UnityMCP.Editor.Tests
             FirstClass = true)]
         private static object SetRuntimeStateFixture(Dictionary<string, object> args)
         {
+            runtimeMutationInvocationCount++;
             return new Dictionary<string, object>
             {
                 { "success", true },
@@ -279,6 +281,7 @@ namespace UnityMCP.Editor.Tests
         public void SetUp()
         {
             AssetDeletePersistenceProcessor.Reset();
+            runtimeMutationInvocationCount = 0;
 
             string projectConfigurationPath =
                 MCPProjectConfiguration.GetFullPath();
@@ -3880,6 +3883,19 @@ namespace UnityMCP.Editor.Tests
             Assert.That(File.Exists(GetAbsolutePath(screenshotPath)), Is.False);
         }
 
+        [TestCase(false, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(true, false, false)]
+        [TestCase(true, true, true)]
+        public void RuntimePreconditions_OnlyAcceptStablePlayMode(bool isPlaying,
+            bool isPlayingOrWillChangePlaymode, bool expected)
+        {
+            Assert.That(MCPRuntimePreconditions.IsStablePlayModeState(
+                isPlaying,
+                isPlayingOrWillChangePlaymode),
+                Is.EqualTo(expected));
+        }
+
         [Test]
         public void GameViewScreenshot_HasOneDedicatedCommandOwner()
         {
@@ -4142,6 +4158,8 @@ namespace UnityMCP.Editor.Tests
             Assert.That(HasSideEffect(descriptor, "writesAssets"), Is.False);
             Assert.That(HasSideEffect(descriptor, "changesRuntimeState"), Is.True);
             Assert.That(HasTag(descriptor, "requiresPlayMode"), Is.True);
+            CollectionAssert.Contains((ICollection)descriptor["errorCodes"],
+                MCPRuntimePreconditions.PlayModeRequiredErrorCode);
 
             var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
                 firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
@@ -4404,10 +4422,72 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void ProjectToolExecution_EnforcesPlayModeBeforeEveryInvocationBoundary()
+        {
+            Assert.That(MCPRuntimePreconditions.IsStablePlayMode, Is.False,
+                "This regression must execute in Edit Mode.");
+
+            void AssertRejected(object rawResponse)
+            {
+                var response = RequireDictionary(rawResponse);
+                Assert.That(response["success"], Is.EqualTo(false));
+                Assert.That(response["errorCode"],
+                    Is.EqualTo(MCPRuntimePreconditions.PlayModeRequiredErrorCode));
+                Assert.That(response["toolName"], Is.EqualTo(RUNTIME_MUTATION_TOOL_NAME));
+                Assert.That(response["requiresPlayMode"], Is.EqualTo(true));
+                Assert.That(response["isPlaying"], Is.EqualTo(false));
+            }
+
+            object Execute(bool runAsJob = false)
+            {
+                var arguments = new Dictionary<string, object>
+                {
+                    { "toolName", RUNTIME_MUTATION_TOOL_NAME },
+                    { "args", new Dictionary<string, object>() },
+                };
+                if (runAsJob)
+                    arguments["runAsJob"] = true;
+                return MCPProjectToolCommands.Execute(arguments);
+            }
+
+            AssertRejected(Execute());
+            AssertRejected(Execute(runAsJob: true));
+
+            bool handled = MCPProjectToolCommands.TryExecuteDirectRoute(
+                MCPProjectToolCommands.GetDirectRoute(RUNTIME_MUTATION_TOOL_NAME),
+                new Dictionary<string, object>(),
+                out object directResponse);
+            Assert.That(handled, Is.True);
+            AssertRejected(directResponse);
+
+            AssertRejected(MCPProjectToolCommands.ExecuteJobInline(
+                RUNTIME_MUTATION_TOOL_NAME,
+                new Dictionary<string, object>()));
+
+            MCPProjectToolException stepError = Assert.Throws<MCPProjectToolException>(() =>
+                MCPProjectToolCommands.ExecuteJobStepInline(
+                    RUNTIME_MUTATION_TOOL_NAME,
+                    new Dictionary<string, object>(),
+                    new Dictionary<string, object>()));
+            Assert.That(stepError.ErrorCode,
+                Is.EqualTo(MCPRuntimePreconditions.PlayModeRequiredErrorCode));
+            Assert.That(stepError.Details["toolName"], Is.EqualTo(RUNTIME_MUTATION_TOOL_NAME));
+            Assert.That(runtimeMutationInvocationCount, Is.Zero);
+
+            var unaffected = RequireDictionary(MCPProjectToolCommands.Execute(
+                new Dictionary<string, object>
+                {
+                    { "toolName", LAZY_READ_TOOL_NAME },
+                    { "args", new Dictionary<string, object>() },
+                }));
+            Assert.That(unaffected["success"], Is.EqualTo(true));
+        }
+
+        [Test]
         public void ProjectToolDirectRoute_StripsProjectBindingArgumentsBeforeStrictSchemaValidation()
         {
             bool handled = MCPProjectToolCommands.TryExecuteDirectRoute(
-                MCPProjectToolCommands.GetDirectRoute(RUNTIME_MUTATION_TOOL_NAME),
+                MCPProjectToolCommands.GetDirectRoute(PROJECT_FILE_MUTATION_TOOL_NAME),
                 new Dictionary<string, object>
                 {
                     { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
