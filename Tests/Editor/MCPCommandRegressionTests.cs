@@ -1268,9 +1268,15 @@ namespace UnityMCP.Editor.Tests
         {
             var shouldPersist = typeof(MCPRequestQueue).GetMethod("ShouldPersistTicketSnapshot",
                 BindingFlags.Static | BindingFlags.NonPublic);
+            var buildSnapshots = typeof(MCPRequestQueue).GetMethod("BuildPersistentTicketSnapshotsLocked",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var restoreHighWater = typeof(MCPRequestQueue).GetMethod("GetTicketIdRestoreHighWater",
+                BindingFlags.Static | BindingFlags.NonPublic);
             var maximumCompleted = typeof(MCPRequestQueue).GetField("MaxPersistedCompletedTickets",
                 BindingFlags.Static | BindingFlags.NonPublic);
             Assert.That(shouldPersist, Is.Not.Null);
+            Assert.That(buildSnapshots, Is.Not.Null);
+            Assert.That(restoreHighWater, Is.Not.Null);
             Assert.That(maximumCompleted, Is.Not.Null);
             Assert.That((int)maximumCompleted.GetRawConstantValue(), Is.LessThanOrEqualTo(32));
 
@@ -1297,6 +1303,36 @@ namespace UnityMCP.Editor.Tests
             Assert.That(shouldPersist.Invoke(null, new object[] { Ticket("asset/create-folder", false) }),
                 Is.EqualTo(true),
                 "Mutations retain recovery state so a reload cannot silently replay them.");
+
+            var snapshots = (List<object>)buildSnapshots.Invoke(null, null);
+            var allocator = RequireDictionary(snapshots[0]);
+            Assert.That(allocator["snapshotKind"], Is.EqualTo("ticket-id-allocator"));
+            Assert.That(allocator, Does.ContainKey("ticketIdHighWater"),
+                "The allocator high-water must survive independently of filtered read payloads.");
+
+            var reloadFixture = new List<object>
+            {
+                new Dictionary<string, object>
+                {
+                    { "snapshotKind", "ticket-id-allocator" },
+                    { "ticketIdHighWater", 4096L },
+                },
+                new Dictionary<string, object>
+                {
+                    { "ticketId", 17L },
+                    { "actionName", "asset/refresh" },
+                },
+            };
+            Assert.That(restoreHighWater.Invoke(null, new object[] { reloadFixture }), Is.EqualTo(4096L),
+                "A reload must skip every reserved ID even when ordinary read tickets were omitted.");
+
+            var legacyFixture = new List<object>
+            {
+                new Dictionary<string, object> { { "ticketId", 23L } },
+                new Dictionary<string, object> { { "ticketId", 41L } },
+            };
+            Assert.That(restoreHighWater.Invoke(null, new object[] { legacyFixture }), Is.EqualTo(41L),
+                "Legacy snapshots must migrate from their highest retained ticket.");
         }
 
         [Test]

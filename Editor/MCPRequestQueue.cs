@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using UnityEngine;
 
 namespace UnityMCP.Editor
@@ -82,8 +81,10 @@ namespace UnityMCP.Editor
         //  State
         // ═══════════════════════════════════════════════════════
 
-        // Ticket ID generator (thread-safe via Interlocked)
+        // Ticket identity is protected by _queueLock. A durable reserved range prevents
+        // discarded read-only tickets from being reused after a domain reload or restart.
         private static long _nextTicketId;
+        private static long _reservedTicketIdHighWater;
 
         // Per-agent FIFO queues for fair round-robin
         private static readonly Dictionary<string, Queue<RequestTicket>> _agentQueues
@@ -128,6 +129,8 @@ namespace UnityMCP.Editor
         private const int MaxQueuedRequestsPerAgent   = 64;
         private const int MaxPersistedCompletedTickets = 32;
         private const int MaxPersistedResultCharacters = 64 * 1024;
+        private const int TicketIdReservationSize = 1024;
+        private const string TicketIdAllocatorSnapshotKind = "ticket-id-allocator";
 
         // ═══════════════════════════════════════════════════════
         //  Public API — Submit
@@ -188,7 +191,7 @@ namespace UnityMCP.Editor
 
                 var ticket = new RequestTicket
                 {
-                    TicketId    = Interlocked.Increment(ref _nextTicketId),
+                    TicketId    = AllocateTicketIdLocked(),
                     AgentId     = agentId,
                     ActionName  = actionName,
                     Status      = RequestStatus.Queued,
@@ -313,7 +316,7 @@ namespace UnityMCP.Editor
 
                 var ticket = new RequestTicket
                 {
-                    TicketId       = Interlocked.Increment(ref _nextTicketId),
+                    TicketId       = AllocateTicketIdLocked(),
                     AgentId        = agentId,
                     ActionName     = actionName,
                     Status         = RequestStatus.Queued,
@@ -885,7 +888,7 @@ namespace UnityMCP.Editor
         {
             var ticket = new RequestTicket
             {
-                TicketId = Interlocked.Increment(ref _nextTicketId), AgentId = agentId,
+                TicketId = AllocateTicketIdLocked(), AgentId = agentId,
                 ActionName = actionName, RequestKey = requestKey, Status = RequestStatus.Failed,
                 SubmittedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow,
                 ErrorMessage = totalQueued >= MaxTotalQueuedRequests
@@ -1103,17 +1106,19 @@ namespace UnityMCP.Editor
                 if (snapshots == null)
                     return;
 
-                long maxTicketId = 0;
+                long restoredTicketIdHighWater = GetTicketIdRestoreHighWater(snapshots);
                 foreach (var item in snapshots)
                 {
                     var snapshot = MCPResponse.ToDictionary(item);
                     if (snapshot == null)
                         continue;
 
+                    if (GetString(snapshot, "snapshotKind") == TicketIdAllocatorSnapshotKind)
+                        continue;
+
                     if (!TryGetLong(snapshot, "ticketId", out var ticketId))
                         continue;
 
-                    maxTicketId = Math.Max(maxTicketId, ticketId);
                     if (TryRestoreEditorIdleWait(snapshot, out var restoredTicket) ||
                         TryRestorePersistentRequest(snapshot, out restoredTicket))
                     {
@@ -1124,8 +1129,9 @@ namespace UnityMCP.Editor
                     }
                 }
 
-                if (maxTicketId > _nextTicketId)
-                    Interlocked.Exchange(ref _nextTicketId, maxTicketId);
+                _nextTicketId = Math.Max(_nextTicketId, restoredTicketIdHighWater);
+                _reservedTicketIdHighWater = Math.Max(
+                    _reservedTicketIdHighWater, restoredTicketIdHighWater);
                 // Resumed tickets need their updated status and resume count saved.
                 PersistTicketSnapshotsLocked();
             }
@@ -1390,20 +1396,56 @@ namespace UnityMCP.Editor
             EnsureSession(ticket.AgentId).LogAction(ticket.ActionName + " (resumed)");
         }
 
-        private static void PersistTicketSnapshotsLocked()
+        private static long AllocateTicketIdLocked()
+        {
+            if (_nextTicketId >= _reservedTicketIdHighWater)
+            {
+                long previousHighWater = _reservedTicketIdHighWater;
+                long reservationBase = Math.Max(_nextTicketId, _reservedTicketIdHighWater);
+                if (reservationBase > long.MaxValue - TicketIdReservationSize)
+                    throw new InvalidOperationException("Unity MCP queue ticket IDs are exhausted.");
+
+                _reservedTicketIdHighWater = reservationBase + TicketIdReservationSize;
+                // The range must be durable before an ID from it is published. If persistence
+                // fails, no request may adopt an identity that a later reload could reuse.
+                if (!PersistTicketSnapshotsLocked())
+                {
+                    _reservedTicketIdHighWater = previousHighWater;
+                    throw new IOException(
+                        "Unity MCP could not reserve a durable queue ticket ID range.");
+                }
+            }
+
+            _nextTicketId++;
+            return _nextTicketId;
+        }
+
+        private static bool PersistTicketSnapshotsLocked()
         {
             var snapshots = BuildPersistentTicketSnapshotsLocked();
             string json = MiniJson.Serialize(snapshots);
             if (string.Equals(json, _lastPersistedSnapshotJson, StringComparison.Ordinal))
-                return;
+                return true;
 
             if (WritePersistentTicketSnapshots(json))
+            {
                 _lastPersistedSnapshotJson = json;
+                return true;
+            }
+
+            return false;
         }
 
         private static List<object> BuildPersistentTicketSnapshotsLocked()
         {
-            var snapshots = new List<object>();
+            var snapshots = new List<object>
+            {
+                new Dictionary<string, object>
+                {
+                    { "snapshotKind", TicketIdAllocatorSnapshotKind },
+                    { "ticketIdHighWater", _reservedTicketIdHighWater },
+                },
+            };
             foreach (var agentQueue in _agentQueues.Values)
             {
                 foreach (var ticket in agentQueue)
@@ -1426,6 +1468,33 @@ namespace UnityMCP.Editor
                 snapshots.Add(SnapshotTicket(ticket));
 
             return snapshots;
+        }
+
+        private static long GetTicketIdRestoreHighWater(List<object> snapshots)
+        {
+            long highWater = 0;
+            if (snapshots == null)
+                return highWater;
+
+            foreach (var item in snapshots)
+            {
+                var snapshot = MCPResponse.ToDictionary(item);
+                if (snapshot == null)
+                    continue;
+
+                if (GetString(snapshot, "snapshotKind") == TicketIdAllocatorSnapshotKind &&
+                    TryGetLong(snapshot, "ticketIdHighWater", out long reservedHighWater))
+                {
+                    highWater = Math.Max(highWater, reservedHighWater);
+                }
+
+                // Legacy snapshots have no allocator record. Their retained ticket IDs remain
+                // the authoritative lower bound during migration.
+                if (TryGetLong(snapshot, "ticketId", out long ticketId))
+                    highWater = Math.Max(highWater, ticketId);
+            }
+
+            return highWater;
         }
 
         private static bool ShouldPersistTicketSnapshot(RequestTicket ticket)

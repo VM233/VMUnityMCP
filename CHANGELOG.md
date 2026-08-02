@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.21] - 2026-08-02
+
+- Persist a reserved queue-ticket ID high-water independently of filtered ticket payloads, so
+  ordinary read tickets discarded during domain reload cannot alias later requests from the same
+  or another agent.
+- Reserve IDs in durable blocks before publication, preserving reload and restart safety without
+  adding a snapshot write to every read-only request.
+- Add allocator snapshot and legacy-migration regressions.
+
 ## [5.6.20] - 2026-08-01
 
 - Retain the explicit successful-read discriminator when a transported status snapshot carries an

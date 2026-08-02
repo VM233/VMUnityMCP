@@ -296,8 +296,9 @@ The full ownership matrix and authoritative built-in route audit are in
 - Potentially large raw graph, stack, serialized, and metadata diagnostics are
   opt-in.
 - Mutating requests validate the expected project before dispatch. Stable
-  idempotency keys and persistent queue snapshots protect reload-sensitive
-  workflows.
+  idempotency keys, non-reused ticket identities, and persistent queue snapshots
+  protect reload-sensitive workflows. The allocator high-water survives even
+  when replay-safe read ticket payloads are intentionally discarded.
 - Use `unity_wait_editor_idle` after compilation, package changes, refreshes, or
   domain reloads before issuing dependent work.
 
