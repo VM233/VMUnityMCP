@@ -159,12 +159,13 @@ namespace UnityMCP.Editor
                 return;
             }
 
-            if (MCPPackageTestCommands.TryGetActiveWorkflow(out string workflowId,
+            if (MCPPackageTestCommands.TryGetActiveWorkflow(out string packageTestJobId,
                     out string testPackageName, out string workflowState))
             {
                 resolve(MCPResponse.Error(
-                    $"Cannot update Git package '{name}' while package test workflow '{workflowId}' " +
-                    $"for '{testPackageName}' is {workflowState}. Poll testing/get-package-job and retry " +
+                    $"Cannot update Git package '{name}' while package-test job '{packageTestJobId}' " +
+                    $"for '{testPackageName}' is {workflowState}. Poll jobs/get with jobType " +
+                    "'package-test' and retry " +
                     "after it reaches a terminal state.",
                     "package_test_workflow_active", true));
                 return;

@@ -248,10 +248,14 @@ The full ownership matrix and authoritative built-in route audit are in
 - `jobs/cancel` reports success when the target accepts cancellation, including
   workflows that reach `canceled` immediately. Read the terminal outcome through
   `jobs/get`; cancellation acceptance is not returned as a command failure.
-- `jobs/get`, `testing/get-job`, and `testing/get-package-job` report a successful
-  snapshot read independently from the observed job outcome. Inspect `status` and
-  `error` for `failed` or `canceled` jobs; those outcomes do not turn polling into
-  a queue-command failure or overwrite the business status.
+- `jobs/get` and `testing/get-job` report a successful snapshot read independently
+  from the observed job outcome. Inspect `status` and `error` for `failed` or
+  `canceled` jobs; those outcomes do not turn polling into a queue-command failure
+  or overwrite the business status. Package-test starts return `jobId` plus
+  `jobType="package-test"`; poll that identity through `jobs/get`.
+- `testing/get-package-job` is the specialized inspection and terminal-state
+  cleanup route for the current package-test workflow. It accepts the same
+  `jobId`, but is not a second public job identity or the normal polling path.
 - Job capability and positive state flags use the same presence-only `tags`
   contract (`incrementalJob`, `cleanupDeclared`, `cleanupAvailable`,
   `cancellationRequested`, and `reused`). Fields that do not yet have a value
@@ -283,6 +287,11 @@ The full ownership matrix and authoritative built-in route audit are in
   ObjectReference wiring. Pass `createPathIfMissing=true` when the component's
   semantic GameObject path does not exist yet; the path and component are then
   created and configured in one rollback-capable transaction.
+- All Prefab asset mutations use one authoring-session owner. Serialized views
+  close before save, the isolated authoring root unloads before YAML
+  normalization, import, or persistent readback, and only the adopted product
+  can commit. Failures restore the exact original bytes through the same atomic
+  file publisher and synchronously re-adopt them before returning.
 - When `referenceAssetPath` contains more than one compatible object, Prefab
   reference routes require `referenceSubAssetName` or the lossless decimal
   string `referenceSubAssetLocalId`. Ambiguous paths fail with bounded candidate
@@ -299,6 +308,12 @@ The full ownership matrix and authoritative built-in route audit are in
   idempotency keys, non-reused ticket identities, and persistent queue snapshots
   protect reload-sensitive workflows. The allocator high-water survives even
   when replay-safe read ticket payloads are intentionally discarded.
+- MCP-owned durable state uses one path-keyed publication owner. Writers publish
+  complete immutable text or binary snapshots through private files, disk flush,
+  and atomic replacement; target and backup adoption is serialized with readers,
+  deletes, and bounded operating-system lease handoff. Queue, Job, refresh,
+  build, import, package-test, history, Addressables, and instance-registry state
+  therefore share one failure-closed persistence contract.
 - HTTP listener startup is transactional: partial binds and registrations are
   rolled back before retry. Shutdown publishes stopped state first, closes the
   exact listener generation, and tolerates clients disconnecting while a
@@ -312,7 +327,9 @@ The full ownership matrix and authoritative built-in route audit are in
 The package contains EditMode regression tests for route authority, metadata,
 schemas, configuration precedence, queue/reload behavior, response compaction,
 and tool families. Use the persistent `testing/run-package-tests` workflow when
-testing a Git package inside a consumer project.
+testing a Git package inside a consumer project. Its start response contains a
+`jobId` and `jobType="package-test"`; poll that pair with `jobs/get` until a
+terminal status also reports the exact manifest-restoration outcome.
 
 When tool metadata changes, synchronize and test the companion Node server,
 then reconnect the MCP client before judging its cached concrete tool list.

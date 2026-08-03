@@ -2,6 +2,29 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.24] - 2026-08-02
+
+- Centralize MCP-authored file publication behind one path-keyed owner with complete immutable text
+  or binary snapshots, deterministic target/backup locking, unique private files, disk flushes,
+  atomic replacement, serialized reads and deletes, and bounded handoff for operating-system
+  sharing, lock, and mapped-file leases.
+- Migrate refresh, build, Addressables, package-test, package-import, generic-job, history, queue, and
+  multi-instance registry state to the shared contract; registry mutation now fails closed when its
+  cross-process ownership or durable publication cannot be acquired.
+- Add regressions for an exclusive target lease, concurrent readers and writers, paired target/backup
+  adoption, exact binary snapshots, complete queue backups, and private-file cleanup.
+- Route every Prefab asset mutation through one authoring session: close serialized views before
+  save, unload the isolated root before YAML normalization/import or persistent readback, commit only
+  an adopted product, and atomically restore and synchronously re-adopt the original bytes on failure.
+  Add an order-independent regression across successful mutation, rejected mutation, fixture
+  recreation, and later asset publication.
+- Publish package-test workflows through the canonical persistent Job identity (`jobId` plus
+  `jobType: package-test`) and direct normal polling to `jobs/get`; retain the specialized package
+  route only for workflow inspection and terminal-state cleanup.
+- Make the deletion-callback persistence regression consume a synchronously imported Unity-owned
+  asset, so it proves the public topology-callback/save contract without depending on a transient
+  ScriptableObject type from a temporarily enabled test assembly.
+
 ## [5.6.23] - 2026-08-02
 
 - Make HTTP listener startup transactional: a failure after binding now closes

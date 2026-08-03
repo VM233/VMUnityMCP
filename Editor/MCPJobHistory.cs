@@ -103,10 +103,10 @@ namespace UnityMCP.Editor
             if (entries != null) return;
             entries = new List<Dictionary<string, object>>();
             string path = GetPath();
-            if (!File.Exists(path)) return;
             try
             {
-                if (!(MiniJson.Deserialize(File.ReadAllText(path)) is IList list)) return;
+                if (!MCPPersistenceFile.TryReadAllText(path, out string contents)) return;
+                if (!(MiniJson.Deserialize(contents) is IList list)) return;
                 entries = list.Cast<object>().Select(MCPResponse.ToDictionary).Where(item => item != null)
                     .Take(MCPSettingsManager.JobHistoryMaxEntries).ToList();
             }
@@ -118,28 +118,7 @@ namespace UnityMCP.Editor
 
         private static void Save()
         {
-            string path = GetPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-            string tempPath = path + ".tmp";
-            string backupPath = path + ".bak";
-            File.WriteAllText(tempPath, MiniJson.Serialize(entries));
-            if (!File.Exists(path))
-            {
-                File.Move(tempPath, path);
-                return;
-            }
-
-            if (File.Exists(backupPath)) File.Delete(backupPath);
-            try
-            {
-                File.Replace(tempPath, path, backupPath, true);
-                if (File.Exists(backupPath)) File.Delete(backupPath);
-            }
-            catch (PlatformNotSupportedException)
-            {
-                File.Delete(path);
-                File.Move(tempPath, path);
-            }
+            MCPPersistenceFile.WriteAllText(GetPath(), MiniJson.Serialize(entries));
         }
 
         private static string GetPath()

@@ -930,8 +930,7 @@ namespace UnityMCP.Editor
         {
             if (buildJob == null) return;
             string path = GetBuildJobPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-            File.WriteAllText(path, MiniJson.Serialize(buildJob.ToDictionary()));
+            MCPPersistenceFile.WriteAllText(path, MiniJson.Serialize(buildJob.ToDictionary()));
             MCPJobHistory.Record("addressables-build", buildJob.JobId, buildJob.OwnerAgentId,
                 buildJob.Status, BuildJobResponse(buildJob));
         }
@@ -941,9 +940,9 @@ namespace UnityMCP.Editor
             try
             {
                 string path = GetBuildJobPath();
-                if (!File.Exists(path)) return null;
+                if (!MCPPersistenceFile.TryReadAllText(path, out string contents)) return null;
                 return AddressablesBuildJob.FromDictionary(
-                    MiniJson.Deserialize(File.ReadAllText(path)) as Dictionary<string, object>);
+                    MiniJson.Deserialize(contents) as Dictionary<string, object>);
             }
             catch
             {

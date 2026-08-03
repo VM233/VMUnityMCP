@@ -347,8 +347,7 @@ namespace UnityMCP.Editor
             if (_job == null)
                 return;
             string path = GetJobPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-            File.WriteAllText(path, MiniJson.Serialize(_job.ToDictionary()));
+            MCPPersistenceFile.WriteAllText(path, MiniJson.Serialize(_job.ToDictionary()));
             MCPJobHistory.Record(JobType, _job.JobId, _job.OwnerAgentId, _job.Status,
                 BuildResponse(_job));
         }
@@ -358,10 +357,10 @@ namespace UnityMCP.Editor
             try
             {
                 string path = GetJobPath();
-                if (!File.Exists(path))
+                if (!MCPPersistenceFile.TryReadAllText(path, out string contents))
                     return null;
                 return UnityPackageImportJob.FromDictionary(
-                    MiniJson.Deserialize(File.ReadAllText(path)) as Dictionary<string, object>);
+                    MiniJson.Deserialize(contents) as Dictionary<string, object>);
             }
             catch (Exception exception)
             {

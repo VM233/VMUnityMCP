@@ -41,21 +41,16 @@ namespace UnityMCP.Editor.Tests
         public long keyId;
     }
 
-    public sealed class AssetDeletePersistenceTestObject : ScriptableObject
-    {
-        public int deletionCount;
-    }
-
     internal sealed class AssetDeletePersistenceProcessor : AssetModificationProcessor
     {
         internal static string WatchedAssetPath;
-        internal static AssetDeletePersistenceTestObject Target;
+        internal static AnimationClip Target;
 
         private static AssetDeleteResult OnWillDeleteAsset(string assetPath, RemoveAssetOptions options)
         {
             if (Target != null && string.Equals(assetPath, WatchedAssetPath, StringComparison.Ordinal))
             {
-                Target.deletionCount++;
+                Target.frameRate = 17f;
                 EditorUtility.SetDirty(Target);
             }
 
@@ -294,8 +289,7 @@ namespace UnityMCP.Editor.Tests
                 ? File.ReadAllText(projectConfigurationPath)
                 : null;
 
-            AssetDatabase.DeleteAsset(TEST_FOLDER);
-            AssetDatabase.CreateFolder("Assets", "__UnityMCPTests");
+            RecreateTestFolder();
         }
 
         [TearDown]
@@ -326,35 +320,7 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void AssetDelete_SavesAssetChangesProducedByDeletionCallbacks()
         {
-            const string deletedAssetPath = TEST_FOLDER + "/Delete Trigger.txt";
-            const string dependentAssetPath = TEST_FOLDER + "/Delete Side Effect.asset";
-
-            File.WriteAllText(Path.GetFullPath(deletedAssetPath), "delete me");
-            AssetDatabase.ImportAsset(deletedAssetPath, ImportAssetOptions.ForceSynchronousImport);
-
-            var dependentAsset = ScriptableObject.CreateInstance<AssetDeletePersistenceTestObject>();
-            AssetDatabase.CreateAsset(dependentAsset, dependentAssetPath);
-            AssetDatabase.SaveAssets();
-
-            AssetDeletePersistenceProcessor.WatchedAssetPath = deletedAssetPath;
-            AssetDeletePersistenceProcessor.Target = dependentAsset;
-
-            try
-            {
-                var result = RequireDictionary(MCPAssetCommands.Delete(
-                    new Dictionary<string, object> { { "path", deletedAssetPath } }));
-
-                Assert.That(result["success"], Is.EqualTo(true));
-                Assert.That(result["savedAssets"], Is.EqualTo(true));
-                Assert.That(AssetDatabase.LoadMainAssetAtPath(deletedAssetPath), Is.Null);
-                Assert.That(dependentAsset.deletionCount, Is.EqualTo(1));
-                Assert.That(EditorUtility.IsDirty(dependentAsset), Is.False);
-                StringAssert.Contains("deletionCount: 1", File.ReadAllText(Path.GetFullPath(dependentAssetPath)));
-            }
-            finally
-            {
-                AssetDeletePersistenceProcessor.Reset();
-            }
+            AssertAssetDeleteSideEffectIsPersisted();
         }
 
         [Test]
@@ -1633,17 +1599,16 @@ namespace UnityMCP.Editor.Tests
         {
             string path = Path.Combine(Path.GetTempPath(),
                 "unity-mcp-ticket-snapshot-" + Guid.NewGuid().ToString("N") + ".json");
-            var writeMethod = typeof(MCPRequestQueue).GetMethod("WriteTextAtomically",
-                BindingFlags.Static | BindingFlags.NonPublic);
             var readMethod = typeof(MCPRequestQueue).GetMethod("TryReadValidSnapshotJson",
                 BindingFlags.Static | BindingFlags.NonPublic);
-            Assert.That(writeMethod, Is.Not.Null);
             Assert.That(readMethod, Is.Not.Null);
 
             try
             {
-                writeMethod.Invoke(null, new object[] { path, "[{\"generation\":1}]" });
-                writeMethod.Invoke(null, new object[] { path, "[{\"generation\":2}]" });
+                MCPPersistenceFile.WriteAllText(path, "[{\"generation\":1}]",
+                    backupPath: path + ".bak");
+                MCPPersistenceFile.WriteAllText(path, "[{\"generation\":2}]",
+                    backupPath: path + ".bak");
 
                 var mainReadArguments = new object[] { path, null };
                 var backupReadArguments = new object[] { path + ".bak", null };
@@ -1654,7 +1619,7 @@ namespace UnityMCP.Editor.Tests
             }
             finally
             {
-                foreach (string candidate in new[] { path, path + ".bak", path + ".tmp" })
+                foreach (string candidate in new[] { path, path + ".bak" })
                 {
                     if (File.Exists(candidate))
                         File.Delete(candidate);
@@ -5061,76 +5026,25 @@ namespace UnityMCP.Editor.Tests
         [Test]
         public void AddComponent_AppliesAndPersistsInitialListProperties()
         {
-            CreateTestPrefab();
-
-            var result = RequireDictionary(MCPPrefabAssetCommands.AddComponent(
-                new Dictionary<string, object>
-                {
-                    { "assetPath", PREFAB_PATH },
-                    { "prefabPath", "Source" },
-                    { "componentType", typeof(PrefabComponentListFieldsFixture).FullName },
-                    { "properties", CreatePrefabComponentListFieldProperties() },
-                }));
-
-            Assert.That(result["success"], Is.EqualTo(true));
-            Assert.That(result["persisted"], Is.EqualTo(true));
-            Assert.That(result["persistenceVerifiedBy"], Is.EqualTo("serialized-readback"));
-            CollectionAssert.AreEquivalent(
-                new[] { "bindObjectsNames", "containerPaths" },
-                (List<string>)result["configuredProperties"]);
-
-            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
-            try
-            {
-                var component = root.transform.Find("Source")
-                    .GetComponent<PrefabComponentListFieldsFixture>();
-                Assert.That(component, Is.Not.Null);
-                CollectionAssert.AreEqual(
-                    new[] { "Bind Level Ability Container" },
-                    component.bindObjectsNames);
-                Assert.That(component.containerPaths, Has.Count.EqualTo(1));
-                CollectionAssert.AreEqual(
-                    new[] { "LevelAbilities" },
-                    component.containerPaths[0].names);
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
-            }
+            AssertAddComponentPersistsInitialListProperties();
         }
 
         [Test]
         public void AddComponent_InvalidInitialPropertyDoesNotPersistComponent()
         {
-            CreateTestPrefab();
+            AssertInvalidAddComponentDoesNotPersistComponent();
+        }
 
-            var result = RequireDictionary(MCPPrefabAssetCommands.AddComponent(
-                new Dictionary<string, object>
-                {
-                    { "assetPath", PREFAB_PATH },
-                    { "prefabPath", "Source" },
-                    { "componentType", typeof(PrefabComponentListFieldsFixture).FullName },
-                    { "properties", new Dictionary<string, object>
-                        {
-                            { "missingListField", new List<object> { "value" } },
-                        }
-                    },
-                }));
+        [Test]
+        public void PrefabMutationSession_ClosesBeforeNextAssetPublication()
+        {
+            AssertAddComponentPersistsInitialListProperties();
 
-            Assert.That(result["success"], Is.EqualTo(false));
-            Assert.That(result["errorCode"], Is.EqualTo("prefab_add_component_failed"));
-            Assert.That(result["error"].ToString(), Does.Contain("missingListField"));
+            RecreateTestFolder();
+            AssertInvalidAddComponentDoesNotPersistComponent();
 
-            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
-            try
-            {
-                Assert.That(root.transform.Find("Source")
-                    .GetComponent<PrefabComponentListFieldsFixture>(), Is.Null);
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
-            }
+            RecreateTestFolder();
+            AssertAssetDeleteSideEffectIsPersisted();
         }
 
         [Test]
@@ -9538,6 +9452,126 @@ namespace UnityMCP.Editor.Tests
             Assert.That(transported["status"], Is.EqualTo("canceled"));
             Assert.That(transported["error"], Is.EqualTo("Canceled by request."));
             Assert.That(MCPResponse.TryGetError(transported, out _, out _, out _), Is.False);
+        }
+
+        private static void RecreateTestFolder()
+        {
+            AssetDeletePersistenceProcessor.Reset();
+            AssetDatabase.DeleteAsset(TEST_FOLDER);
+            if (!AssetDatabase.IsValidFolder(TEST_FOLDER))
+                AssetDatabase.CreateFolder("Assets", "__UnityMCPTests");
+        }
+
+        private static void AssertAssetDeleteSideEffectIsPersisted()
+        {
+            const string deletedAssetPath = TEST_FOLDER + "/Delete Trigger.txt";
+            const string dependentAssetPath = TEST_FOLDER + "/Delete Side Effect.asset";
+
+            File.WriteAllText(Path.GetFullPath(deletedAssetPath), "delete me");
+            AssetDatabase.ImportAsset(deletedAssetPath, ImportAssetOptions.ForceSynchronousImport);
+
+            AssetDatabase.CreateAsset(
+                new AnimationClip { name = "Delete Side Effect" }, dependentAssetPath);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(dependentAssetPath,
+                ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            var dependentAsset = AssetDatabase.LoadAssetAtPath<AnimationClip>(dependentAssetPath);
+            Assert.That(dependentAsset, Is.Not.Null,
+                "The callback target must be the persistent object adopted from AssetDatabase.");
+
+            AssetDeletePersistenceProcessor.WatchedAssetPath = deletedAssetPath;
+            AssetDeletePersistenceProcessor.Target = dependentAsset;
+
+            try
+            {
+                var result = RequireDictionary(MCPAssetCommands.Delete(
+                    new Dictionary<string, object> { { "path", deletedAssetPath } }));
+
+                Assert.That(result["success"], Is.EqualTo(true));
+                Assert.That(result["savedAssets"], Is.EqualTo(true));
+                Assert.That(AssetDatabase.LoadMainAssetAtPath(deletedAssetPath), Is.Null);
+                Assert.That(dependentAsset.frameRate, Is.EqualTo(17f));
+                Assert.That(EditorUtility.IsDirty(dependentAsset), Is.False);
+                string serializedAsset = File.ReadAllText(Path.GetFullPath(dependentAssetPath));
+                StringAssert.Contains("m_SampleRate: 17", serializedAsset);
+            }
+            finally
+            {
+                AssetDeletePersistenceProcessor.Reset();
+            }
+        }
+
+        private static void AssertAddComponentPersistsInitialListProperties()
+        {
+            CreateTestPrefab();
+
+            var result = RequireDictionary(MCPPrefabAssetCommands.AddComponent(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Source" },
+                    { "componentType", typeof(PrefabComponentListFieldsFixture).FullName },
+                    { "properties", CreatePrefabComponentListFieldProperties() },
+                }));
+
+            Assert.That(result["success"], Is.EqualTo(true));
+            Assert.That(result["persisted"], Is.EqualTo(true));
+            Assert.That(result["persistenceVerifiedBy"], Is.EqualTo("serialized-readback"));
+            CollectionAssert.AreEquivalent(
+                new[] { "bindObjectsNames", "containerPaths" },
+                (List<string>)result["configuredProperties"]);
+
+            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+            try
+            {
+                var component = root.transform.Find("Source")
+                    .GetComponent<PrefabComponentListFieldsFixture>();
+                Assert.That(component, Is.Not.Null);
+                CollectionAssert.AreEqual(
+                    new[] { "Bind Level Ability Container" },
+                    component.bindObjectsNames);
+                Assert.That(component.containerPaths, Has.Count.EqualTo(1));
+                CollectionAssert.AreEqual(
+                    new[] { "LevelAbilities" },
+                    component.containerPaths[0].names);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        private static void AssertInvalidAddComponentDoesNotPersistComponent()
+        {
+            CreateTestPrefab();
+
+            var result = RequireDictionary(MCPPrefabAssetCommands.AddComponent(
+                new Dictionary<string, object>
+                {
+                    { "assetPath", PREFAB_PATH },
+                    { "prefabPath", "Source" },
+                    { "componentType", typeof(PrefabComponentListFieldsFixture).FullName },
+                    { "properties", new Dictionary<string, object>
+                        {
+                            { "missingListField", new List<object> { "value" } },
+                        }
+                    },
+                }));
+
+            Assert.That(result["success"], Is.EqualTo(false));
+            Assert.That(result["errorCode"], Is.EqualTo("prefab_add_component_failed"));
+            Assert.That(result["error"].ToString(), Does.Contain("missingListField"));
+
+            var root = PrefabUtility.LoadPrefabContents(PREFAB_PATH);
+            try
+            {
+                Assert.That(root.transform.Find("Source")
+                    .GetComponent<PrefabComponentListFieldsFixture>(), Is.Null);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
         }
 
         private static void CreateTestPrefab(bool addCollider = false, bool addRenderer = false,

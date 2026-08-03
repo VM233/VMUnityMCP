@@ -380,6 +380,9 @@ namespace UnityMCP.Editor.Tests
                 null, new[] { workflow });
 
             Assert.That(response["success"], Is.EqualTo(true));
+            Assert.That(response["jobId"], Is.EqualTo("canceled-workflow"));
+            Assert.That(response["jobType"], Is.EqualTo("package-test"));
+            Assert.That(response, Does.Not.ContainKey("workflowId"));
             Assert.That(response["status"], Is.EqualTo("canceled"));
             Assert.That(response["error"], Is.EqualTo("Canceled by request."));
             Assert.That(MCPResponse.TryGetError(response, out _, out _, out _), Is.False);

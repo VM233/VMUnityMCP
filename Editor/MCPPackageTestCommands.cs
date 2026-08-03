@@ -111,9 +111,9 @@ namespace UnityMCP.Editor
                 return MCPResponse.Error("Package test workflow belongs to another agent.",
                     "job_owner_mismatch");
 
-            string workflowId = GetString(args, "workflowId");
-            if (!string.IsNullOrEmpty(workflowId) && workflowId != _workflow.WorkflowId)
-                return new { error = $"Package test workflow '{workflowId}' not found" };
+            string jobId = GetString(args, "jobId");
+            if (!string.IsNullOrEmpty(jobId) && jobId != _workflow.WorkflowId)
+                return new { error = $"Package test job '{jobId}' not found" };
 
             if (!_workflow.IsTerminal)
             {
@@ -176,7 +176,7 @@ namespace UnityMCP.Editor
                         "job_cancel_rejected", true,
                         new Dictionary<string, object>
                         {
-                            { "workflowId", _workflow.WorkflowId },
+                            { "jobId", _workflow.WorkflowId },
                             { "underlyingJob", underlyingResult },
                         });
                 }
@@ -486,7 +486,8 @@ namespace UnityMCP.Editor
                 // Reading a workflow snapshot succeeded even when the workflow outcome did not.
                 // Callers inspect status and error for the package-test result itself.
                 { "success", true },
-                { "workflowId", workflow.WorkflowId },
+                { "jobId", workflow.WorkflowId },
+                { "jobType", "package-test" },
                 { "status", workflow.State },
                 { "packageName", workflow.PackageName },
                 { "mode", workflow.Mode },
@@ -832,8 +833,7 @@ namespace UnityMCP.Editor
             if (_workflow == null)
                 return;
             string path = GetWorkflowPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-            File.WriteAllText(path, MiniJson.Serialize(_workflow.ToDictionary()));
+            MCPPersistenceFile.WriteAllText(path, MiniJson.Serialize(_workflow.ToDictionary()));
             MCPJobHistory.Record("package-test", _workflow.WorkflowId, _workflow.OwnerAgentId,
                 _workflow.State, BuildResponse(_workflow));
         }
@@ -843,9 +843,9 @@ namespace UnityMCP.Editor
             try
             {
                 string path = GetWorkflowPath();
-                if (!File.Exists(path))
+                if (!MCPPersistenceFile.TryReadAllText(path, out string contents))
                     return null;
-                var values = MiniJson.Deserialize(File.ReadAllText(path)) as Dictionary<string, object>;
+                var values = MiniJson.Deserialize(contents) as Dictionary<string, object>;
                 return values != null ? PackageTestWorkflow.FromDictionary(values) : null;
             }
             catch (Exception ex)
@@ -857,9 +857,7 @@ namespace UnityMCP.Editor
 
         private static void DeleteWorkflowFile()
         {
-            string path = GetWorkflowPath();
-            if (File.Exists(path))
-                File.Delete(path);
+            MCPPersistenceFile.DeleteIfExists(GetWorkflowPath());
         }
 
         private static string GetManifestPath()

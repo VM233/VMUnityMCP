@@ -1664,11 +1664,8 @@ namespace UnityMCP.Editor
             try
             {
                 string path = GetPersistentTicketSnapshotPath();
-                string directory = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(directory))
-                    Directory.CreateDirectory(directory);
-
-                WriteTextAtomically(path, json ?? "[]");
+                MCPPersistenceFile.WriteAllText(path, json ?? "[]",
+                    backupPath: GetPersistentTicketSnapshotBackupPath());
                 return true;
             }
             catch (Exception ex)
@@ -1681,51 +1678,16 @@ namespace UnityMCP.Editor
         private static bool TryReadValidSnapshotJson(string path, out string json)
         {
             json = "";
-            if (!File.Exists(path))
-                return false;
             try
             {
-                json = File.ReadAllText(path);
+                if (!MCPPersistenceFile.TryReadAllText(path, out json))
+                    return false;
                 return MiniJson.Deserialize(json) is List<object>;
             }
             catch
             {
                 json = "";
                 return false;
-            }
-        }
-
-        private static void WriteTextAtomically(string path, string contents)
-        {
-            string tempPath = path + ".tmp";
-            string backupPath = path + ".bak";
-            if (File.Exists(tempPath))
-                File.Delete(tempPath);
-            using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            using (var writer = new StreamWriter(stream))
-            {
-                writer.Write(contents);
-                writer.Flush();
-                stream.Flush(true);
-            }
-
-            if (!File.Exists(path))
-            {
-                File.Move(tempPath, path);
-                return;
-            }
-
-            if (File.Exists(backupPath))
-                File.Delete(backupPath);
-            try
-            {
-                File.Replace(tempPath, path, backupPath, true);
-            }
-            catch (PlatformNotSupportedException)
-            {
-                File.Copy(path, backupPath, true);
-                File.Copy(tempPath, path, true);
-                File.Delete(tempPath);
             }
         }
 

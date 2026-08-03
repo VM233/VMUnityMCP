@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using UnityEditor;
 using UnityEngine;
 
@@ -174,11 +173,8 @@ namespace UnityMCP.Editor
             }
 
             // Delete persistence file
-            if (File.Exists(PersistencePath))
-            {
-                try { File.Delete(PersistencePath); }
-                catch (Exception ex) { Debug.LogWarning($"[MCP History] Failed to delete persistence file: {ex.Message}"); }
-            }
+            try { MCPPersistenceFile.DeleteIfExists(PersistencePath); }
+            catch (Exception ex) { Debug.LogWarning($"[MCP History] Failed to delete persistence file: {ex.Message}"); }
         }
 
         // ═══════════════════════════════════════════════════════
@@ -216,7 +212,7 @@ namespace UnityMCP.Editor
                 }
 
                 string json = JsonUtility.ToJson(wrapper, true);
-                File.WriteAllText(PersistencePath, json);
+                MCPPersistenceFile.WriteAllText(PersistencePath, json);
             }
             catch (Exception ex)
             {
@@ -226,11 +222,9 @@ namespace UnityMCP.Editor
 
         private static void LoadFromDisk()
         {
-            if (!File.Exists(PersistencePath)) return;
-
             try
             {
-                string json = File.ReadAllText(PersistencePath);
+                if (!MCPPersistenceFile.TryReadAllText(PersistencePath, out string json)) return;
                 var wrapper = JsonUtility.FromJson<HistoryWrapper>(json);
 
                 if (wrapper?.records == null) return;

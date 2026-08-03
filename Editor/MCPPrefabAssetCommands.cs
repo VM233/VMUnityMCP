@@ -14,7 +14,7 @@ namespace UnityMCP.Editor
     /// <summary>
     /// Direct prefab asset editing — browse hierarchy, get/set properties, wire references,
     /// add/remove components and children on prefab assets without needing a scene instance.
-    /// Every operation is atomic: load → modify → save → unload.
+    /// Every mutation is atomic: load → modify → save → unload → normalize/import → verify/commit.
     /// </summary>
     public static class MCPPrefabAssetCommands
     {
@@ -104,23 +104,24 @@ namespace UnityMCP.Editor
                 if (component == null)
                     return new { error = $"Component '{componentType}' not found on '{go.name}'" };
 
-                var serialized = new SerializedObject(component);
                 var properties = new List<Dictionary<string, object>>();
-
-                var iterator = serialized.GetIterator();
-                if (iterator.NextVisible(true))
+                using (var serialized = new SerializedObject(component))
                 {
-                    do
+                    var iterator = serialized.GetIterator();
+                    if (iterator.NextVisible(true))
                     {
-                        properties.Add(new Dictionary<string, object>
+                        do
                         {
-                            { "name", iterator.name },
-                            { "displayName", iterator.displayName },
-                            { "type", iterator.propertyType.ToString() },
-                            { "value", MCPComponentCommands.GetSerializedValue(iterator) },
-                            { "editable", iterator.editable },
-                        });
-                    } while (iterator.NextVisible(false));
+                            properties.Add(new Dictionary<string, object>
+                            {
+                                { "name", iterator.name },
+                                { "displayName", iterator.displayName },
+                                { "type", iterator.propertyType.ToString() },
+                                { "value", MCPComponentCommands.GetSerializedValue(iterator) },
+                                { "editable", iterator.editable },
+                            });
+                        } while (iterator.NextVisible(false));
+                    }
                 }
 
                 return new Dictionary<string, object>
@@ -168,65 +169,69 @@ namespace UnityMCP.Editor
             string prefabName = root.name;
             string gameObjectName = "";
             var saveWarnings = new List<string>();
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                var go = FindInPrefab(root, prefabPath);
-                if (go == null)
-                    return new { error = $"GameObject '{prefabPath}' not found in prefab" };
-                gameObjectName = go.name;
-
-                Type type = MCPComponentCommands.FindType(componentType);
-                if (type == null)
-                    return new { error = $"Type '{componentType}' not found" };
-
-                var component = go.GetComponent(type);
-                if (component == null)
-                    return new { error = $"Component '{componentType}' not found on '{go.name}'" };
-
-                var serialized = new SerializedObject(component);
-                var prop = serialized.FindProperty(propertyName);
-                if (prop == null)
-                    return new { error = $"Property '{propertyName}' not found on '{componentType}'" };
-
-                MCPComponentCommands.SetSerializedValue(prop, args["value"]);
-                serialized.ApplyModifiedProperties();
-                expectedValue = MCPComponentCommands.GetSerializedValue(prop);
-                hasExpectedValue = true;
-
-                SavePrefabAssetNormalized(root, assetPath, BuildExplicitYamlPropertyRoots(propertyName),
-                    saveWarnings);
-                if (!TryVerifyPrefabProperty(assetPath, prefabPath, type, propertyName, expectedValue,
-                        out object actualValue, out string verificationError))
+                try
                 {
-                    throw new InvalidOperationException(
-                        $"Prefab save could not be verified by serialized readback: {verificationError}. " +
-                        $"Expected {MiniJson.Serialize(expectedValue)}, read {MiniJson.Serialize(actualValue)}.");
-                }
+                    var go = FindInPrefab(root, prefabPath);
+                    if (go == null)
+                        return new { error = $"GameObject '{prefabPath}' not found in prefab" };
+                    gameObjectName = go.name;
 
-                var result = BuildSetPropertySuccess(prefabName, gameObjectName, componentType,
-                    propertyName, saveWarnings, false, null);
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                if (hasExpectedValue && TryVerifyPrefabProperty(assetPath, prefabPath,
-                        MCPComponentCommands.FindType(componentType), propertyName, expectedValue,
-                        out _, out _))
-                {
-                    saveWarnings.Add(
-                        $"The save path raised '{ex.GetBaseException().Message}', but serialized readback " +
-                        "confirmed the requested value was persisted.");
-                    var recovered = BuildSetPropertySuccess(prefabName, gameObjectName, componentType,
-                        propertyName, saveWarnings, true, ex.GetBaseException().Message);
-                    AddPrefabFileDiff(recovered, beforeSnapshot, assetPath, args);
-                    return recovered;
+                    Type type = MCPComponentCommands.FindType(componentType);
+                    if (type == null)
+                        return new { error = $"Type '{componentType}' not found" };
+
+                    var component = go.GetComponent(type);
+                    if (component == null)
+                        return new { error = $"Component '{componentType}' not found on '{go.name}'" };
+
+                    using (var serialized = new SerializedObject(component))
+                    {
+                        var prop = serialized.FindProperty(propertyName);
+                        if (prop == null)
+                            return new { error = $"Property '{propertyName}' not found on '{componentType}'" };
+
+                        MCPComponentCommands.SetSerializedValue(prop, args["value"]);
+                        serialized.ApplyModifiedProperties();
+                        expectedValue = MCPComponentCommands.GetSerializedValue(prop);
+                        hasExpectedValue = true;
+                    }
+
+                    session.SaveAndClose(BuildExplicitYamlPropertyRoots(propertyName), saveWarnings);
+                    if (!TryVerifyPrefabProperty(assetPath, prefabPath, type, propertyName, expectedValue,
+                            out object actualValue, out string verificationError))
+                    {
+                        throw new InvalidOperationException(
+                            $"Prefab save could not be verified by serialized readback: {verificationError}. " +
+                            $"Expected {MiniJson.Serialize(expectedValue)}, read {MiniJson.Serialize(actualValue)}.");
+                    }
+
+                    var result = BuildSetPropertySuccess(prefabName, gameObjectName, componentType,
+                        propertyName, saveWarnings, false, null);
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.CommitVerifiedPublication();
+                    return result;
                 }
-                return new { error = $"Failed to set property: {ex.Message}" };
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
+                catch (Exception ex)
+                {
+                    session.CloseAuthoringRoot();
+                    if (session.SaveAttempted && hasExpectedValue &&
+                        TryVerifyPrefabProperty(assetPath, prefabPath,
+                            MCPComponentCommands.FindType(componentType), propertyName, expectedValue,
+                            out _, out _))
+                    {
+                        saveWarnings.Add(
+                            $"The save path raised '{ex.GetBaseException().Message}', but serialized readback " +
+                            "confirmed the requested value was persisted.");
+                        var recovered = BuildSetPropertySuccess(prefabName, gameObjectName, componentType,
+                            propertyName, saveWarnings, true, ex.GetBaseException().Message);
+                        AddPrefabFileDiff(recovered, beforeSnapshot, assetPath, args);
+                        session.CommitVerifiedPublication();
+                        return recovered;
+                    }
+                    return new { error = $"Failed to set property: {ex.Message}" };
+                }
             }
         }
 
@@ -286,18 +291,20 @@ namespace UnityMCP.Editor
                     return false;
                 }
 
-                var serialized = new SerializedObject(component);
-                serialized.Update();
-                var property = serialized.FindProperty(propertyName);
-                if (property == null)
+                using (var serialized = new SerializedObject(component))
                 {
-                    error = $"property '{propertyName}' was not found";
-                    return false;
-                }
+                    serialized.Update();
+                    var property = serialized.FindProperty(propertyName);
+                    if (property == null)
+                    {
+                        error = $"property '{propertyName}' was not found";
+                        return false;
+                    }
 
-                actualValue = MCPComponentCommands.GetSerializedValue(property);
-                if (MiniJson.Serialize(actualValue) == MiniJson.Serialize(expectedValue))
-                    return true;
+                    actualValue = MCPComponentCommands.GetSerializedValue(property);
+                    if (MiniJson.Serialize(actualValue) == MiniJson.Serialize(expectedValue))
+                        return true;
+                }
 
                 error = "serialized value did not match";
                 return false;
@@ -330,63 +337,61 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
-            bool saveAttempted = false;
-            bool persisted = false;
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                if (!TryAddPrefabComponent(root, args, out var go, out var component,
-                        out int componentIndex, out var changedProperties, out var expectedValues,
-                        out string addError))
+                try
+                {
+                    if (!TryAddPrefabComponent(root, args, out var go, out var component,
+                            out int componentIndex, out var changedProperties, out var expectedValues,
+                            out string addError))
+                    {
+                        return MCPResponse.Error(
+                            $"Failed to add component: {addError}",
+                            "prefab_add_component_failed");
+                    }
+
+                    string prefabName = root.name;
+                    string gameObjectName = go.name;
+                    Type addedComponentType = component.GetType();
+
+                    if (session.SaveAndClose(
+                            BuildExplicitYamlPropertyRoots(changedProperties.ToArray())) == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"SaveAsPrefabAsset returned null for '{assetPath}'.");
+                    }
+
+                    if (!TryVerifyPrefabComponentConfiguration(assetPath, prefabPath,
+                            addedComponentType, componentIndex, expectedValues,
+                            out string verificationError))
+                    {
+                        throw new InvalidOperationException(
+                            $"Prefab save could not be verified by serialized readback: {verificationError}.");
+                    }
+
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "prefab", prefabName },
+                        { "gameObject", gameObjectName },
+                        { "component", addedComponentType.Name },
+                        { "fullType", addedComponentType.FullName },
+                        { "componentIndex", componentIndex },
+                        { "configuredProperties", changedProperties },
+                        { "configuredPropertyCount", changedProperties.Count },
+                        { "persisted", true },
+                        { "persistenceVerifiedBy", "serialized-readback" },
+                    };
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.Commit();
+                    return result;
+                }
+                catch (Exception ex)
                 {
                     return MCPResponse.Error(
-                        $"Failed to add component: {addError}",
+                        $"Failed to add component: {ex.GetBaseException().Message}",
                         "prefab_add_component_failed");
                 }
-
-                saveAttempted = true;
-                if (SavePrefabAssetNormalized(root, assetPath,
-                        BuildExplicitYamlPropertyRoots(changedProperties.ToArray())) == null)
-                {
-                    throw new InvalidOperationException(
-                        $"SaveAsPrefabAsset returned null for '{assetPath}'.");
-                }
-
-                if (!TryVerifyPrefabComponentConfiguration(assetPath, prefabPath,
-                        component.GetType(), componentIndex, expectedValues, out string verificationError))
-                {
-                    throw new InvalidOperationException(
-                        $"Prefab save could not be verified by serialized readback: {verificationError}.");
-                }
-
-                persisted = true;
-
-                var result = new Dictionary<string, object>
-                {
-                    { "success", true },
-                    { "prefab", root.name },
-                    { "gameObject", go.name },
-                    { "component", component.GetType().Name },
-                    { "fullType", component.GetType().FullName },
-                    { "componentIndex", componentIndex },
-                    { "configuredProperties", changedProperties },
-                    { "configuredPropertyCount", changedProperties.Count },
-                    { "persisted", true },
-                    { "persistenceVerifiedBy", "serialized-readback" },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return MCPResponse.Error(
-                    $"Failed to add component: {ex.GetBaseException().Message}",
-                    "prefab_add_component_failed");
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
-                if (saveAttempted && !persisted)
-                    RestoreAssetSnapshot(beforeSnapshot);
             }
         }
 
@@ -689,75 +694,77 @@ namespace UnityMCP.Editor
             }
 
             var beforeSnapshot = CaptureAssetText(assetPath);
-            GameObject root = null;
-            bool saveAttempted = false;
-            bool persisted = false;
+            GameObject root;
             try
             {
                 root = PrefabUtility.LoadPrefabContents(assetPath);
-                if (root == null)
-                {
-                    error = $"Failed to load prefab at '{assetPath}'";
-                    return false;
-                }
-
-                var gameObject = FindInPrefab(root, prefabPath);
-                if (gameObject == null)
-                {
-                    error = $"GameObject '{prefabPath}' not found in prefab";
-                    return false;
-                }
-
-                var components = gameObject.GetComponents(componentType);
-                if (componentIndex < 0 || componentIndex >= components.Length)
-                {
-                    error = $"Component '{componentType.FullName}' at index {componentIndex} " +
-                            $"was not found; persisted count is {components.Length}";
-                    return false;
-                }
-
-                var component = components[componentIndex];
-                if (!TryApplySerializedProperties(component, properties, configuredProperties,
-                        out error))
-                {
-                    return false;
-                }
-
-                var expectedValues = new Dictionary<string, object>();
-                if (!TryCaptureSerializedProperties(component, configuredProperties,
-                        expectedValues, out error))
-                {
-                    return false;
-                }
-
-                saveAttempted = true;
-                if (SavePrefabAssetNormalized(root, assetPath,
-                        BuildExplicitYamlPropertyRoots(configuredProperties.ToArray())) == null)
-                {
-                    error = $"SaveAsPrefabAsset returned null for '{assetPath}'";
-                    return false;
-                }
-
-                if (!TryVerifyPrefabComponentConfiguration(assetPath, prefabPath,
-                        componentType, componentIndex, expectedValues, out error))
-                {
-                    return false;
-                }
-
-                persisted = true;
-                return true;
             }
             catch (Exception ex)
             {
                 error = ex.GetBaseException().Message;
                 return false;
             }
-            finally
+
+            if (root == null)
             {
-                if (root != null)
-                    PrefabUtility.UnloadPrefabContents(root);
-                if (saveAttempted && !persisted)
-                    RestoreAssetSnapshot(beforeSnapshot);
+                error = $"Failed to load prefab at '{assetPath}'";
+                return false;
+            }
+
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
+            {
+                try
+                {
+                    var gameObject = FindInPrefab(root, prefabPath);
+                    if (gameObject == null)
+                    {
+                        error = $"GameObject '{prefabPath}' not found in prefab";
+                        return false;
+                    }
+
+                    var components = gameObject.GetComponents(componentType);
+                    if (componentIndex < 0 || componentIndex >= components.Length)
+                    {
+                        error = $"Component '{componentType.FullName}' at index {componentIndex} " +
+                                $"was not found; persisted count is {components.Length}";
+                        return false;
+                    }
+
+                    var component = components[componentIndex];
+                    if (!TryApplySerializedProperties(component, properties, configuredProperties,
+                            out error))
+                    {
+                        return false;
+                    }
+
+                    var expectedValues = new Dictionary<string, object>();
+                    if (!TryCaptureSerializedProperties(component, configuredProperties,
+                            expectedValues, out error))
+                    {
+                        return false;
+                    }
+
+                    if (session.SaveAndClose(
+                            BuildExplicitYamlPropertyRoots(configuredProperties.ToArray())) == null)
+                    {
+                        error = $"SaveAsPrefabAsset returned null for '{assetPath}'";
+                        return false;
+                    }
+
+                    if (!TryVerifyPrefabComponentConfiguration(assetPath, prefabPath,
+                            componentType, componentIndex, expectedValues, out error))
+                    {
+                        return false;
+                    }
+
+                    session.Commit();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.GetBaseException().Message;
+                    return false;
+                }
             }
         }
 
@@ -782,41 +789,45 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                var go = FindInPrefab(root, prefabPath);
-                if (go == null)
-                    return new { error = $"GameObject '{prefabPath}' not found in prefab" };
-
-                Type type = MCPComponentCommands.FindType(componentType);
-                if (type == null)
-                    return new { error = $"Type '{componentType}' not found" };
-
-                var components = go.GetComponents(type);
-                if (components == null || index >= components.Length)
-                    return new { error = $"Component '{componentType}' at index {index} not found on '{go.name}'" };
-
-                UnityEngine.Object.DestroyImmediate(components[index]);
-                SavePrefabAssetNormalized(root, assetPath);
-
-                var result = new Dictionary<string, object>
+                try
                 {
-                    { "success", true },
-                    { "prefab", root.name },
-                    { "gameObject", go.name },
-                    { "removedComponent", componentType },
-                    { "index", index },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return new { error = $"Failed to remove component: {ex.Message}" };
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
+                    var go = FindInPrefab(root, prefabPath);
+                    if (go == null)
+                        return new { error = $"GameObject '{prefabPath}' not found in prefab" };
+
+                    Type type = MCPComponentCommands.FindType(componentType);
+                    if (type == null)
+                        return new { error = $"Type '{componentType}' not found" };
+
+                    var components = go.GetComponents(type);
+                    if (components == null || index >= components.Length)
+                        return new { error = $"Component '{componentType}' at index {index} not found on '{go.name}'" };
+
+                    string prefabName = root.name;
+                    string gameObjectName = go.name;
+                    UnityEngine.Object.DestroyImmediate(components[index]);
+                    if (session.SaveAndClose() == null)
+                        throw new InvalidOperationException(
+                            $"SaveAsPrefabAsset returned null for '{assetPath}'.");
+
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "prefab", prefabName },
+                        { "gameObject", gameObjectName },
+                        { "removedComponent", componentType },
+                        { "index", index },
+                    };
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.Commit();
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    return new { error = $"Failed to remove component: {ex.Message}" };
+                }
             }
         }
 
@@ -844,85 +855,84 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
-            bool saved = false;
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                var source = FindInPrefab(root, sourcePrefabPath);
-                if (source == null)
-                    return new { error = $"Source GameObject '{sourcePrefabPath}' not found in prefab" };
-
-                var target = FindInPrefab(root, targetPrefabPath);
-                if (target == null)
-                    return new { error = $"Target GameObject '{targetPrefabPath}' not found in prefab" };
-                if (source == target)
-                    return new { error = "Source and target GameObjects must be different" };
-
-                Type type = MCPComponentCommands.FindType(componentType);
-                if (type == null)
-                    return new { error = $"Type '{componentType}' not found" };
-                if (typeof(Transform).IsAssignableFrom(type))
-                    return new { error = "Transform components cannot be moved" };
-
-                var sourceComponents = source.GetComponents(type);
-                if (componentIndex >= sourceComponents.Length)
+                try
                 {
-                    return new
+                    var source = FindInPrefab(root, sourcePrefabPath);
+                    if (source == null)
+                        return new { error = $"Source GameObject '{sourcePrefabPath}' not found in prefab" };
+
+                    var target = FindInPrefab(root, targetPrefabPath);
+                    if (target == null)
+                        return new { error = $"Target GameObject '{targetPrefabPath}' not found in prefab" };
+                    if (source == target)
+                        return new { error = "Source and target GameObjects must be different" };
+
+                    Type type = MCPComponentCommands.FindType(componentType);
+                    if (type == null)
+                        return new { error = $"Type '{componentType}' not found" };
+                    if (typeof(Transform).IsAssignableFrom(type))
+                        return new { error = "Transform components cannot be moved" };
+
+                    var sourceComponents = source.GetComponents(type);
+                    if (componentIndex >= sourceComponents.Length)
                     {
-                        error = $"Component '{componentType}' at index {componentIndex} not found on '{source.name}'"
+                        return new
+                        {
+                            error = $"Component '{componentType}' at index {componentIndex} not found on '{source.name}'"
+                        };
+                    }
+
+                    var sourceComponent = sourceComponents[componentIndex];
+                    Type movedComponentType = sourceComponent.GetType();
+                    int targetComponentCount = target.GetComponents(type).Length;
+                    if (!UnityEditorInternal.ComponentUtility.CopyComponent(sourceComponent) ||
+                        !UnityEditorInternal.ComponentUtility.PasteComponentAsNew(target))
+                    {
+                        return new { error = $"Failed to copy component '{componentType}' to '{target.name}'" };
+                    }
+
+                    var targetComponents = target.GetComponents(type);
+                    if (targetComponents.Length != targetComponentCount + 1)
+                    {
+                        return new { error = $"Component '{componentType}' was not added exactly once to '{target.name}'" };
+                    }
+
+                    var movedComponent = targetComponents[targetComponentCount];
+                    int remappedReferenceCount = RemapComponentReferences(root, sourceComponent, movedComponent);
+
+                    UnityEngine.Object.DestroyImmediate(sourceComponent);
+                    if (source.GetComponents(type).Length != sourceComponents.Length - 1)
+                        return new { error = $"Failed to remove component '{componentType}' from '{source.name}'" };
+
+                    string prefabName = root.name;
+                    string resolvedSourcePath = GetPrefabPath(root, source);
+                    string resolvedTargetPath = GetPrefabPath(root, target);
+                    if (session.SaveAndClose() == null)
+                        throw new InvalidOperationException($"SaveAsPrefabAsset returned null for '{assetPath}'.");
+
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "prefab", prefabName },
+                        { "assetPath", assetPath },
+                        { "sourcePrefabPath", resolvedSourcePath },
+                        { "targetPrefabPath", resolvedTargetPath },
+                        { "component", movedComponentType.Name },
+                        { "fullType", movedComponentType.FullName },
+                        { "componentIndex", componentIndex },
+                        { "remappedReferenceCount", remappedReferenceCount },
                     };
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.Commit();
+                    return result;
                 }
-
-                var sourceComponent = sourceComponents[componentIndex];
-                Type movedComponentType = sourceComponent.GetType();
-                int targetComponentCount = target.GetComponents(type).Length;
-                if (!UnityEditorInternal.ComponentUtility.CopyComponent(sourceComponent) ||
-                    !UnityEditorInternal.ComponentUtility.PasteComponentAsNew(target))
+                catch (Exception ex)
                 {
-                    return new { error = $"Failed to copy component '{componentType}' to '{target.name}'" };
+                    Debug.LogException(ex);
+                    return MCPResponse.Error($"Failed to move component: {ex.Message}", "move_component_failed");
                 }
-
-                var targetComponents = target.GetComponents(type);
-                if (targetComponents.Length != targetComponentCount + 1)
-                {
-                    return new { error = $"Component '{componentType}' was not added exactly once to '{target.name}'" };
-                }
-
-                var movedComponent = targetComponents[targetComponentCount];
-                int remappedReferenceCount = RemapComponentReferences(root, sourceComponent, movedComponent);
-
-                UnityEngine.Object.DestroyImmediate(sourceComponent);
-                if (source.GetComponents(type).Length != sourceComponents.Length - 1)
-                    return new { error = $"Failed to remove component '{componentType}' from '{source.name}'" };
-
-                if (SavePrefabAssetNormalized(root, assetPath) == null)
-                    throw new InvalidOperationException($"SaveAsPrefabAsset returned null for '{assetPath}'.");
-                saved = true;
-
-                var result = new Dictionary<string, object>
-                {
-                    { "success", true },
-                    { "prefab", root.name },
-                    { "assetPath", assetPath },
-                    { "sourcePrefabPath", GetPrefabPath(root, source) },
-                    { "targetPrefabPath", GetPrefabPath(root, target) },
-                    { "component", movedComponentType.Name },
-                    { "fullType", movedComponentType.FullName },
-                    { "componentIndex", componentIndex },
-                    { "remappedReferenceCount", remappedReferenceCount },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex);
-                return MCPResponse.Error($"Failed to move component: {ex.Message}", "move_component_failed");
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
-                if (!saved)
-                    RestoreAssetSnapshot(beforeSnapshot);
             }
         }
 
@@ -935,31 +945,33 @@ namespace UnityMCP.Editor
                 if (owner == null || owner == sourceComponent)
                     continue;
 
-                var serializedObject = new SerializedObject(owner);
-                serializedObject.UpdateIfRequiredOrScript();
-                var property = serializedObject.GetIterator();
-                bool changed = false;
-
-                while (property.Next(true))
+                using (var serializedObject = new SerializedObject(owner))
                 {
-                    if (property.propertyType == SerializedPropertyType.ObjectReference &&
-                        property.objectReferenceValue == sourceComponent)
-                    {
-                        property.objectReferenceValue = movedComponent;
-                        remappedReferenceCount++;
-                        changed = true;
-                    }
-                    else if (property.propertyType == SerializedPropertyType.ExposedReference &&
-                             property.exposedReferenceValue == sourceComponent)
-                    {
-                        property.exposedReferenceValue = movedComponent;
-                        remappedReferenceCount++;
-                        changed = true;
-                    }
-                }
+                    serializedObject.UpdateIfRequiredOrScript();
+                    var property = serializedObject.GetIterator();
+                    bool changed = false;
 
-                if (changed)
-                    serializedObject.ApplyModifiedPropertiesWithoutUndo();
+                    while (property.Next(true))
+                    {
+                        if (property.propertyType == SerializedPropertyType.ObjectReference &&
+                            property.objectReferenceValue == sourceComponent)
+                        {
+                            property.objectReferenceValue = movedComponent;
+                            remappedReferenceCount++;
+                            changed = true;
+                        }
+                        else if (property.propertyType == SerializedPropertyType.ExposedReference &&
+                                 property.exposedReferenceValue == sourceComponent)
+                        {
+                            property.exposedReferenceValue = movedComponent;
+                            remappedReferenceCount++;
+                            changed = true;
+                        }
+                    }
+
+                    if (changed)
+                        serializedObject.ApplyModifiedPropertiesWithoutUndo();
+                }
             }
 
             return remappedReferenceCount;
@@ -996,111 +1008,119 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                var go = FindInPrefab(root, prefabPath);
-                if (go == null)
-                    return new { error = $"GameObject '{prefabPath}' not found in prefab" };
+                try
+                {
+                    var go = FindInPrefab(root, prefabPath);
+                    if (go == null)
+                        return new { error = $"GameObject '{prefabPath}' not found in prefab" };
 
-                // Find component (auto-search if componentType not specified)
-                Component component = null;
-                if (!string.IsNullOrEmpty(componentType))
-                {
-                    Type type = MCPComponentCommands.FindType(componentType);
-                    if (type != null) component = go.GetComponent(type);
-                }
-                else
-                {
-                    foreach (var comp in go.GetComponents<Component>())
+                    // Find component (auto-search if componentType not specified)
+                    Component component = null;
+                    if (!string.IsNullOrEmpty(componentType))
                     {
-                        if (comp == null) continue;
-                        var so = new SerializedObject(comp);
-                        if (so.FindProperty(propertyName) != null)
-                        {
-                            component = comp;
-                            break;
-                        }
-                    }
-                }
-
-                if (component == null)
-                    return new { error = $"Component '{componentType}' not found on '{go.name}', or no component has property '{propertyName}'" };
-
-                var serialized = new SerializedObject(component);
-                var prop = serialized.FindProperty(propertyName);
-                if (prop == null)
-                    return new { error = $"Property '{propertyName}' not found" };
-
-                if (prop.propertyType != SerializedPropertyType.ObjectReference)
-                    return new { error = $"Property '{propertyName}' is not an ObjectReference (type: {prop.propertyType})" };
-
-                // Resolve reference
-                UnityEngine.Object targetRef = null;
-                string refDescription = "null (cleared)";
-
-                if (clearRef)
-                {
-                    prop.objectReferenceValue = null;
-                }
-                else if (!string.IsNullOrEmpty(referenceAssetPath))
-                {
-                    if (!TryResolveAssetReference(prop, referenceAssetPath, referenceSubAssetName,
-                            referenceSubAssetLocalId, out targetRef, out string error))
-                        return new { error };
-
-                    refDescription = $"{targetRef.name} ({targetRef.GetType().Name})";
-                }
-                else if (hasReferencePrefabPath)
-                {
-                    var refGo = FindInPrefab(root, referencePrefabPath);
-                    if (refGo == null)
-                        return new { error = $"GameObject '{referencePrefabPath}' not found in prefab" };
-
-                    if (!string.IsNullOrEmpty(referenceComponentType))
-                    {
-                        Type refType = MCPComponentCommands.FindType(referenceComponentType);
-                        if (refType == null)
-                            return new { error = $"Type '{referenceComponentType}' not found" };
-
-                        targetRef = refGo.GetComponent(refType);
-                        if (targetRef == null)
-                            return new { error = $"Component '{referenceComponentType}' not found on '{refGo.name}'" };
+                        Type type = MCPComponentCommands.FindType(componentType);
+                        if (type != null) component = go.GetComponent(type);
                     }
                     else
                     {
-                        targetRef = refGo;
+                        foreach (var comp in go.GetComponents<Component>())
+                        {
+                            if (comp == null) continue;
+                            using (var candidate = new SerializedObject(comp))
+                            {
+                                if (candidate.FindProperty(propertyName) != null)
+                                {
+                                    component = comp;
+                                    break;
+                                }
+                            }
+                        }
                     }
 
-                    prop.objectReferenceValue = targetRef;
-                    refDescription = $"{targetRef.name} ({targetRef.GetType().Name})";
-                }
-                else
-                {
-                    return new { error = "Provide referenceAssetPath, referencePrefabPath, or clear=true" };
-                }
+                    if (component == null)
+                        return new { error = $"Component '{componentType}' not found on '{go.name}', or no component has property '{propertyName}'" };
 
-                serialized.ApplyModifiedProperties();
-                SavePrefabAssetNormalized(root, assetPath, BuildExplicitYamlPropertyRoots(propertyName));
+                    string refDescription = "null (cleared)";
+                    using (var serialized = new SerializedObject(component))
+                    {
+                        var prop = serialized.FindProperty(propertyName);
+                        if (prop == null)
+                            return new { error = $"Property '{propertyName}' not found" };
 
-                var result = new Dictionary<string, object>
+                        if (prop.propertyType != SerializedPropertyType.ObjectReference)
+                            return new { error = $"Property '{propertyName}' is not an ObjectReference (type: {prop.propertyType})" };
+
+                        UnityEngine.Object targetRef = null;
+                        if (clearRef)
+                        {
+                            prop.objectReferenceValue = null;
+                        }
+                        else if (!string.IsNullOrEmpty(referenceAssetPath))
+                        {
+                            if (!TryResolveAssetReference(prop, referenceAssetPath, referenceSubAssetName,
+                                    referenceSubAssetLocalId, out targetRef, out string error))
+                                return new { error };
+
+                            refDescription = $"{targetRef.name} ({targetRef.GetType().Name})";
+                        }
+                        else if (hasReferencePrefabPath)
+                        {
+                            var refGo = FindInPrefab(root, referencePrefabPath);
+                            if (refGo == null)
+                                return new { error = $"GameObject '{referencePrefabPath}' not found in prefab" };
+
+                            if (!string.IsNullOrEmpty(referenceComponentType))
+                            {
+                                Type refType = MCPComponentCommands.FindType(referenceComponentType);
+                                if (refType == null)
+                                    return new { error = $"Type '{referenceComponentType}' not found" };
+
+                                targetRef = refGo.GetComponent(refType);
+                                if (targetRef == null)
+                                    return new { error = $"Component '{referenceComponentType}' not found on '{refGo.name}'" };
+                            }
+                            else
+                            {
+                                targetRef = refGo;
+                            }
+
+                            prop.objectReferenceValue = targetRef;
+                            refDescription = $"{targetRef.name} ({targetRef.GetType().Name})";
+                        }
+                        else
+                        {
+                            return new { error = "Provide referenceAssetPath, referencePrefabPath, or clear=true" };
+                        }
+
+                        serialized.ApplyModifiedProperties();
+                    }
+
+                    string prefabName = root.name;
+                    string gameObjectName = go.name;
+                    string resolvedComponentType = component.GetType().Name;
+                    if (session.SaveAndClose(BuildExplicitYamlPropertyRoots(propertyName)) == null)
+                        throw new InvalidOperationException(
+                            $"SaveAsPrefabAsset returned null for '{assetPath}'.");
+
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "prefab", prefabName },
+                        { "gameObject", gameObjectName },
+                        { "component", resolvedComponentType },
+                        { "property", propertyName },
+                        { "reference", refDescription },
+                    };
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.Commit();
+                    return result;
+                }
+                catch (Exception ex)
                 {
-                    { "success", true },
-                    { "prefab", root.name },
-                    { "gameObject", go.name },
-                    { "component", component.GetType().Name },
-                    { "property", propertyName },
-                    { "reference", refDescription },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return new { error = $"Failed to set reference: {ex.Message}" };
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
+                    return new { error = $"Failed to set reference: {ex.Message}" };
+                }
             }
         }
 
@@ -1127,63 +1147,63 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
-            bool saved = false;
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                var parent = FindInPrefab(root, parentPrefabPath);
-                if (parent == null)
-                    return new { error = $"Parent '{parentPrefabPath}' not found in prefab" };
-
-                if (!TryResolveCreatedGameObjectLayer(args, parent, out int layer, out string layerError))
-                    return new { error = layerError };
-
-                GameObject newGo;
-                if (!string.IsNullOrEmpty(primitiveType) && Enum.TryParse<PrimitiveType>(primitiveType, true, out var pt))
+                try
                 {
-                    newGo = GameObject.CreatePrimitive(pt);
-                    newGo.name = name;
+                    var parent = FindInPrefab(root, parentPrefabPath);
+                    if (parent == null)
+                        return new { error = $"Parent '{parentPrefabPath}' not found in prefab" };
+
+                    if (!TryResolveCreatedGameObjectLayer(args, parent, out int layer, out string layerError))
+                        return new { error = layerError };
+
+                    GameObject newGo;
+                    if (!string.IsNullOrEmpty(primitiveType) &&
+                        Enum.TryParse<PrimitiveType>(primitiveType, true, out var pt))
+                    {
+                        newGo = GameObject.CreatePrimitive(pt);
+                        newGo.name = name;
+                    }
+                    else
+                    {
+                        newGo = new GameObject(name);
+                    }
+
+                    newGo.transform.SetParent(parent.transform, false);
+                    newGo.layer = layer;
+
+                    if (args.ContainsKey("position"))
+                        newGo.transform.localPosition = ParseVector3(args["position"]);
+                    if (args.ContainsKey("rotation"))
+                        newGo.transform.localEulerAngles = ParseVector3(args["rotation"]);
+                    if (args.ContainsKey("scale"))
+                        newGo.transform.localScale = ParseVector3(args["scale"]);
+
+                    string prefabName = root.name;
+                    string layerName = LayerMask.LayerToName(newGo.layer);
+                    int layerIndex = newGo.layer;
+                    if (session.SaveAndClose() == null)
+                        throw new InvalidOperationException(
+                            $"SaveAsPrefabAsset returned null for '{assetPath}'.");
+
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "prefab", prefabName },
+                        { "createdGameObject", name },
+                        { "parent", string.IsNullOrEmpty(parentPrefabPath) ? "root" : parentPrefabPath },
+                        { "layer", layerName },
+                        { "layerIndex", layerIndex },
+                    };
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.Commit();
+                    return result;
                 }
-                else
+                catch (Exception ex)
                 {
-                    newGo = new GameObject(name);
+                    return new { error = $"Failed to add GameObject: {ex.Message}" };
                 }
-
-                newGo.transform.SetParent(parent.transform, false);
-                newGo.layer = layer;
-
-                // Set transform if provided
-                if (args.ContainsKey("position"))
-                    newGo.transform.localPosition = ParseVector3(args["position"]);
-                if (args.ContainsKey("rotation"))
-                    newGo.transform.localEulerAngles = ParseVector3(args["rotation"]);
-                if (args.ContainsKey("scale"))
-                    newGo.transform.localScale = ParseVector3(args["scale"]);
-
-                if (SavePrefabAssetNormalized(root, assetPath) == null)
-                    throw new InvalidOperationException($"SaveAsPrefabAsset returned null for '{assetPath}'.");
-                saved = true;
-
-                var result = new Dictionary<string, object>
-                {
-                    { "success", true },
-                    { "prefab", root.name },
-                    { "createdGameObject", name },
-                    { "parent", string.IsNullOrEmpty(parentPrefabPath) ? "root" : parentPrefabPath },
-                    { "layer", LayerMask.LayerToName(newGo.layer) },
-                    { "layerIndex", newGo.layer },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return new { error = $"Failed to add GameObject: {ex.Message}" };
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
-                if (!saved)
-                    RestoreAssetSnapshot(beforeSnapshot);
             }
         }
 
@@ -1213,59 +1233,63 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
-            bool saved = false;
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                var parent = FindInPrefab(root, parentPrefabPath);
-                if (parent == null)
-                    return new { error = $"Parent '{parentPrefabPath}' not found in prefab" };
-
-                var instance = PrefabUtility.InstantiatePrefab(sourcePrefab, root.scene) as GameObject;
-                if (instance == null)
-                    return new { error = $"Failed to instantiate prefab '{sourcePrefabPath}'" };
-
-                instance.transform.SetParent(parent.transform, false);
-
-                if (string.IsNullOrEmpty(name) == false)
-                    instance.name = name;
-
-                if (args.ContainsKey("position"))
-                    instance.transform.localPosition = ParseVector3(args["position"]);
-                if (args.ContainsKey("rotation"))
-                    instance.transform.localEulerAngles = ParseVector3(args["rotation"]);
-                if (args.ContainsKey("scale"))
-                    instance.transform.localScale = ParseVector3(args["scale"]);
-
-                if (siblingIndex >= 0)
-                    instance.transform.SetSiblingIndex(Mathf.Clamp(siblingIndex, 0, parent.transform.childCount - 1));
-
-                if (SavePrefabAssetNormalized(root, assetPath) == null)
-                    throw new InvalidOperationException($"SaveAsPrefabAsset returned null for '{assetPath}'.");
-                saved = true;
-
-                var result = new Dictionary<string, object>
+                try
                 {
-                    { "success", true },
-                    { "prefab", root.name },
-                    { "assetPath", assetPath },
-                    { "sourcePrefabPath", sourcePrefabPath },
-                    { "createdGameObject", instance.name },
-                    { "prefabPath", GetPrefabPath(root, instance) },
-                    { "parent", string.IsNullOrEmpty(parentPrefabPath) ? "root" : parentPrefabPath },
-                    { "siblingIndex", instance.transform.GetSiblingIndex() },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return new { error = $"Failed to instantiate prefab: {ex.Message}" };
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
-                if (!saved)
-                    RestoreAssetSnapshot(beforeSnapshot);
+                    var parent = FindInPrefab(root, parentPrefabPath);
+                    if (parent == null)
+                        return new { error = $"Parent '{parentPrefabPath}' not found in prefab" };
+
+                    var instance = PrefabUtility.InstantiatePrefab(sourcePrefab, root.scene) as GameObject;
+                    if (instance == null)
+                        return new { error = $"Failed to instantiate prefab '{sourcePrefabPath}'" };
+
+                    instance.transform.SetParent(parent.transform, false);
+
+                    if (string.IsNullOrEmpty(name) == false)
+                        instance.name = name;
+
+                    if (args.ContainsKey("position"))
+                        instance.transform.localPosition = ParseVector3(args["position"]);
+                    if (args.ContainsKey("rotation"))
+                        instance.transform.localEulerAngles = ParseVector3(args["rotation"]);
+                    if (args.ContainsKey("scale"))
+                        instance.transform.localScale = ParseVector3(args["scale"]);
+
+                    if (siblingIndex >= 0)
+                    {
+                        instance.transform.SetSiblingIndex(
+                            Mathf.Clamp(siblingIndex, 0, parent.transform.childCount - 1));
+                    }
+
+                    string prefabName = root.name;
+                    string instanceName = instance.name;
+                    string instancePath = GetPrefabPath(root, instance);
+                    int resolvedSiblingIndex = instance.transform.GetSiblingIndex();
+                    if (session.SaveAndClose() == null)
+                        throw new InvalidOperationException(
+                            $"SaveAsPrefabAsset returned null for '{assetPath}'.");
+
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "prefab", prefabName },
+                        { "assetPath", assetPath },
+                        { "sourcePrefabPath", sourcePrefabPath },
+                        { "createdGameObject", instanceName },
+                        { "prefabPath", instancePath },
+                        { "parent", string.IsNullOrEmpty(parentPrefabPath) ? "root" : parentPrefabPath },
+                        { "siblingIndex", resolvedSiblingIndex },
+                    };
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.Commit();
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    return new { error = $"Failed to instantiate prefab: {ex.Message}" };
+                }
             }
         }
 
@@ -1288,36 +1312,39 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                var go = FindInPrefab(root, prefabPath);
-                if (go == null)
-                    return new { error = $"GameObject '{prefabPath}' not found in prefab" };
-
-                if (go == root)
-                    return new { error = "Cannot delete the root GameObject of a prefab" };
-
-                string deletedName = go.name;
-                UnityEngine.Object.DestroyImmediate(go);
-                SavePrefabAssetNormalized(root, assetPath);
-
-                var result = new Dictionary<string, object>
+                try
                 {
-                    { "success", true },
-                    { "prefab", root.name },
-                    { "deletedGameObject", deletedName },
-                    { "prefabPath", prefabPath },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return new { error = $"Failed to remove GameObject: {ex.Message}" };
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
+                    var go = FindInPrefab(root, prefabPath);
+                    if (go == null)
+                        return new { error = $"GameObject '{prefabPath}' not found in prefab" };
+
+                    if (go == root)
+                        return new { error = "Cannot delete the root GameObject of a prefab" };
+
+                    string prefabName = root.name;
+                    string deletedName = go.name;
+                    UnityEngine.Object.DestroyImmediate(go);
+                    if (session.SaveAndClose() == null)
+                        throw new InvalidOperationException(
+                            $"SaveAsPrefabAsset returned null for '{assetPath}'.");
+
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "prefab", prefabName },
+                        { "deletedGameObject", deletedName },
+                        { "prefabPath", prefabPath },
+                    };
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.Commit();
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    return new { error = $"Failed to remove GameObject: {ex.Message}" };
+                }
             }
         }
 
@@ -1343,58 +1370,61 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
-            bool saved = false;
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                var go = FindInPrefab(root, prefabPath);
-                if (go == null)
-                    return new { error = $"GameObject '{prefabPath}' not found in prefab" };
-
-                if (go == root)
-                    return new { error = "Cannot move the root GameObject of a prefab" };
-
-                var newParent = FindInPrefab(root, newParentPrefabPath);
-                if (newParent == null)
-                    return new { error = $"New parent '{newParentPrefabPath}' not found in prefab" };
-
-                string oldPath = GetPrefabPath(root, go);
-                string oldParentPath = go.transform.parent != null
-                    ? GetPrefabPath(root, go.transform.parent.gameObject)
-                    : "";
-                int oldSiblingIndex = go.transform.GetSiblingIndex();
-
-                go.transform.SetParent(newParent.transform, worldPositionStays);
-                if (siblingIndex >= 0)
-                    go.transform.SetSiblingIndex(Mathf.Clamp(siblingIndex, 0, newParent.transform.childCount - 1));
-
-                if (SavePrefabAssetNormalized(root, assetPath) == null)
-                    throw new InvalidOperationException($"SaveAsPrefabAsset returned null for '{assetPath}'.");
-                saved = true;
-
-                var result = new Dictionary<string, object>
+                try
                 {
-                    { "success", true },
-                    { "prefab", root.name },
-                    { "assetPath", assetPath },
-                    { "oldPath", oldPath },
-                    { "newPath", GetPrefabPath(root, go) },
-                    { "oldParent", oldParentPath },
-                    { "newParent", string.IsNullOrEmpty(newParentPrefabPath) ? "root" : newParentPrefabPath },
-                    { "oldSiblingIndex", oldSiblingIndex },
-                    { "newSiblingIndex", go.transform.GetSiblingIndex() },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return new { error = $"Failed to move GameObject: {ex.Message}" };
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
-                if (!saved)
-                    RestoreAssetSnapshot(beforeSnapshot);
+                    var go = FindInPrefab(root, prefabPath);
+                    if (go == null)
+                        return new { error = $"GameObject '{prefabPath}' not found in prefab" };
+
+                    if (go == root)
+                        return new { error = "Cannot move the root GameObject of a prefab" };
+
+                    var newParent = FindInPrefab(root, newParentPrefabPath);
+                    if (newParent == null)
+                        return new { error = $"New parent '{newParentPrefabPath}' not found in prefab" };
+
+                    string prefabName = root.name;
+                    string oldPath = GetPrefabPath(root, go);
+                    string oldParentPath = go.transform.parent != null
+                        ? GetPrefabPath(root, go.transform.parent.gameObject)
+                        : "";
+                    int oldSiblingIndex = go.transform.GetSiblingIndex();
+
+                    go.transform.SetParent(newParent.transform, worldPositionStays);
+                    if (siblingIndex >= 0)
+                    {
+                        go.transform.SetSiblingIndex(
+                            Mathf.Clamp(siblingIndex, 0, newParent.transform.childCount - 1));
+                    }
+
+                    string newPath = GetPrefabPath(root, go);
+                    int newSiblingIndex = go.transform.GetSiblingIndex();
+                    if (session.SaveAndClose() == null)
+                        throw new InvalidOperationException(
+                            $"SaveAsPrefabAsset returned null for '{assetPath}'.");
+
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "prefab", prefabName },
+                        { "assetPath", assetPath },
+                        { "oldPath", oldPath },
+                        { "newPath", newPath },
+                        { "oldParent", oldParentPath },
+                        { "newParent", string.IsNullOrEmpty(newParentPrefabPath) ? "root" : newParentPrefabPath },
+                        { "oldSiblingIndex", oldSiblingIndex },
+                        { "newSiblingIndex", newSiblingIndex },
+                    };
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.Commit();
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    return new { error = $"Failed to move GameObject: {ex.Message}" };
+                }
             }
         }
 
@@ -1462,19 +1492,21 @@ namespace UnityMCP.Editor
                         if (component == null)
                             continue;
 
-                        SerializedProperty matchedProperty = null;
                         object matchedValue = null;
 
                         if (string.IsNullOrEmpty(propertyName) == false)
                         {
-                            var serialized = new SerializedObject(component);
-                            matchedProperty = serialized.FindProperty(propertyName);
-                            if (matchedProperty == null)
-                                continue;
+                            using (var serialized = new SerializedObject(component))
+                            {
+                                var matchedProperty = serialized.FindProperty(propertyName);
+                                if (matchedProperty == null)
+                                    continue;
 
-                            matchedValue = MCPComponentCommands.GetSerializedValue(matchedProperty);
-                            if (hasPropertyValue && SerializedValueMatches(matchedValue, propertyValue) == false)
-                                continue;
+                                matchedValue = MCPComponentCommands.GetSerializedValue(matchedProperty);
+                                if (hasPropertyValue &&
+                                    SerializedValueMatches(matchedValue, propertyValue) == false)
+                                    continue;
+                            }
                         }
 
                         if (TryAddFindResult(results, maxResults, ref truncated, root, go, component,
@@ -1969,9 +2001,13 @@ namespace UnityMCP.Editor
             if (targetRoot == null)
                 return new { error = "Failed to load target prefab for editing" };
 
-            try
+            string sourceName = sourceAsset.name;
+            string targetName = targetAsset.name;
+            using (var session = new PrefabMutationSession(targetAssetPath, beforeSnapshot, targetRoot))
             {
-                int transferred = 0;
+                try
+                {
+                    int transferred = 0;
 
                 // Get the existing modifications on target
                 var targetMods = PrefabUtility.GetPropertyModifications(targetAsset);
@@ -2004,26 +2040,26 @@ namespace UnityMCP.Editor
                     transferred++;
                 }
 
-                PrefabUtility.SetPropertyModifications(targetRoot, newMods.ToArray());
-                SavePrefabAssetNormalized(targetRoot, targetAssetPath);
+                    PrefabUtility.SetPropertyModifications(targetRoot, newMods.ToArray());
+                    if (session.SaveAndClose() == null)
+                        throw new InvalidOperationException(
+                            $"SaveAsPrefabAsset returned null for '{targetAssetPath}'.");
 
-                var result = new Dictionary<string, object>
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "source", sourceName },
+                        { "target", targetName },
+                        { "transferredOverrides", transferred },
+                    };
+                    AddPrefabFileDiff(result, beforeSnapshot, targetAssetPath, args);
+                    session.Commit();
+                    return result;
+                }
+                catch (Exception ex)
                 {
-                    { "success", true },
-                    { "source", sourceAsset.name },
-                    { "target", targetAsset.name },
-                    { "transferredOverrides", transferred },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, targetAssetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return new { error = $"Failed to transfer overrides: {ex.Message}" };
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(targetRoot);
+                    return new { error = $"Failed to transfer overrides: {ex.Message}" };
+                }
             }
         }
 
@@ -2101,7 +2137,7 @@ namespace UnityMCP.Editor
                 PrefabUtility.SetPropertyModifications(prefabAsset, kept.ToArray());
                 EditorUtility.SetDirty(prefabAsset);
                 AssetDatabase.SaveAssets();
-                AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+                ImportPrefabAssetSynchronously(assetPath);
             }
 
             var result = new Dictionary<string, object>
@@ -2178,58 +2214,58 @@ namespace UnityMCP.Editor
             if (root == null)
                 return new { error = $"Failed to load prefab at '{assetPath}'" };
 
-            bool saved = false;
-            try
+            using (var session = new PrefabMutationSession(assetPath, beforeSnapshot, root))
             {
-                var summaries = new List<Dictionary<string, object>>();
-                for (int i = 0; i < operations.Count; i++)
+                try
                 {
-                    if (!TryApplyBatchOperation(root, operations[i], i, out var summary, out string error))
+                    var summaries = new List<Dictionary<string, object>>();
+                    for (int i = 0; i < operations.Count; i++)
                     {
-                        return new Dictionary<string, object>
+                        if (!TryApplyBatchOperation(root, operations[i], i, out var summary,
+                                out string error))
                         {
-                            { "error", error },
-                            { "success", false },
-                            { "saved", false },
-                            { "failedOperationIndex", i },
-                            { "failedOperation", operations[i] },
-                            { "appliedOperationCount", summaries.Count },
-                            { "operationSummaries", summaries },
-                        };
+                            return new Dictionary<string, object>
+                            {
+                                { "error", error },
+                                { "success", false },
+                                { "saved", false },
+                                { "failedOperationIndex", i },
+                                { "failedOperation", operations[i] },
+                                { "appliedOperationCount", summaries.Count },
+                                { "operationSummaries", summaries },
+                            };
+                        }
+
+                        summaries.Add(summary);
                     }
 
-                    summaries.Add(summary);
+                    string prefabName = root.name;
+                    if (session.SaveAndClose(CollectExplicitYamlPropertyRoots(operations)) == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"SaveAsPrefabAsset returned null for '{assetPath}'.");
+                    }
+
+                    var result = new Dictionary<string, object>
+                    {
+                        { "success", true },
+                        { "saved", true },
+                        { "prefab", prefabName },
+                        { "assetPath", assetPath },
+                        { "operationCount", operations.Count },
+                        { "operationSummaries", summaries },
+                    };
+                    AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
+                    session.Commit();
+                    return result;
                 }
-
-                if (SavePrefabAssetNormalized(root, assetPath,
-                        CollectExplicitYamlPropertyRoots(operations)) == null)
-                    throw new InvalidOperationException($"SaveAsPrefabAsset returned null for '{assetPath}'.");
-                saved = true;
-
-                var result = new Dictionary<string, object>
+                catch (Exception ex)
                 {
-                    { "success", true },
-                    { "saved", true },
-                    { "prefab", root.name },
-                    { "assetPath", assetPath },
-                    { "operationCount", operations.Count },
-                    { "operationSummaries", summaries },
-                };
-                AddPrefabFileDiff(result, beforeSnapshot, assetPath, args);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex);
-                return MCPResponse.Error(
-                    $"Failed to edit prefab transaction: {ex.Message}",
-                    "transaction_edit_failed");
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
-                if (!saved)
-                    RestoreAssetSnapshot(beforeSnapshot);
+                    Debug.LogException(ex);
+                    return MCPResponse.Error(
+                        $"Failed to edit prefab transaction: {ex.Message}",
+                        "transaction_edit_failed");
+                }
             }
         }
 
@@ -2517,8 +2553,7 @@ namespace UnityMCP.Editor
         {
             public string AssetPath;
             public List<Dictionary<string, object>> Operations;
-            public AssetTextSnapshot BeforeSnapshot;
-            public GameObject Root;
+            public PrefabMutationSession Session;
             public readonly List<Dictionary<string, object>> Summaries = new List<Dictionary<string, object>>();
             public int NextOperationIndex;
             public double StartedAt;
@@ -2526,8 +2561,11 @@ namespace UnityMCP.Editor
             public int OperationsPerFrame;
             public int FrameBudgetMs;
             public MCPExecutionOptions Execution;
-            public bool SaveAttempted;
-            public bool Saved;
+
+            public AssetTextSnapshot BeforeSnapshot => Session?.BeforeSnapshot;
+            public GameObject Root => Session?.Root;
+            public bool SaveAttempted => Session != null && Session.SaveAttempted;
+            public bool Saved => Session != null && Session.Committed;
         }
 
         private static void StartBatchEditDeferred(Dictionary<string, object> args, MCPExecutionOptions execution,
@@ -2567,11 +2605,11 @@ namespace UnityMCP.Editor
             }
 
             bool runBatched = execution.ResolveMode(operations.Count) == MCPExecutionMode.Batched;
+            var beforeSnapshot = CaptureAssetText(assetPath);
             var state = new BatchEditDeferredState
             {
                 AssetPath = assetPath,
                 Operations = operations,
-                BeforeSnapshot = CaptureAssetText(assetPath),
                 StartedAt = EditorApplication.timeSinceStartup,
                 TimeoutMs = execution.TimeoutMs,
                 OperationsPerFrame = runBatched ? execution.OperationsPerFrame : int.MaxValue,
@@ -2581,7 +2619,9 @@ namespace UnityMCP.Editor
 
             try
             {
-                state.Root = PrefabUtility.LoadPrefabContents(assetPath);
+                var root = PrefabUtility.LoadPrefabContents(assetPath);
+                if (root != null)
+                    state.Session = new PrefabMutationSession(assetPath, beforeSnapshot, root);
             }
             catch (Exception ex)
             {
@@ -2619,13 +2659,7 @@ namespace UnityMCP.Editor
                 if (tick != null)
                     EditorApplication.update -= tick;
 
-                if (state.Root != null)
-                {
-                    PrefabUtility.UnloadPrefabContents(state.Root);
-                    state.Root = null;
-                }
-
-                resolve(result);
+                resolve(FinalizeBatchEditResult(state, result));
             };
 
             tick = () =>
@@ -2676,13 +2710,12 @@ namespace UnityMCP.Editor
                     if (state.NextOperationIndex < state.Operations.Count)
                         return;
 
-                    state.SaveAttempted = true;
                     progress?.Invoke(BuildBatchEditProgress(state, elapsedMs, "saving"));
-                    var savedRoot = SavePrefabAssetNormalized(state.Root, state.AssetPath,
+                    string prefabName = state.Root.name;
+                    var savedRoot = state.Session.SaveAndClose(
                         CollectExplicitYamlPropertyRoots(state.Operations));
                     if (savedRoot == null)
                         throw new InvalidOperationException($"SaveAsPrefabAsset returned null for '{state.AssetPath}'.");
-                    state.Saved = true;
 
                     var result = new Dictionary<string, object>
                     {
@@ -2692,7 +2725,7 @@ namespace UnityMCP.Editor
                         { "partialPersisted", false },
                         { "partialPersistedKnown", true },
                         { "persistedState", "complete" },
-                        { "prefab", state.Root.name },
+                        { "prefab", prefabName },
                         { "assetPath", state.AssetPath },
                         { "operationCount", state.Operations.Count },
                         { "appliedOperationCount", state.Summaries.Count },
@@ -2701,6 +2734,7 @@ namespace UnityMCP.Editor
                         { "execution", state.Execution.ToResult(state.Operations.Count) },
                     };
                     AddPrefabFileDiff(result, state.BeforeSnapshot, state.AssetPath, args);
+                    state.Session.Commit();
                     complete(result);
                 }
                 catch (Exception ex)
@@ -2716,6 +2750,63 @@ namespace UnityMCP.Editor
             progress?.Invoke(BuildBatchEditProgress(state, 0, "started"));
             EditorApplication.update += tick;
             tick();
+        }
+
+        private static object FinalizeBatchEditResult(BatchEditDeferredState state, object result)
+        {
+            Exception sessionCompletionException = null;
+            try
+            {
+                state.Session?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                sessionCompletionException = ex;
+                Debug.LogException(ex);
+            }
+
+            var dictionary = result as Dictionary<string, object>;
+            if (dictionary == null && sessionCompletionException == null)
+                return result;
+            dictionary ??= new Dictionary<string, object>();
+
+            if (sessionCompletionException != null)
+            {
+                string existingError = dictionary.TryGetValue("error", out object errorValue)
+                    ? Convert.ToString(errorValue, CultureInfo.InvariantCulture)
+                    : "Prefab transaction could not complete its authoring session.";
+                dictionary["error"] = existingError + " Authoring-session cleanup failed: " +
+                                      sessionCompletionException.GetBaseException().Message;
+                dictionary["message"] = dictionary["error"];
+                dictionary["errorCode"] = "prefab_authoring_session_cleanup_failed";
+                dictionary["success"] = false;
+                dictionary["retryable"] = false;
+            }
+
+            bool succeeded = dictionary.TryGetValue("success", out object successValue) &&
+                             successValue is bool success && success;
+            if (!succeeded)
+                SetBatchEditFailurePersistence(dictionary, state);
+
+            return dictionary;
+        }
+
+        private static void SetBatchEditFailurePersistence(Dictionary<string, object> result,
+            BatchEditDeferredState state)
+        {
+            bool saveAttempted = state.SaveAttempted;
+            bool committed = state.Saved;
+            bool rolledBack = state.Session != null && state.Session.RollbackSucceeded;
+
+            result["saved"] = committed;
+            result["saveAttempted"] = saveAttempted;
+            result["partialPersisted"] = committed ? (object)false :
+                !saveAttempted || rolledBack ? false : null;
+            result["partialPersistedKnown"] = committed || !saveAttempted || rolledBack;
+            result["persistedState"] = committed ? "complete" :
+                !saveAttempted || rolledBack ? "none" : "unknown";
+            if (saveAttempted && !committed)
+                result["rolledBack"] = rolledBack;
         }
 
         private static Dictionary<string, object> BuildBatchEditProgress(BatchEditDeferredState state,
@@ -2867,40 +2958,125 @@ namespace UnityMCP.Editor
             AssetDatabase.Refresh(options);
         }
 
-        private static GameObject SavePrefabAssetNormalized(GameObject root, string assetPath,
-            ISet<string> explicitYamlPropertyRoots = null, ICollection<string> warnings = null)
+        private static void ImportPrefabAssetSynchronously(string assetPath)
         {
-            string absolutePath = GetAbsoluteAssetPath(assetPath);
-            byte[] beforeBytes = null;
-            if (!string.IsNullOrEmpty(absolutePath) && File.Exists(absolutePath))
+            AssetDatabase.ImportAsset(assetPath,
+                ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+        }
+
+        private sealed class PrefabMutationSession : IDisposable
+        {
+            public readonly string AssetPath;
+            public readonly AssetTextSnapshot BeforeSnapshot;
+
+            public GameObject Root { get; private set; }
+            public bool SaveAttempted { get; private set; }
+            public bool Saved { get; private set; }
+            public bool Committed { get; private set; }
+            public bool RollbackAttempted { get; private set; }
+            public bool RollbackSucceeded { get; private set; }
+
+            private bool _disposed;
+
+            public PrefabMutationSession(string assetPath, AssetTextSnapshot beforeSnapshot,
+                GameObject root)
             {
-                try
-                {
-                    beforeBytes = ReadAllBytesWithRetry(absolutePath);
-                }
-                catch (Exception ex)
-                {
-                    string warning =
-                        $"Could not capture prefab YAML before saving '{assetPath}': {ex.GetBaseException().Message}";
-                    warnings?.Add(warning);
-                    Debug.LogWarning($"[Unity MCP] {warning}");
-                }
+                AssetPath = assetPath;
+                BeforeSnapshot = beforeSnapshot;
+                Root = root ?? throw new ArgumentNullException(nameof(root));
             }
 
-            var savedRoot = RetryTransientFileIo(
-                () => PrefabUtility.SaveAsPrefabAsset(root, assetPath),
-                TransientFileIoMaxAttempts, null);
-            if (savedRoot != null &&
-                !TryStabilizePrefabYaml(assetPath, beforeBytes, explicitYamlPropertyRoots,
-                    out string stabilizationWarning))
+            public GameObject SaveAndClose(ISet<string> explicitYamlPropertyRoots = null,
+                ICollection<string> warnings = null)
             {
-                // Whitespace/block-order stabilization is auxiliary. SaveAsPrefabAsset already
-                // persisted the authoritative Unity data, so an exhausted Win32 file lock must
-                // not turn a successful mutation into an unknown/failed result.
-                warnings?.Add(stabilizationWarning);
-                Debug.LogWarning($"[Unity MCP] {stabilizationWarning}");
+                if (Root == null)
+                    throw new InvalidOperationException(
+                        $"Prefab mutation session for '{AssetPath}' is already closed.");
+
+                string absolutePath = GetAbsoluteAssetPath(AssetPath);
+                byte[] beforeBytes = null;
+                if (!string.IsNullOrEmpty(absolutePath) && File.Exists(absolutePath))
+                {
+                    try
+                    {
+                        beforeBytes = ReadAllBytesWithRetry(absolutePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        string warning =
+                            $"Could not capture prefab YAML before saving '{AssetPath}': " +
+                            ex.GetBaseException().Message;
+                        warnings?.Add(warning);
+                        Debug.LogWarning($"[Unity MCP] {warning}");
+                    }
+                }
+
+                SaveAttempted = true;
+                GameObject savedRoot;
+                try
+                {
+                    savedRoot = RetryTransientFileIo(
+                        () => PrefabUtility.SaveAsPrefabAsset(Root, AssetPath),
+                        TransientFileIoMaxAttempts, null);
+                }
+                finally
+                {
+                    CloseAuthoringRoot();
+                }
+
+                Saved = savedRoot != null;
+                if (Saved && !TryStabilizePrefabYaml(AssetPath, beforeBytes,
+                        explicitYamlPropertyRoots, out string stabilizationWarning))
+                {
+                    // Whitespace/block-order stabilization is auxiliary. SaveAsPrefabAsset already
+                    // persisted the authoritative Unity data, so an exhausted Win32 file lock must
+                    // not turn a successful mutation into an unknown/failed result.
+                    warnings?.Add(stabilizationWarning);
+                    Debug.LogWarning($"[Unity MCP] {stabilizationWarning}");
+                }
+
+                return savedRoot;
             }
-            return savedRoot;
+
+            public void Commit()
+            {
+                if (!Saved)
+                    throw new InvalidOperationException(
+                        $"Prefab mutation session for '{AssetPath}' has no saved product to commit.");
+                Committed = true;
+            }
+
+            public void CommitVerifiedPublication()
+            {
+                if (!SaveAttempted)
+                    throw new InvalidOperationException(
+                        $"Prefab mutation session for '{AssetPath}' did not attempt publication.");
+                Committed = true;
+            }
+
+            public void CloseAuthoringRoot()
+            {
+                if (Root == null)
+                    return;
+
+                GameObject root = Root;
+                PrefabUtility.UnloadPrefabContents(root);
+                Root = null;
+            }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                    return;
+
+                CloseAuthoringRoot();
+                if (SaveAttempted && !Committed)
+                {
+                    RollbackAttempted = true;
+                    RollbackSucceeded = RestoreAssetSnapshot(BeforeSnapshot);
+                }
+                _disposed = true;
+            }
         }
 
         private static bool TryStabilizePrefabYaml(string assetPath, byte[] beforeBytes,
@@ -2931,7 +3107,7 @@ namespace UnityMCP.Editor
                     return true;
 
                 WriteAllTextAtomicallyWithRetry(absolutePath, normalized, hasUtf8Bom);
-                AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+                ImportPrefabAssetSynchronously(assetPath);
                 return true;
             }
             catch (Exception ex)
@@ -2949,46 +3125,21 @@ namespace UnityMCP.Editor
 
         private static byte[] ReadAllBytesWithRetry(string path)
         {
-            return RetryTransientFileIo(() => File.ReadAllBytes(path), TransientFileIoMaxAttempts, null);
+            return MCPPersistenceFile.ReadAllBytes(path);
         }
 
         private static void WriteAllTextAtomicallyWithRetry(string path, string contents, bool includeUtf8Bom)
         {
-            string directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(directory))
-                Directory.CreateDirectory(directory);
-
-            string tempPath = path + ".unity-mcp-" + Guid.NewGuid().ToString("N") + ".tmp";
-            try
+            byte[] payload = new UTF8Encoding(false).GetBytes(contents ?? "");
+            if (includeUtf8Bom)
             {
-                byte[] payload = new UTF8Encoding(false).GetBytes(contents ?? "");
-                if (includeUtf8Bom)
-                {
-                    byte[] preamble = new UTF8Encoding(true).GetPreamble();
-                    var withPreamble = new byte[preamble.Length + payload.Length];
-                    Buffer.BlockCopy(preamble, 0, withPreamble, 0, preamble.Length);
-                    Buffer.BlockCopy(payload, 0, withPreamble, preamble.Length, payload.Length);
-                    payload = withPreamble;
-                }
-                File.WriteAllBytes(tempPath, payload);
-
-                RetryTransientFileIo(() =>
-                {
-                    if (!File.Exists(path))
-                    {
-                        File.Move(tempPath, path);
-                        return true;
-                    }
-
-                    File.Replace(tempPath, path, null, true);
-                    return true;
-                }, TransientFileIoMaxAttempts, null);
+                byte[] preamble = new UTF8Encoding(true).GetPreamble();
+                var withPreamble = new byte[preamble.Length + payload.Length];
+                Buffer.BlockCopy(preamble, 0, withPreamble, 0, preamble.Length);
+                Buffer.BlockCopy(payload, 0, withPreamble, preamble.Length, payload.Length);
+                payload = withPreamble;
             }
-            finally
-            {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
-            }
+            MCPPersistenceFile.WriteAllBytes(path, payload);
         }
 
         private static T RetryTransientFileIo<T>(Func<T> operation, int maxAttempts,
@@ -3340,24 +3491,25 @@ namespace UnityMCP.Editor
                     if (File.Exists(snapshot.AbsolutePath))
                     {
                         AssetDatabase.DeleteAsset(snapshot.AssetPath);
-                        return true;
+                        return !File.Exists(snapshot.AbsolutePath);
                     }
-                    return false;
+                    return true;
                 }
 
+                byte[] expectedBytes = snapshot.Bytes ?? Array.Empty<byte>();
                 byte[] currentBytes = File.Exists(snapshot.AbsolutePath)
                     ? ReadAllBytesWithRetry(snapshot.AbsolutePath)
                     : Array.Empty<byte>();
-                if (snapshot.Bytes != null && currentBytes.SequenceEqual(snapshot.Bytes))
-                    return false;
-
-                RetryTransientFileIo(() =>
-                {
-                    File.WriteAllBytes(snapshot.AbsolutePath, snapshot.Bytes ?? Array.Empty<byte>());
+                if (currentBytes.SequenceEqual(expectedBytes))
                     return true;
-                }, TransientFileIoMaxAttempts, null);
-                AssetDatabase.ImportAsset(snapshot.AssetPath, ImportAssetOptions.ForceUpdate);
-                return true;
+
+                MCPPersistenceFile.WriteAllBytes(snapshot.AbsolutePath,
+                    expectedBytes);
+                ImportPrefabAssetSynchronously(snapshot.AssetPath);
+                byte[] restoredBytes = File.Exists(snapshot.AbsolutePath)
+                    ? ReadAllBytesWithRetry(snapshot.AbsolutePath)
+                    : Array.Empty<byte>();
+                return restoredBytes.SequenceEqual(expectedBytes);
             }
             catch (Exception ex)
             {
@@ -3645,29 +3797,33 @@ namespace UnityMCP.Editor
                     return false;
                 }
 
-                var serialized = new SerializedObject(component);
-                var property = serialized.FindProperty(propertyName);
-                if (property == null)
+                string referenceDescription;
+                using (var serialized = new SerializedObject(component))
                 {
-                    error = $"Operation {operationIndex}: Property '{propertyName}' not found on " +
-                            $"'{component.GetType().Name}'";
-                    return false;
-                }
-                if (property.propertyType != SerializedPropertyType.ObjectReference)
-                {
-                    error = $"Operation {operationIndex}: Property '{propertyName}' is not an ObjectReference";
-                    return false;
-                }
+                    var property = serialized.FindProperty(propertyName);
+                    if (property == null)
+                    {
+                        error = $"Operation {operationIndex}: Property '{propertyName}' not found on " +
+                                $"'{component.GetType().Name}'";
+                        return false;
+                    }
+                    if (property.propertyType != SerializedPropertyType.ObjectReference)
+                    {
+                        error = $"Operation {operationIndex}: Property '{propertyName}' is not an ObjectReference";
+                        return false;
+                    }
 
-                if (!TryResolveBatchReference(root, property, reference, out UnityEngine.Object targetReference,
-                        out string referenceDescription, out error))
-                {
-                    error = $"Operation {operationIndex}: {error}";
-                    return false;
-                }
+                    if (!TryResolveBatchReference(root, property, reference,
+                            out UnityEngine.Object targetReference,
+                            out referenceDescription, out error))
+                    {
+                        error = $"Operation {operationIndex}: {error}";
+                        return false;
+                    }
 
-                property.objectReferenceValue = targetReference;
-                serialized.ApplyModifiedProperties();
+                    property.objectReferenceValue = targetReference;
+                    serialized.ApplyModifiedProperties();
+                }
                 changedReferences.Add(new Dictionary<string, object>
                 {
                     { "propertyName", propertyName },
@@ -3832,11 +3988,13 @@ namespace UnityMCP.Editor
                     if (candidate == null)
                         continue;
 
-                    var serializedCandidate = new SerializedObject(candidate);
-                    if (serializedCandidate.FindProperty(propertyName) != null)
+                    using (var serializedCandidate = new SerializedObject(candidate))
                     {
-                        component = candidate;
-                        break;
+                        if (serializedCandidate.FindProperty(propertyName) != null)
+                        {
+                            component = candidate;
+                            break;
+                        }
                     }
                 }
             }
@@ -3847,29 +4005,32 @@ namespace UnityMCP.Editor
                 return false;
             }
 
-            var serialized = new SerializedObject(component);
-            var prop = serialized.FindProperty(propertyName);
-            if (prop == null)
+            string refDescription;
+            using (var serialized = new SerializedObject(component))
             {
-                error = $"Operation {operationIndex}: Property '{propertyName}' not found";
-                return false;
-            }
+                var prop = serialized.FindProperty(propertyName);
+                if (prop == null)
+                {
+                    error = $"Operation {operationIndex}: Property '{propertyName}' not found";
+                    return false;
+                }
 
-            if (prop.propertyType != SerializedPropertyType.ObjectReference)
-            {
-                error = $"Operation {operationIndex}: Property '{propertyName}' is not an ObjectReference";
-                return false;
-            }
+                if (prop.propertyType != SerializedPropertyType.ObjectReference)
+                {
+                    error = $"Operation {operationIndex}: Property '{propertyName}' is not an ObjectReference";
+                    return false;
+                }
 
-            if (!TryResolveBatchReference(root, prop, operation, out UnityEngine.Object targetRef,
-                    out string refDescription, out error))
-            {
-                error = $"Operation {operationIndex}: {error}";
-                return false;
-            }
+                if (!TryResolveBatchReference(root, prop, operation, out UnityEngine.Object targetRef,
+                        out refDescription, out error))
+                {
+                    error = $"Operation {operationIndex}: {error}";
+                    return false;
+                }
 
-            prop.objectReferenceValue = targetRef;
-            serialized.ApplyModifiedProperties();
+                prop.objectReferenceValue = targetRef;
+                serialized.ApplyModifiedProperties();
+            }
 
             summary = BuildBatchSummary(operationIndex, "setReference", go, component);
             summary["prefabPath"] = GetPrefabPath(root, go);
@@ -3892,58 +4053,63 @@ namespace UnityMCP.Editor
                 return false;
             }
 
-            var serialized = new SerializedObject(component);
-            var property = serialized.FindProperty(propertyName);
-            if (property == null)
-            {
-                error = $"Operation {operationIndex}: Property '{propertyName}' not found";
-                return false;
-            }
-            if (!property.isArray || property.propertyType == SerializedPropertyType.String)
-            {
-                error = $"Operation {operationIndex}: Property '{propertyName}' is not an array or list";
-                return false;
-            }
-
-            int beforeSize = property.arraySize;
             int index = GetInt(operation, "index", -1);
-            try
+            int beforeSize;
+            int afterSize;
+            using (var serialized = new SerializedObject(component))
             {
-                switch (operationType)
+                var property = serialized.FindProperty(propertyName);
+                if (property == null)
                 {
-                    case "arrayinsert":
-                        if (index < 0 || index > property.arraySize)
-                            throw new IndexOutOfRangeException($"Index {index} is invalid for size {property.arraySize}");
-                        property.InsertArrayElementAtIndex(index);
-                        if (operation.TryGetValue("value", out var insertValue))
-                            MCPComponentCommands.SetSerializedValue(property.GetArrayElementAtIndex(index), insertValue);
-                        break;
-                    case "arrayremove":
-                        if (index < 0 || index >= property.arraySize)
-                            throw new IndexOutOfRangeException($"Index {index} is invalid for size {property.arraySize}");
-                        int sizeBeforeDelete = property.arraySize;
-                        property.DeleteArrayElementAtIndex(index);
-                        if (property.arraySize == sizeBeforeDelete)
-                            property.DeleteArrayElementAtIndex(index);
-                        break;
-                    case "arrayset":
-                        if (index < 0 || index >= property.arraySize)
-                            throw new IndexOutOfRangeException($"Index {index} is invalid for size {property.arraySize}");
-                        if (!operation.TryGetValue("value", out var setValue))
-                            throw new ArgumentException("value is required");
-                        MCPComponentCommands.SetSerializedValue(property.GetArrayElementAtIndex(index), setValue);
-                        break;
-                    case "arrayclear":
-                        property.ClearArray();
-                        break;
+                    error = $"Operation {operationIndex}: Property '{propertyName}' not found";
+                    return false;
+                }
+                if (!property.isArray || property.propertyType == SerializedPropertyType.String)
+                {
+                    error = $"Operation {operationIndex}: Property '{propertyName}' is not an array or list";
+                    return false;
                 }
 
-                serialized.ApplyModifiedProperties();
-            }
-            catch (Exception ex)
-            {
-                error = $"Operation {operationIndex}: {ex.Message}";
-                return false;
+                beforeSize = property.arraySize;
+                try
+                {
+                    switch (operationType)
+                    {
+                        case "arrayinsert":
+                            if (index < 0 || index > property.arraySize)
+                                throw new IndexOutOfRangeException($"Index {index} is invalid for size {property.arraySize}");
+                            property.InsertArrayElementAtIndex(index);
+                            if (operation.TryGetValue("value", out var insertValue))
+                                MCPComponentCommands.SetSerializedValue(property.GetArrayElementAtIndex(index), insertValue);
+                            break;
+                        case "arrayremove":
+                            if (index < 0 || index >= property.arraySize)
+                                throw new IndexOutOfRangeException($"Index {index} is invalid for size {property.arraySize}");
+                            int sizeBeforeDelete = property.arraySize;
+                            property.DeleteArrayElementAtIndex(index);
+                            if (property.arraySize == sizeBeforeDelete)
+                                property.DeleteArrayElementAtIndex(index);
+                            break;
+                        case "arrayset":
+                            if (index < 0 || index >= property.arraySize)
+                                throw new IndexOutOfRangeException($"Index {index} is invalid for size {property.arraySize}");
+                            if (!operation.TryGetValue("value", out var setValue))
+                                throw new ArgumentException("value is required");
+                            MCPComponentCommands.SetSerializedValue(property.GetArrayElementAtIndex(index), setValue);
+                            break;
+                        case "arrayclear":
+                            property.ClearArray();
+                            break;
+                    }
+
+                    serialized.ApplyModifiedProperties();
+                    afterSize = property.arraySize;
+                }
+                catch (Exception ex)
+                {
+                    error = $"Operation {operationIndex}: {ex.Message}";
+                    return false;
+                }
             }
 
             summary = BuildBatchSummary(operationIndex, operationType, go, component);
@@ -3951,7 +4117,7 @@ namespace UnityMCP.Editor
             summary["property"] = propertyName;
             summary["index"] = index;
             summary["beforeSize"] = beforeSize;
-            summary["afterSize"] = property.arraySize;
+            summary["afterSize"] = afterSize;
             error = "";
             return true;
         }
@@ -4239,16 +4405,18 @@ namespace UnityMCP.Editor
             out string error)
         {
             error = "";
-            var serialized = new SerializedObject(component);
-            var prop = serialized.FindProperty(propertyName);
-            if (prop == null)
+            using (var serialized = new SerializedObject(component))
             {
-                error = $"Property '{propertyName}' not found on '{component.GetType().Name}'";
-                return false;
-            }
+                var prop = serialized.FindProperty(propertyName);
+                if (prop == null)
+                {
+                    error = $"Property '{propertyName}' not found on '{component.GetType().Name}'";
+                    return false;
+                }
 
-            MCPComponentCommands.SetSerializedValue(prop, value);
-            serialized.ApplyModifiedProperties();
+                MCPComponentCommands.SetSerializedValue(prop, value);
+                serialized.ApplyModifiedProperties();
+            }
             return true;
         }
 
@@ -4262,20 +4430,22 @@ namespace UnityMCP.Editor
                 return false;
             }
 
-            var serialized = new SerializedObject(component);
-            serialized.UpdateIfRequiredOrScript();
-            foreach (string propertyName in propertyNames ?? Enumerable.Empty<string>())
+            using (var serialized = new SerializedObject(component))
             {
-                var property = serialized.FindProperty(propertyName);
-                if (property == null)
+                serialized.UpdateIfRequiredOrScript();
+                foreach (string propertyName in propertyNames ?? Enumerable.Empty<string>())
                 {
-                    error =
-                        $"Property '{propertyName}' not found on '{component.GetType().Name}' after assignment";
-                    return false;
-                }
+                    var property = serialized.FindProperty(propertyName);
+                    if (property == null)
+                    {
+                        error =
+                            $"Property '{propertyName}' not found on '{component.GetType().Name}' after assignment";
+                        return false;
+                    }
 
-                values[propertyName] = MCPComponentCommands.GetSerializedValue(
-                    property, 16, 10000);
+                    values[propertyName] = MCPComponentCommands.GetSerializedValue(
+                        property, 16, 10000);
+                }
             }
 
             return true;
@@ -4310,26 +4480,28 @@ namespace UnityMCP.Editor
                     return false;
                 }
 
-                var serialized = new SerializedObject(components[componentIndex]);
-                serialized.UpdateIfRequiredOrScript();
-                foreach (var pair in expectedValues)
+                using (var serialized = new SerializedObject(components[componentIndex]))
                 {
-                    var property = serialized.FindProperty(pair.Key);
-                    if (property == null)
+                    serialized.UpdateIfRequiredOrScript();
+                    foreach (var pair in expectedValues)
                     {
-                        error =
-                            $"Property '{pair.Key}' was not found on persisted component";
+                        var property = serialized.FindProperty(pair.Key);
+                        if (property == null)
+                        {
+                            error =
+                                $"Property '{pair.Key}' was not found on persisted component";
+                            return false;
+                        }
+
+                        object actualValue = MCPComponentCommands.GetSerializedValue(
+                            property, 16, 10000);
+                        if (SerializedValuesEquivalent(pair.Value, actualValue))
+                            continue;
+
+                        error = $"Property '{pair.Key}' did not match. Expected " +
+                                $"{MiniJson.Serialize(pair.Value)}, read {MiniJson.Serialize(actualValue)}";
                         return false;
                     }
-
-                    object actualValue = MCPComponentCommands.GetSerializedValue(
-                        property, 16, 10000);
-                    if (SerializedValuesEquivalent(pair.Value, actualValue))
-                        continue;
-
-                    error = $"Property '{pair.Key}' did not match. Expected " +
-                            $"{MiniJson.Serialize(pair.Value)}, read {MiniJson.Serialize(actualValue)}";
-                    return false;
                 }
 
                 return true;

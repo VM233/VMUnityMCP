@@ -313,8 +313,7 @@ namespace UnityMCP.Editor
             if (_job == null)
                 return;
             string path = GetJobPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-            File.WriteAllText(path, MiniJson.Serialize(_job.ToDictionary()));
+            MCPPersistenceFile.WriteAllText(path, MiniJson.Serialize(_job.ToDictionary()));
             string owner = _job.Arguments != null && _job.Arguments.TryGetValue("_agentId", out object value)
                 ? value?.ToString()
                 : "anonymous";
@@ -326,10 +325,10 @@ namespace UnityMCP.Editor
             try
             {
                 string path = GetJobPath();
-                if (!File.Exists(path))
+                if (!MCPPersistenceFile.TryReadAllText(path, out string contents))
                     return null;
                 return AssetRefreshJob.FromDictionary(
-                    MiniJson.Deserialize(File.ReadAllText(path)) as Dictionary<string, object>);
+                    MiniJson.Deserialize(contents) as Dictionary<string, object>);
             }
             catch (Exception ex)
             {
@@ -346,9 +345,7 @@ namespace UnityMCP.Editor
 
         private static void DeleteJobFile()
         {
-            string path = GetJobPath();
-            if (File.Exists(path))
-                File.Delete(path);
+            MCPPersistenceFile.DeleteIfExists(GetJobPath());
         }
 
         private static string GetString(Dictionary<string, object> args, string key)

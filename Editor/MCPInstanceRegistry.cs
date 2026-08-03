@@ -277,10 +277,8 @@ namespace UnityMCP.Editor
         /// </summary>
         public static void Register(int port)
         {
-            _registeredPort = port;
-            SaveLastUsedPort(port); // Port affinity: remember for next restart
-
-            WithRegistryLock(() =>
+            Dictionary<string, object> publishedEntry = null;
+            bool registered = WithRegistryLock(() =>
             {
                 var instances = ReadRegistry();
 
@@ -304,13 +302,22 @@ namespace UnityMCP.Editor
                 // Build our entry
                 string nowUtc = DateTime.UtcNow.ToString("o");
                 var entry = BuildCurrentInstanceEntry(port, nowUtc, nowUtc);
-                CacheCurrentInstanceEntry(entry);
 
                 instances.Add(entry);
                 WriteRegistry(instances);
+                publishedEntry = entry;
 
                 Debug.Log($"[AB-UMCP] Registered instance on port {port} in registry.");
             }, "register");
+            if (!registered)
+            {
+                throw new IOException(
+                    $"Unity MCP bound port {port}, but could not publish its instance registry entry.");
+            }
+
+            CacheCurrentInstanceEntry(publishedEntry);
+            _registeredPort = port;
+            SaveLastUsedPort(port); // Port affinity belongs to a successfully published lease.
 
             // Start the heartbeat: periodically update lastSeen so the MCP server
             // can detect crashes (if Unity crashes, the heartbeat stops and the
@@ -331,7 +338,8 @@ namespace UnityMCP.Editor
 
             EditorApplication.update -= HeartbeatTick;
             int port = _registeredPort;
-            WithRegistryLock(() =>
+            Dictionary<string, object> publishedEntry = null;
+            bool marked = WithRegistryLock(() =>
             {
                 var instances = ReadRegistry();
                 string projectPath = GetProjectPath();
@@ -357,9 +365,11 @@ namespace UnityMCP.Editor
                 entry["isReloading"] = true;
                 entry["reloadStartedAt"] = nowUtc;
                 entry["lastSeen"] = nowUtc;
-                CacheCurrentInstanceEntry(entry);
                 WriteRegistry(instances);
+                publishedEntry = entry;
             }, "mark-reloading");
+            if (marked)
+                CacheCurrentInstanceEntry(publishedEntry);
         }
 
         /// <summary>
@@ -571,7 +581,7 @@ namespace UnityMCP.Editor
         /// Prevents race conditions when multiple Unity instances (e.g. ParrelSync clones)
         /// simultaneously read/modify/write the shared registry file.
         /// </summary>
-        private static void WithRegistryLock(Action action, string operationName)
+        private static bool WithRegistryLock(Action action, string operationName)
         {
             Mutex mutex = null;
             bool acquired = false;
@@ -592,14 +602,17 @@ namespace UnityMCP.Editor
 
                 if (!acquired)
                 {
-                    Debug.LogWarning($"[AB-UMCP] Could not acquire registry lock for '{operationName}' within {MutexTimeoutMs}ms. Proceeding without lock.");
+                    Debug.LogWarning($"[AB-UMCP] Could not acquire registry lock for '{operationName}' within {MutexTimeoutMs}ms. The registry operation was not published.");
+                    return false;
                 }
 
                 action();
+                return true;
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[AB-UMCP] Failed to {operationName} in instance registry: {ex.Message}");
+                return false;
             }
             finally
             {
@@ -617,28 +630,22 @@ namespace UnityMCP.Editor
         {
             var result = new List<Dictionary<string, object>>();
 
-            try
+            if (!MCPPersistenceFile.TryReadAllText(RegistryPath, out string json, Encoding.UTF8))
+                return result;
+            if (string.IsNullOrWhiteSpace(json))
+                return result;
+
+            var parsed = MiniJson.Deserialize(json);
+            if (!(parsed is List<object> list))
             {
-                if (!File.Exists(RegistryPath))
-                    return result;
-
-                string json = File.ReadAllText(RegistryPath, Encoding.UTF8);
-                if (string.IsNullOrWhiteSpace(json))
-                    return result;
-
-                var parsed = MiniJson.Deserialize(json);
-                if (parsed is List<object> list)
-                {
-                    foreach (var item in list)
-                    {
-                        if (item is Dictionary<string, object> dict)
-                            result.Add(dict);
-                    }
-                }
+                throw new InvalidDataException(
+                    "The Unity MCP instance registry root must be a JSON array.");
             }
-            catch (Exception ex)
+
+            foreach (var item in list)
             {
-                Debug.LogWarning($"[AB-UMCP] Error reading instance registry: {ex.Message}");
+                if (item is Dictionary<string, object> dict)
+                    result.Add(dict);
             }
 
             return result;
@@ -646,23 +653,13 @@ namespace UnityMCP.Editor
 
         private static void WriteRegistry(List<Dictionary<string, object>> instances)
         {
-            try
-            {
-                if (!Directory.Exists(RegistryDir))
-                    Directory.CreateDirectory(RegistryDir);
+            // Convert to list of objects for MiniJson
+            var list = new List<object>();
+            foreach (var dict in instances)
+                list.Add(dict);
 
-                // Convert to list of objects for MiniJson
-                var list = new List<object>();
-                foreach (var dict in instances)
-                    list.Add(dict);
-
-                string json = MiniJson.Serialize(list);
-                File.WriteAllText(RegistryPath, json, Encoding.UTF8);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[AB-UMCP] Error writing instance registry: {ex.Message}");
-            }
+            string json = MiniJson.Serialize(list);
+            MCPPersistenceFile.WriteAllText(RegistryPath, json, Encoding.UTF8);
         }
 
         public static string NormalizeProjectPath(string path)

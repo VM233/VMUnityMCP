@@ -1272,9 +1272,9 @@ namespace UnityMCP.Editor
                 case "testing/get-job":
                     return "Poll a Unity Test Runner job, including progress, failures, and optional result details. EditMode tests can delay main-thread queue polling while they execute.";
                 case "testing/run-package-tests":
-                    return "Run tests from a Git package by temporarily enabling package testables, surviving domain reloads, and restoring manifest.json exactly.";
+                    return "Start a persistent Git-package test job that temporarily enables package testables, survives domain reloads, and restores manifest.json exactly. Poll its returned jobId with jobs/get and jobType package-test.";
                 case "testing/get-package-job":
-                    return "Poll a persistent package test workflow through testable enablement, test execution, and exact manifest restoration.";
+                    return "Inspect or clear the current package-test workflow state. Normal polling uses jobs/get with the package test's jobId and jobType package-test.";
                 case "profiler/enable":
                     return "Enable or disable the Unity Profiler and optional deep profiling.";
                 case "profiler/stats":
@@ -2194,7 +2194,7 @@ namespace UnityMCP.Editor
                     ));
                 case "testing/get-package-job":
                     return Schema(Props(
-                        Prop("workflowId", "string", "Optional package test workflow ID. Defaults to the active or latest workflow."),
+                        Prop("jobId", "string", "Optional package-test job ID. Defaults to the active or latest workflow."),
                         Prop("clear", "boolean", "Delete terminal workflow state after returning it. Defaults to false.")
                     ));
                 case "scene/instantiate-prefab":

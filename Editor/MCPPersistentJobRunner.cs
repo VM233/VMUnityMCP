@@ -749,24 +749,22 @@ namespace UnityMCP.Editor
 
                 Jobs.Clear();
                 string path = GetPath();
-                if (File.Exists(path))
+                try
                 {
-                    try
+                    if (MCPPersistenceFile.TryReadAllText(path, out string contents) &&
+                        MiniJson.Deserialize(contents) is IList values)
                     {
-                        if (MiniJson.Deserialize(File.ReadAllText(path)) is IList values)
+                        foreach (object value in values)
                         {
-                            foreach (object value in values)
-                            {
-                                Dictionary<string, object> job = MCPResponse.ToDictionary(value);
-                                if (job != null)
-                                    Jobs.Add(job);
-                            }
+                            Dictionary<string, object> job = MCPResponse.ToDictionary(value);
+                            if (job != null)
+                                Jobs.Add(job);
                         }
                     }
-                    catch (Exception exception)
-                    {
-                        Debug.LogWarning($"[Unity MCP Jobs] Failed to load persistent jobs: {exception.Message}");
-                    }
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogWarning($"[Unity MCP Jobs] Failed to load persistent jobs: {exception.Message}");
                 }
 
                 loaded = true;
@@ -839,30 +837,7 @@ namespace UnityMCP.Editor
 
         private static void Save()
         {
-            string path = GetPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-            string tempPath = path + ".tmp";
-            string backupPath = path + ".bak";
-            File.WriteAllText(tempPath, MiniJson.Serialize(Jobs));
-            if (!File.Exists(path))
-            {
-                File.Move(tempPath, path);
-                return;
-            }
-
-            if (File.Exists(backupPath))
-                File.Delete(backupPath);
-            try
-            {
-                File.Replace(tempPath, path, backupPath, true);
-                if (File.Exists(backupPath))
-                    File.Delete(backupPath);
-            }
-            catch (PlatformNotSupportedException)
-            {
-                File.Delete(path);
-                File.Move(tempPath, path);
-            }
+            MCPPersistenceFile.WriteAllText(GetPath(), MiniJson.Serialize(Jobs));
         }
 
         private static string GetPath()
