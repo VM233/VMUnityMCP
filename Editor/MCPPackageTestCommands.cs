@@ -16,9 +16,20 @@ namespace UnityMCP.Editor
     {
         private const string DefaultPackageName = "com.vm233.unity-mcp";
         private const string DefaultTestAssembly = "VMUnityMCP.Editor.Tests";
+        internal const string DefaultPackageSmokeCategory = "VMUnityMCP.PackageSmoke";
+        internal const string FullPackageRegressionCategory = "VMUnityMCP.FullRegression";
         private const double WorkflowTimeoutMinutes = 10;
         private const string WaitingForAssemblyState = "waiting-for-assembly";
         private const string WaitingForEditorAdoptionState = "waiting-for-editor-adoption";
+
+        private enum ManifestPublicationState
+        {
+            Original,
+            Modified,
+            Restoring,
+            Restored,
+            RestoreFailed,
+        }
 
         private static PackageTestWorkflow _workflow;
         private static bool _updateRegistered;
@@ -49,6 +60,11 @@ namespace UnityMCP.Editor
 
             string packageName = GetString(args, "packageName", DefaultPackageName);
             string[] assemblies = ParseStringArray(args, "assemblies");
+            string[] testNames = ParseStringArray(args, "testNames");
+            string[] categories = ParseStringArray(args, "categories");
+            string[] groupNames = ParseStringArray(args, "groupNames");
+            categories = ResolvePackageTestCategories(
+                packageName, testNames, categories, groupNames);
             if ((assemblies == null || assemblies.Length == 0) && packageName == DefaultPackageName)
                 assemblies = new[] { DefaultTestAssembly };
             if (assemblies == null || assemblies.Length == 0)
@@ -81,13 +97,12 @@ namespace UnityMCP.Editor
                 PackageName = packageName,
                 Mode = GetString(args, "mode", "EditMode"),
                 Assemblies = assemblies,
-                TestNames = ParseStringArray(args, "testNames"),
-                Categories = ParseStringArray(args, "categories"),
-                GroupNames = ParseStringArray(args, "groupNames"),
+                TestNames = testNames,
+                Categories = categories,
+                GroupNames = groupNames,
                 ManifestPath = manifestPath,
                 OriginalManifestBase64 = Convert.ToBase64String(manifestBytes),
                 OriginalManifestHadUtf8Bom = HasUtf8Bom(manifestBytes),
-                ManifestChanged = !alreadyTestable,
                 State = alreadyTestable ? WaitingForAssemblyState : "enabling",
                 StartedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
@@ -181,7 +196,7 @@ namespace UnityMCP.Editor
                         });
                 }
             }
-            else if (_workflow.ManifestChanged)
+            else if (_workflow.NeedsManifestRestore)
             {
                 BeginRestore();
             }
@@ -222,24 +237,42 @@ namespace UnityMCP.Editor
 
             try
             {
-                string manifestText = File.ReadAllText(_workflow.ManifestPath);
-                if (!TryParseManifest(manifestText, out var manifest, out string error))
-                    throw new InvalidOperationException(error);
+                byte[] originalManifest = Convert.FromBase64String(
+                    _workflow.OriginalManifestBase64);
+                byte[] modifiedManifest = BuildModifiedManifestBytes(_workflow,
+                    originalManifest);
+                byte[] currentManifest = MCPPersistenceFile.ReadAllBytes(
+                    _workflow.ManifestPath);
 
-                if (!IsPackageTestable(manifest, _workflow.PackageName))
+                if (_workflow.ManifestPublication == ManifestPublicationState.Original)
                 {
-                    if (!(manifest.TryGetValue("testables", out var rawTestables) &&
-                          rawTestables is List<object> testables))
-                    {
-                        testables = new List<object>();
-                        manifest["testables"] = testables;
-                    }
-                    testables.Add(_workflow.PackageName);
+                    if (!currentManifest.SequenceEqual(originalManifest))
+                        throw new InvalidOperationException(
+                            "Packages/manifest.json changed after the package-test workflow captured its original bytes.");
+                    _workflow.BeginManifestModification();
+                    TouchAndSaveWorkflow();
+                }
+                else
+                {
+                    _workflow.RequireManifestPublication(ManifestPublicationState.Modified,
+                        "resume manifest testables publication");
                 }
 
-                string updatedManifest = SerializePrettyJson(manifest, 0) + "\n";
-                File.WriteAllText(_workflow.ManifestPath, updatedManifest,
-                    new UTF8Encoding(_workflow.OriginalManifestHadUtf8Bom));
+                currentManifest = MCPPersistenceFile.ReadAllBytes(_workflow.ManifestPath);
+                if (currentManifest.SequenceEqual(originalManifest))
+                {
+                    MCPPersistenceFile.WriteAllBytes(_workflow.ManifestPath, modifiedManifest);
+                }
+                else if (!currentManifest.SequenceEqual(modifiedManifest))
+                {
+                    throw new InvalidOperationException(
+                        "Packages/manifest.json changed outside the package-test manifest transaction before testables publication completed.");
+                }
+
+                if (!MCPPersistenceFile.ReadAllBytes(_workflow.ManifestPath)
+                        .SequenceEqual(modifiedManifest))
+                    throw new IOException(
+                        "Package-test manifest publication did not adopt the exact modified bytes.");
                 _workflow.State = WaitingForAssemblyState;
                 TouchAndSaveWorkflow();
                 Client.Resolve();
@@ -273,15 +306,7 @@ namespace UnityMCP.Editor
                 switch (_workflow.State)
                 {
                     case "enabling":
-                        if (ManifestContainsPackageTestable(_workflow.ManifestPath, _workflow.PackageName))
-                        {
-                            _workflow.State = WaitingForAssemblyState;
-                            TouchAndSaveWorkflow();
-                        }
-                        else
-                        {
-                            EnablePackageTests();
-                        }
+                        EnablePackageTests();
                         break;
                     case WaitingForAssemblyState:
                     case WaitingForEditorAdoptionState:
@@ -400,7 +425,7 @@ namespace UnityMCP.Editor
             _workflow.TestSucceeded = status == "succeeded";
             if (!_workflow.TestSucceeded)
                 _workflow.Error = GetString(jobResult, "error", "Package tests failed");
-            if (_workflow.ManifestChanged)
+            if (_workflow.NeedsManifestRestore)
                 BeginRestore();
             else
                 CompleteWorkflow();
@@ -408,6 +433,7 @@ namespace UnityMCP.Editor
 
         private static void BeginRestore()
         {
+            _workflow.BeginManifestRestore();
             _workflow.State = "restoring";
             TouchAndSaveWorkflow();
             Debug.Log($"[MCP Package Tests] Workflow {_workflow.WorkflowId} restoring package manifest");
@@ -415,29 +441,44 @@ namespace UnityMCP.Editor
 
         private static void RestoreManifest()
         {
-            if (_workflow == null || !_workflow.ManifestChanged)
+            if (_workflow == null)
                 return;
+            _workflow.RequireManifestPublication(ManifestPublicationState.Restoring,
+                "restore the original manifest bytes");
 
             try
             {
                 byte[] originalBytes = Convert.FromBase64String(_workflow.OriginalManifestBase64);
-                File.WriteAllBytes(_workflow.ManifestPath, originalBytes);
+                byte[] modifiedBytes = BuildModifiedManifestBytes(_workflow, originalBytes);
+                byte[] currentBytes = MCPPersistenceFile.ReadAllBytes(_workflow.ManifestPath);
+                if (currentBytes.SequenceEqual(originalBytes))
+                    return;
+                if (!currentBytes.SequenceEqual(modifiedBytes))
+                {
+                    FailManifestRestore(
+                        "Packages/manifest.json changed outside the package-test manifest transaction; external bytes were left untouched.");
+                    return;
+                }
+
+                MCPPersistenceFile.WriteAllBytes(_workflow.ManifestPath, originalBytes);
+                if (!MCPPersistenceFile.ReadAllBytes(_workflow.ManifestPath)
+                        .SequenceEqual(originalBytes))
+                    throw new IOException(
+                        "Package-test manifest restoration did not adopt the exact original bytes.");
                 TouchAndSaveWorkflow();
                 Client.Resolve();
             }
             catch (Exception ex)
             {
-                _workflow.Error = $"Failed to restore package manifest: {ex.Message}";
-                _workflow.State = "failed";
-                TouchAndSaveWorkflow();
+                FailManifestRestore(ex.Message);
             }
         }
 
         private static void CompleteRestoreWhenReady()
         {
             byte[] originalBytes = Convert.FromBase64String(_workflow.OriginalManifestBase64);
-            if (!File.Exists(_workflow.ManifestPath) ||
-                !File.ReadAllBytes(_workflow.ManifestPath).SequenceEqual(originalBytes))
+            if (!MCPPersistenceFile.ReadAllBytes(_workflow.ManifestPath)
+                    .SequenceEqual(originalBytes))
             {
                 RestoreManifest();
                 return;
@@ -447,6 +488,7 @@ namespace UnityMCP.Editor
             // nor updating. Assembly presence is not a reliable restore gate: Unity may unload
             // test assemblies after removing testables, or retain compiled outputs until a later
             // refresh. Exact manifest restoration plus an idle Editor is the terminal condition.
+            _workflow.MarkManifestRestored();
             CompleteWorkflow();
         }
 
@@ -469,14 +511,29 @@ namespace UnityMCP.Editor
 
             _workflow.Error = error;
             _workflow.TestSucceeded = false;
-            if (_workflow.ManifestChanged)
-                BeginRestore();
-            else
+            switch (_workflow.ManifestPublication)
             {
-                _workflow.State = "failed";
-                TouchAndSaveWorkflow();
-                UnregisterUpdate();
+                case ManifestPublicationState.Modified:
+                    BeginRestore();
+                    return;
+                case ManifestPublicationState.Restoring:
+                    FailManifestRestore(error);
+                    return;
+                default:
+                    _workflow.State = "failed";
+                    TouchAndSaveWorkflow();
+                    UnregisterUpdate();
+                    return;
             }
+        }
+
+        private static void FailManifestRestore(string error)
+        {
+            _workflow.MarkManifestRestoreFailed();
+            _workflow.Error = $"Failed to restore package manifest: {error}";
+            _workflow.State = "failed";
+            TouchAndSaveWorkflow();
+            UnregisterUpdate();
         }
 
         private static Dictionary<string, object> BuildResponse(PackageTestWorkflow workflow)
@@ -499,13 +556,18 @@ namespace UnityMCP.Editor
             var tags = new List<string>();
             if (workflow.CancelRequested)
                 tags.Add(MCPContractMetadata.Tag.CancellationRequested);
-            if (workflow.ManifestChanged)
+            switch (workflow.ManifestPublication)
             {
-                bool manifestIsRestored = ManifestIsRestored(workflow);
-                if (manifestIsRestored && workflow.State != "enabling")
-                    tags.Add(MCPContractMetadata.Tag.ManifestRestored);
-                else if (!manifestIsRestored)
+                case ManifestPublicationState.Modified:
+                case ManifestPublicationState.Restoring:
                     tags.Add(MCPContractMetadata.Tag.ManifestModified);
+                    break;
+                case ManifestPublicationState.Restored:
+                    tags.Add(MCPContractMetadata.Tag.ManifestRestored);
+                    break;
+                case ManifestPublicationState.RestoreFailed:
+                    tags.Add(MCPContractMetadata.Tag.ManifestRestoreFailed);
+                    break;
             }
             MCPContractMetadata.SetTags(response, tags);
             if (!string.IsNullOrEmpty(workflow.TestJobId))
@@ -556,24 +618,36 @@ namespace UnityMCP.Editor
             return compact;
         }
 
-        private static bool ManifestIsRestored(PackageTestWorkflow workflow)
+        private static byte[] BuildModifiedManifestBytes(PackageTestWorkflow workflow,
+            byte[] originalBytes)
         {
-            try
-            {
-                return File.Exists(workflow.ManifestPath) && File.ReadAllBytes(workflow.ManifestPath)
-                    .SequenceEqual(Convert.FromBase64String(workflow.OriginalManifestBase64));
-            }
-            catch
-            {
-                return false;
-            }
-        }
+            int offset = workflow.OriginalManifestHadUtf8Bom ? 3 : 0;
+            if (offset > originalBytes.Length)
+                throw new InvalidDataException("The captured package manifest has an invalid UTF-8 BOM.");
+            string originalText = new UTF8Encoding(false, true).GetString(
+                originalBytes, offset, originalBytes.Length - offset);
+            if (!TryParseManifest(originalText, out var manifest, out string error))
+                throw new InvalidDataException(error);
+            if (IsPackageTestable(manifest, workflow.PackageName))
+                throw new InvalidOperationException(
+                    $"Package '{workflow.PackageName}' was already testable in the captured manifest.");
 
-        private static bool ManifestContainsPackageTestable(string manifestPath, string packageName)
-        {
-            return File.Exists(manifestPath) &&
-                   TryParseManifest(File.ReadAllText(manifestPath), out var manifest, out _) &&
-                   IsPackageTestable(manifest, packageName);
+            if (!(manifest.TryGetValue("testables", out object rawTestables) &&
+                  rawTestables is List<object> testables))
+            {
+                testables = new List<object>();
+                manifest["testables"] = testables;
+            }
+            testables.Add(workflow.PackageName);
+
+            string modifiedText = SerializePrettyJson(manifest, 0) + "\n";
+            Encoding encoding = new UTF8Encoding(workflow.OriginalManifestHadUtf8Bom);
+            byte[] preamble = encoding.GetPreamble();
+            byte[] body = encoding.GetBytes(modifiedText);
+            var result = new byte[preamble.Length + body.Length];
+            Buffer.BlockCopy(preamble, 0, result, 0, preamble.Length);
+            Buffer.BlockCopy(body, 0, result, preamble.Length, body.Length);
+            return result;
         }
 
         private static bool TryParseManifest(string text, out Dictionary<string, object> manifest,
@@ -887,6 +961,21 @@ namespace UnityMCP.Editor
             return null;
         }
 
+        internal static string[] ResolvePackageTestCategories(string packageName,
+            string[] testNames, string[] categories, string[] groupNames)
+        {
+            bool hasExplicitSelection = (testNames?.Length ?? 0) > 0 ||
+                                        (categories?.Length ?? 0) > 0 ||
+                                        (groupNames?.Length ?? 0) > 0;
+            if (!hasExplicitSelection &&
+                string.Equals(packageName, DefaultPackageName, StringComparison.Ordinal))
+            {
+                return new[] { DefaultPackageSmokeCategory };
+            }
+
+            return categories;
+        }
+
         private static void AddArray(Dictionary<string, object> args, string key, string[] values)
         {
             if (values != null && values.Length > 0)
@@ -920,7 +1009,10 @@ namespace UnityMCP.Editor
             public string ManifestPath;
             public string OriginalManifestBase64;
             public bool OriginalManifestHadUtf8Bom;
-            public bool ManifestChanged;
+            private ManifestPublicationState manifestPublication =
+                ManifestPublicationState.Original;
+
+            public ManifestPublicationState ManifestPublication => manifestPublication;
             public string TestJobId;
             public bool TestSucceeded;
             public bool CancelRequested;
@@ -931,6 +1023,62 @@ namespace UnityMCP.Editor
             public string OwnerAgentId;
 
             public bool IsTerminal => State == "succeeded" || State == "failed" || State == "canceled";
+            public bool NeedsManifestRestore =>
+                ManifestPublication == ManifestPublicationState.Modified ||
+                ManifestPublication == ManifestPublicationState.Restoring;
+
+            public void BeginManifestModification()
+            {
+                if (ManifestPublication == ManifestPublicationState.Modified)
+                    return;
+                TransitionManifestPublication(ManifestPublicationState.Original,
+                    ManifestPublicationState.Modified, "begin manifest testables publication");
+            }
+
+            public void BeginManifestRestore()
+            {
+                if (ManifestPublication == ManifestPublicationState.Restoring)
+                    return;
+                TransitionManifestPublication(ManifestPublicationState.Modified,
+                    ManifestPublicationState.Restoring, "begin manifest restoration");
+            }
+
+            public void MarkManifestRestored()
+            {
+                TransitionManifestPublication(ManifestPublicationState.Restoring,
+                    ManifestPublicationState.Restored, "complete manifest restoration");
+            }
+
+            public void MarkManifestRestoreFailed()
+            {
+                TransitionManifestPublication(ManifestPublicationState.Restoring,
+                    ManifestPublicationState.RestoreFailed, "fail manifest restoration");
+            }
+
+            public void RequireManifestPublication(ManifestPublicationState expected,
+                string operation)
+            {
+                if (ManifestPublication != expected)
+                    throw BuildManifestTransitionException(operation, expected,
+                        ManifestPublication);
+            }
+
+            private void TransitionManifestPublication(ManifestPublicationState expected,
+                ManifestPublicationState next, string operation)
+            {
+                if (ManifestPublication != expected)
+                    throw BuildManifestTransitionException(operation, expected,
+                        ManifestPublication);
+                manifestPublication = next;
+            }
+
+            private InvalidOperationException BuildManifestTransitionException(string operation,
+                ManifestPublicationState expected, ManifestPublicationState actual)
+            {
+                return new InvalidOperationException(
+                    $"Package-test workflow '{WorkflowId}' cannot {operation}: " +
+                    $"manifest publication state is {actual}; expected {expected}.");
+            }
 
             public Dictionary<string, object> ToDictionary()
             {
@@ -947,7 +1095,7 @@ namespace UnityMCP.Editor
                     { "manifestPath", ManifestPath },
                     { "originalManifestBase64", OriginalManifestBase64 },
                     { "originalManifestHadUtf8Bom", OriginalManifestHadUtf8Bom },
-                    { "manifestChanged", ManifestChanged },
+                    { "manifestPublicationState", ManifestPublication.ToString() },
                     { "testJobId", TestJobId ?? "" },
                     { "testSucceeded", TestSucceeded },
                     { "cancelRequested", CancelRequested },
@@ -961,7 +1109,9 @@ namespace UnityMCP.Editor
 
             public static PackageTestWorkflow FromDictionary(Dictionary<string, object> values)
             {
-                return new PackageTestWorkflow
+                ManifestPublicationState manifestPublication =
+                    ParseManifestPublicationState(values);
+                var workflow = new PackageTestWorkflow
                 {
                     WorkflowId = GetValue(values, "workflowId"),
                     State = GetValue(values, "state"),
@@ -974,7 +1124,6 @@ namespace UnityMCP.Editor
                     ManifestPath = GetValue(values, "manifestPath"),
                     OriginalManifestBase64 = GetValue(values, "originalManifestBase64"),
                     OriginalManifestHadUtf8Bom = GetBoolean(values, "originalManifestHadUtf8Bom"),
-                    ManifestChanged = GetBoolean(values, "manifestChanged"),
                     TestJobId = GetValue(values, "testJobId"),
                     TestSucceeded = GetBoolean(values, "testSucceeded"),
                     CancelRequested = GetBoolean(values, "cancelRequested"),
@@ -986,6 +1135,23 @@ namespace UnityMCP.Editor
                     UpdatedAt = GetDateTime(values, "updatedAt"),
                     OwnerAgentId = GetValue(values, "ownerAgentId", "anonymous"),
                 };
+                workflow.manifestPublication = manifestPublication;
+                return workflow;
+            }
+
+            private static ManifestPublicationState ParseManifestPublicationState(
+                Dictionary<string, object> values)
+            {
+                string value = GetValue(values, "manifestPublicationState");
+                foreach (ManifestPublicationState state in
+                         Enum.GetValues(typeof(ManifestPublicationState)))
+                {
+                    if (string.Equals(value, state.ToString(), StringComparison.Ordinal))
+                        return state;
+                }
+
+                throw new InvalidDataException(
+                    $"Unknown package-test manifest publication state '{value}'.");
             }
 
             private static List<object> ToObjectList(IEnumerable<string> values)

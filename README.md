@@ -327,9 +327,14 @@ The full ownership matrix and authoritative built-in route audit are in
 The package contains EditMode regression tests for route authority, metadata,
 schemas, configuration precedence, queue/reload behavior, response compaction,
 and tool families. Use the persistent `testing/run-package-tests` workflow when
-testing a Git package inside a consumer project. Its start response contains a
-`jobId` and `jobType="package-test"`; poll that pair with `jobs/get` until a
-terminal status also reports the exact manifest-restoration outcome.
+testing a Git package inside a consumer project. With VM Unity MCP and no
+`testNames`, `categories`, or `groupNames`, this workflow runs the curated
+`VMUnityMCP.PackageSmoke` category. Request
+`categories: ["VMUnityMCP.FullRegression"]` only when the complete integration
+suite is warranted; exact names, fixture groups, and other categories remain
+available for focused validation. The start response contains a `jobId` and
+`jobType="package-test"`; poll that pair with `jobs/get` until a terminal status
+reports `manifestRestored` or the explicit `manifestRestoreFailed` outcome.
 
 When tool metadata changes, synchronize and test the companion Node server,
 then reconnect the MCP client before judging its cached concrete tool list.

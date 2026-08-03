@@ -9,9 +9,11 @@ using NUnit.Framework;
 
 namespace UnityMCP.Editor.Tests
 {
+    [Category(MCPPackageTestCommands.FullPackageRegressionCategory)]
     public sealed class MCPPersistenceFileTests
     {
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void WriteAllText_WaitsForExclusiveTargetLeaseAndPublishesCompleteSnapshot()
         {
             string directory = CreateTestDirectory();
@@ -48,6 +50,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ConcurrentReadersAndWriters_OnlyAdoptCompletePublishedSnapshots()
         {
             string directory = CreateTestDirectory();
@@ -124,6 +127,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void WriteAllText_WithBackupPublishesCurrentAndPriorCompleteSnapshots()
         {
             string directory = CreateTestDirectory();

@@ -89,6 +89,7 @@ namespace UnityMCP.Editor.Tests
         public SerializedEnumFlagsTestValue factionType;
     }
 
+    [Category(MCPPackageTestCommands.FullPackageRegressionCategory)]
     public sealed class MCPCommandRegressionTests
     {
         private const string TEST_FOLDER = "Assets/__UnityMCPTests";
@@ -114,6 +115,7 @@ namespace UnityMCP.Editor.Tests
         private static int runtimeMutationInvocationCount;
         private bool projectConfigurationExisted;
         private string projectConfigurationContents;
+        private bool usesAssetFixture;
 
         [MCPProjectTool(RUNTIME_MUTATION_TOOL_NAME,
             Description = "Regression fixture for explicit runtime mutation metadata.",
@@ -281,6 +283,11 @@ namespace UnityMCP.Editor.Tests
             AssetDeletePersistenceProcessor.Reset();
             runtimeMutationInvocationCount = 0;
 
+            usesAssetFixture = !CurrentTestHasCategory(
+                MCPPackageTestCommands.DefaultPackageSmokeCategory);
+            if (!usesAssetFixture)
+                return;
+
             string projectConfigurationPath =
                 MCPProjectConfiguration.GetFullPath();
             projectConfigurationExisted =
@@ -296,6 +303,9 @@ namespace UnityMCP.Editor.Tests
         public void TearDown()
         {
             AssetDeletePersistenceProcessor.Reset();
+
+            if (!usesAssetFixture)
+                return;
 
             var builderType = Type.GetType("Unity.UI.Builder.Builder, UnityEditor.UIBuilderModule", false);
             if (builderType != null)
@@ -315,6 +325,13 @@ namespace UnityMCP.Editor.Tests
             else if (File.Exists(projectConfigurationPath))
                 File.Delete(projectConfigurationPath);
             MCPSettingsManager.ReloadProjectConfiguration();
+        }
+
+        private static bool CurrentTestHasCategory(string category)
+        {
+            var categories = TestContext.CurrentContext.Test.Properties["Category"];
+            return categories != null && categories.Cast<object>().Any(value =>
+                string.Equals(value?.ToString(), category, StringComparison.Ordinal));
         }
 
         [Test]
@@ -1165,6 +1182,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void BridgeTransport_ClosedClientResponseDoesNotEscape()
         {
             int port;
@@ -1196,6 +1214,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void TransportContract_UsesOnlyAsyncQueueExecution()
         {
             Assert.That(typeof(MCPRequestQueue).GetField("_waiters",
@@ -1267,6 +1286,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void RequestQueue_PersistentSnapshotsExcludeOrdinaryReadOnlyResponses()
         {
             var shouldPersist = typeof(MCPRequestQueue).GetMethod("ShouldPersistTicketSnapshot",
@@ -1573,6 +1593,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void InstanceRegistry_ProjectIdentityHonorsHostPathCaseSemantics()
         {
             Assert.That(MCPInstanceRegistry.ProjectPathEquals(
@@ -1628,6 +1649,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ExecutionOptions_ParseAndResolveMode()
         {
             Assert.That(MCPExecutionOptions.TryParse(new Dictionary<string, object>(), out var automatic,
@@ -3908,6 +3930,7 @@ namespace UnityMCP.Editor.Tests
         [TestCase(false, true, false)]
         [TestCase(true, false, false)]
         [TestCase(true, true, true)]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void RuntimePreconditions_OnlyAcceptStablePlayMode(bool isPlaying,
             bool isPlayingOrWillChangePlaymode, bool expected)
         {
@@ -3939,6 +3962,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void RouteRegistry_ExposesOneAuthorityPerConsolidatedToolProduct()
         {
             var routes = GetBuiltInRoutes();
@@ -4192,6 +4216,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ProjectFileMutatingProjectTool_IsExplicitAndNotMisclassified()
         {
             var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
@@ -4238,6 +4263,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ProjectTool_MissingOperationKindIsRejectedFromEveryCatalogTier()
         {
             var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: false)
@@ -4288,6 +4314,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ProjectTool_RecursivelyValidatesNestedSchemasAndCombinators()
         {
             Dictionary<string, object> Execute(Dictionary<string, object> toolArgs)
@@ -4372,6 +4399,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ProjectToolDiscovery_SeparatesListGetAndExecuteContracts()
         {
             var listResult = RequireDictionary(MCPProjectToolCommands.List(new Dictionary<string, object>
@@ -4443,6 +4471,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ProjectToolExecution_EnforcesPlayModeBeforeEveryInvocationBoundary()
         {
             Assert.That(MCPRuntimePreconditions.IsStablePlayMode, Is.False,
@@ -5447,6 +5476,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void MutatingRoutesRequireAnExplicitTargetProject()
         {
             var method = typeof(MCPBridgeServer).GetMethod("TryBuildProjectMismatchResponse",
@@ -5587,6 +5617,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void BridgeTransport_AllowsOnlyTheDocumentedQueueMethods()
         {
             var method = typeof(MCPBridgeServer).GetMethod("IsHttpMethodAllowed",
@@ -5716,6 +5747,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void RouteRegistryMatchesEveryBuiltInSwitchHandlerWithoutRuntimeSourceParsing()
         {
             var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(MCPBridgeServer).Assembly);
@@ -7841,6 +7873,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ToolMetadata_FirstClassCatalogHasNoDefaultDescriptionsOrSchemaGaps()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
@@ -7930,6 +7963,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ToolMetadata_UsesOnlyTheCurrentMetadataContract()
         {
             var method = typeof(MCPToolMetadata).GetMethod(nameof(MCPToolMetadata.GetRegisteredTools),
@@ -8623,6 +8657,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void TransportCompaction_PreservesJsonSchemaBusinessFields()
         {
             var compacted = RequireDictionary(MCPResponse.CompactForTransport(
@@ -9400,6 +9435,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void BridgeResponsePreparation_PreservesStructuredErrorInsideSuccessfulJobSnapshot()
         {
             var source = new Dictionary<string, object>
@@ -9435,6 +9471,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void TransportCompaction_RetainsSuccessForStatusSnapshotWithObservedError()
         {
             var source = new Dictionary<string, object>

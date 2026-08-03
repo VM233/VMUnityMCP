@@ -2,6 +2,16 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.25] - 2026-08-03
+
+- Persist package-test manifest publication as an explicit state machine, keep terminal restoration
+  tags immutable after unrelated file changes, and report manifest restoration failures through the
+  dedicated `manifestRestoreFailed` tag.
+- Make the VM Unity MCP package-test default a curated `VMUnityMCP.PackageSmoke` category while
+  retaining the complete suite behind explicit `VMUnityMCP.FullRegression` selection. Smoke tests
+  skip the integration fixture's per-test AssetDatabase recreation, and overlapping manifest-state
+  checks are consolidated into one regression.
+
 ## [5.6.24] - 2026-08-02
 
 - Centralize MCP-authored file publication behind one path-keyed owner with complete immutable text

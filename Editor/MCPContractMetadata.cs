@@ -45,6 +45,7 @@ namespace UnityMCP.Editor
             internal const string DryRun = "dryRun";
             internal const string Interactive = "interactive";
             internal const string ManifestModified = "manifestModified";
+            internal const string ManifestRestoreFailed = "manifestRestoreFailed";
             internal const string ManifestRestored = "manifestRestored";
             internal const string ReconciledAfterReload = "reconciledAfterReload";
             internal const string RecoveredAfterReload = "recoveredAfterReload";

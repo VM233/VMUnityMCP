@@ -1272,7 +1272,7 @@ namespace UnityMCP.Editor
                 case "testing/get-job":
                     return "Poll a Unity Test Runner job, including progress, failures, and optional result details. EditMode tests can delay main-thread queue polling while they execute.";
                 case "testing/run-package-tests":
-                    return "Start a persistent Git-package test job that temporarily enables package testables, survives domain reloads, and restores manifest.json exactly. Poll its returned jobId with jobs/get and jobType package-test.";
+                    return "Start a persistent Git-package test job that temporarily enables package testables, survives domain reloads, and restores manifest.json exactly. VM Unity MCP defaults to its package-smoke category; request VMUnityMCP.FullRegression explicitly for the full suite. Poll its returned jobId with jobs/get and jobType package-test.";
                 case "testing/get-package-job":
                     return "Inspect or clear the current package-test workflow state. Normal polling uses jobs/get with the package test's jobId and jobType package-test.";
                 case "profiler/enable":
@@ -2168,7 +2168,7 @@ namespace UnityMCP.Editor
                     return Schema(Props(
                         Prop("mode", "string", "Test mode: EditMode or PlayMode. Defaults to EditMode."),
                         ArrayProp("testNames", "string", "Optional exact test full names."),
-                        ArrayProp("categories", "string", "Optional test categories."),
+                        ArrayProp("categories", "string", "Optional test categories. VM Unity MCP defaults to VMUnityMCP.PackageSmoke when testNames, categories, and groupNames are all omitted; pass VMUnityMCP.FullRegression for the full suite."),
                         ArrayProp("assemblies", "string", "Optional test assembly names."),
                         ArrayProp("groupNames", "string", "Optional Unity Test Runner group names."),
                         Prop("clearStuck", "boolean", "Force-clear a previously stuck job before starting. Defaults to false.")

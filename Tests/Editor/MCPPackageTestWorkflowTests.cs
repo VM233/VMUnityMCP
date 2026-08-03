@@ -8,9 +8,38 @@ using UnityEditor.Compilation;
 
 namespace UnityMCP.Editor.Tests
 {
+    [Category(MCPPackageTestCommands.FullPackageRegressionCategory)]
     public sealed class MCPPackageTestWorkflowTests
     {
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
+        public void DefaultPackageSelection_UsesSmokeUnlessCallerSelectsARegressionScope()
+        {
+            CollectionAssert.AreEqual(
+                new[] { MCPPackageTestCommands.DefaultPackageSmokeCategory },
+                MCPPackageTestCommands.ResolvePackageTestCategories(
+                    "com.vm233.unity-mcp", null, null, null));
+
+            var fullRegression = new[]
+            {
+                MCPPackageTestCommands.FullPackageRegressionCategory,
+            };
+            Assert.That(MCPPackageTestCommands.ResolvePackageTestCategories(
+                    "com.vm233.unity-mcp", null, fullRegression, null),
+                Is.SameAs(fullRegression));
+            Assert.That(MCPPackageTestCommands.ResolvePackageTestCategories(
+                    "com.vm233.unity-mcp", new[] { "Exact.Test" }, null, null),
+                Is.Null);
+            Assert.That(MCPPackageTestCommands.ResolvePackageTestCategories(
+                    "com.vm233.unity-mcp", null, null, new[] { "Fixture" }),
+                Is.Null);
+            Assert.That(MCPPackageTestCommands.ResolvePackageTestCategories(
+                    "com.example.package", null, null, null),
+                Is.Null);
+        }
+
+        [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void CompilationDiagnostics_PersistAcrossReloadAndErrorFilterStillReturnsDeprecatedWarnings()
         {
             FieldInfo bufferField = typeof(MCPConsoleCommands).GetField("_compilationErrors",
@@ -170,6 +199,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void CompiledTestAssemblyArtifact_IsReadyWithoutLoadingIntoDefaultAppDomain()
         {
             MethodInfo method = typeof(MCPPackageTestCommands).GetMethod(
@@ -317,6 +347,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void AcceptedPackageCancellation_IsASuccessfulCancelOperation()
         {
             Type workflowType = typeof(MCPPackageTestCommands).GetNestedType(
@@ -389,6 +420,107 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
+        public void PackageWorkflowManifestPublicationState_PersistsAndOwnsTags()
+        {
+            MethodInfo buildResponse = typeof(MCPPackageTestCommands).GetMethod(
+                "BuildResponse", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(buildResponse, Is.Not.Null);
+            var cases = new[]
+            {
+                new KeyValuePair<string, string>("Original", null),
+                new KeyValuePair<string, string>("Modified", "manifestModified"),
+                new KeyValuePair<string, string>("Restoring", "manifestModified"),
+                new KeyValuePair<string, string>("Restored", "manifestRestored"),
+                new KeyValuePair<string, string>("RestoreFailed", "manifestRestoreFailed"),
+            };
+
+            foreach (var pair in cases)
+            {
+                object workflow = CreatePackageTestWorkflow(
+                    "manifest-state-contract-" + pair.Key);
+                Type workflowType = workflow.GetType();
+                PropertyInfo publicationProperty = workflowType.GetProperty(
+                    "ManifestPublication", BindingFlags.Instance | BindingFlags.Public |
+                                           BindingFlags.NonPublic);
+                MethodInfo toDictionary = workflowType.GetMethod("ToDictionary");
+                MethodInfo fromDictionary = workflowType.GetMethod("FromDictionary",
+                    BindingFlags.Static | BindingFlags.Public);
+                Assert.That(publicationProperty, Is.Not.Null);
+                Assert.That(toDictionary, Is.Not.Null);
+                Assert.That(fromDictionary, Is.Not.Null);
+                AdvanceManifestPublication(workflow, pair.Key);
+
+                var serialized = (Dictionary<string, object>)toDictionary.Invoke(workflow, null);
+                Assert.That(serialized["manifestPublicationState"], Is.EqualTo(pair.Key));
+                Assert.That(serialized, Does.Not.ContainKey("manifestChanged"));
+                object reloaded = fromDictionary.Invoke(null, new object[] { serialized });
+                Assert.That(publicationProperty.GetValue(reloaded).ToString(), Is.EqualTo(pair.Key));
+
+                var response = (Dictionary<string, object>)buildResponse.Invoke(
+                    null, new[] { reloaded });
+                var tags = response.TryGetValue("tags", out object value)
+                    ? ((IEnumerable)value).Cast<object>().Select(item => item.ToString()).ToArray()
+                    : Array.Empty<string>();
+
+                if (pair.Value == null)
+                    Assert.That(tags, Is.Empty, pair.Key);
+                else
+                    CollectionAssert.Contains(tags, pair.Value, pair.Key);
+                Assert.That(tags.Count(tag =>
+                        tag.StartsWith("manifest", StringComparison.Ordinal)),
+                    Is.EqualTo(pair.Value == null ? 0 : 1), pair.Key);
+            }
+
+            object restoredWorkflow = CreatePackageTestWorkflow("immutable-manifest-contract");
+            Type restoredWorkflowType = restoredWorkflow.GetType();
+            FieldInfo manifestPathField = restoredWorkflowType.GetField("ManifestPath");
+            Assert.That(manifestPathField, Is.Not.Null);
+
+            AdvanceManifestPublication(restoredWorkflow, "Restored");
+            string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                $"unity-mcp-manifest-state-{Guid.NewGuid():N}.json");
+            manifestPathField.SetValue(restoredWorkflow, path);
+
+            try
+            {
+                var missingFileResponse = (Dictionary<string, object>)buildResponse.Invoke(
+                    null, new[] { restoredWorkflow });
+                System.IO.File.WriteAllText(path, "later unrelated manifest bytes");
+                var changedFileResponse = (Dictionary<string, object>)buildResponse.Invoke(
+                    null, new[] { restoredWorkflow });
+
+                foreach (var response in new[] { missingFileResponse, changedFileResponse })
+                {
+                    var tags = ((IEnumerable)response["tags"]).Cast<object>()
+                        .Select(item => item.ToString()).ToArray();
+                    CollectionAssert.Contains(tags, "manifestRestored");
+                    CollectionAssert.DoesNotContain(tags, "manifestModified");
+                }
+            }
+            finally
+            {
+                if (System.IO.File.Exists(path))
+                    System.IO.File.Delete(path);
+            }
+
+            object invalidWorkflow = CreatePackageTestWorkflow("invalid-manifest-state");
+            Type invalidWorkflowType = invalidWorkflow.GetType();
+            MethodInfo invalidToDictionary = invalidWorkflowType.GetMethod("ToDictionary");
+            MethodInfo invalidFromDictionary = invalidWorkflowType.GetMethod("FromDictionary",
+                BindingFlags.Static | BindingFlags.Public);
+            Assert.That(invalidToDictionary, Is.Not.Null);
+            Assert.That(invalidFromDictionary, Is.Not.Null);
+            var invalidSerialized =
+                (Dictionary<string, object>)invalidToDictionary.Invoke(invalidWorkflow, null);
+            invalidSerialized["manifestPublicationState"] = "Unknown";
+            var exception = Assert.Throws<TargetInvocationException>(() =>
+                invalidFromDictionary.Invoke(null, new object[] { invalidSerialized }));
+            Assert.That(exception.InnerException, Is.TypeOf<System.IO.InvalidDataException>());
+        }
+
+        [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void UnityTestPoll_PreservesFailedOutcomeWithoutFailingTheRead()
         {
             Type jobType = typeof(MCPTestRunnerCommands).GetNestedType(
@@ -420,6 +552,7 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void ExplicitFilters_WithNoMatchedTests_FailInsteadOfReportingSuccess()
         {
             Type jobType = typeof(MCPTestRunnerCommands).GetNestedType("TestJob",
@@ -488,5 +621,61 @@ namespace UnityMCP.Editor.Tests
             Assert.That(result, Does.Not.ContainKey("resultOffset"));
             Assert.That(MiniJson.Serialize(result), Does.Not.Contain("stackTrace"));
         }
+
+        private static object CreatePackageTestWorkflow(string jobId)
+        {
+            Type workflowType = typeof(MCPPackageTestCommands).GetNestedType(
+                "PackageTestWorkflow", BindingFlags.NonPublic);
+            Assert.That(workflowType, Is.Not.Null);
+            object workflow = Activator.CreateInstance(workflowType, true);
+            workflowType.GetField("WorkflowId")?.SetValue(workflow, jobId);
+            workflowType.GetField("State")?.SetValue(workflow, "succeeded");
+            workflowType.GetField("PackageName")?.SetValue(workflow, "com.example.tests");
+            workflowType.GetField("Mode")?.SetValue(workflow, "EditMode");
+            workflowType.GetField("Assemblies")?.SetValue(workflow, Array.Empty<string>());
+            workflowType.GetField("OriginalManifestBase64")?.SetValue(workflow,
+                Convert.ToBase64String(Array.Empty<byte>()));
+            workflowType.GetField("StartedAt")?.SetValue(workflow, DateTime.UtcNow);
+            workflowType.GetField("UpdatedAt")?.SetValue(workflow, DateTime.UtcNow);
+            return workflow;
+        }
+
+        private static void AdvanceManifestPublication(object workflow, string target)
+        {
+            switch (target)
+            {
+                case "Original":
+                    return;
+                case "Modified":
+                    InvokeManifestTransition(workflow, "BeginManifestModification");
+                    return;
+                case "Restoring":
+                    InvokeManifestTransition(workflow, "BeginManifestModification");
+                    InvokeManifestTransition(workflow, "BeginManifestRestore");
+                    return;
+                case "Restored":
+                    InvokeManifestTransition(workflow, "BeginManifestModification");
+                    InvokeManifestTransition(workflow, "BeginManifestRestore");
+                    InvokeManifestTransition(workflow, "MarkManifestRestored");
+                    return;
+                case "RestoreFailed":
+                    InvokeManifestTransition(workflow, "BeginManifestModification");
+                    InvokeManifestTransition(workflow, "BeginManifestRestore");
+                    InvokeManifestTransition(workflow, "MarkManifestRestoreFailed");
+                    return;
+                default:
+                    Assert.Fail($"Unknown manifest publication test target '{target}'.");
+                    return;
+            }
+        }
+
+        private static void InvokeManifestTransition(object workflow, string methodName)
+        {
+            MethodInfo method = workflow.GetType().GetMethod(methodName,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null, methodName);
+            method.Invoke(workflow, null);
+        }
+
     }
 }
