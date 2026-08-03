@@ -2,6 +2,13 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.27] - 2026-08-03
+
+- Compact all transported type descriptors at the shared response boundary by keeping the complete
+  type or test identifier and removing only matching short `type`, `component`, `typeName`, or
+  `name` aliases. Distinct display/element names and inconsistent diagnostics remain visible, while
+  request selectors continue to accept short names.
+
 ## [5.6.26] - 2026-08-03
 
 - Give every history-backed persistent Job one durable capability token shared by its producer,

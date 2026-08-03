@@ -226,6 +226,9 @@ The full ownership matrix and authoritative built-in route audit are in
   and cleanup without relying on route-specific prose.
 - Successful bridge responses may omit redundant `success=true`; errors keep a
   stable error code and retryability.
+- Transported type descriptors keep the complete `fullType`, `fullTypeName`, or
+  `fullName` identifier and omit matching short `type`, `component`, `typeName`,
+  or `name` aliases. Request selectors still accept simple or complete names.
 - Project-tool success envelopes are unwrapped without compacting the validated
   result object. Required empty collections, counts, flags, and nested members
   therefore retain the exact shape declared by the tool's `outputSchema`.

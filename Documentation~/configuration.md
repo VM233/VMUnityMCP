@@ -159,3 +159,9 @@ Transport compaction removes empty optional containers, but preserves a sole
 empty primary collection. This keeps zero-match list/search results meaningful
 inside completed queue tickets while still omitting redundant empty warning or
 diagnostic arrays from otherwise informative responses.
+
+Type identities use their complete identifier as the transport authority. When
+`fullType`, `fullTypeName`, or `fullName` losslessly contains a matching short
+`type`, `component`, `typeName`, or `name`, the short alias is omitted. Distinct
+display names, element names, and mismatched diagnostic values remain intact;
+simple names are still accepted by request selectors.

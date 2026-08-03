@@ -237,6 +237,7 @@ namespace UnityMCP.Editor
             if (!preserveUnityStructure)
             {
                 MCPCompactValueFormatter.CompactMembers(compacted);
+                RemoveDerivedIdentifierAliases(compacted);
                 RemoveDuplicateSummaryValues(compacted);
                 RemoveDuplicateErrorMessage(compacted);
                 RemoveDuplicateInstanceDetails(compacted);
@@ -343,6 +344,42 @@ namespace UnityMCP.Editor
             return dictionary.ContainsKey("ticketId") &&
                    dictionary.ContainsKey("status") &&
                    (dictionary.ContainsKey("actionName") || dictionary.ContainsKey("queuePosition"));
+        }
+
+        private static void RemoveDerivedIdentifierAliases(Dictionary<string, object> dictionary)
+        {
+            RemoveDerivedIdentifierAliases(dictionary, "fullType", "type", "component", "typeName");
+            RemoveDerivedIdentifierAliases(dictionary, "fullTypeName", "type", "component", "typeName");
+            RemoveDerivedIdentifierAliases(dictionary, "fullName", "name", "shortName", "simpleName");
+        }
+
+        private static void RemoveDerivedIdentifierAliases(Dictionary<string, object> dictionary,
+            string fullKey, params string[] shortKeys)
+        {
+            if (!dictionary.TryGetValue(fullKey, out object fullValue) ||
+                !(fullValue is string fullIdentifier) || string.IsNullOrEmpty(fullIdentifier))
+                return;
+
+            foreach (string shortKey in shortKeys)
+            {
+                if (dictionary.TryGetValue(shortKey, out object shortValue) &&
+                    shortValue is string shortIdentifier &&
+                    IsDerivedShortIdentifier(fullIdentifier, shortIdentifier))
+                {
+                    dictionary.Remove(shortKey);
+                }
+            }
+        }
+
+        private static bool IsDerivedShortIdentifier(string fullIdentifier, string shortIdentifier)
+        {
+            if (string.IsNullOrEmpty(shortIdentifier))
+                return false;
+            if (string.Equals(fullIdentifier, shortIdentifier, StringComparison.Ordinal))
+                return true;
+
+            return fullIdentifier.EndsWith("." + shortIdentifier, StringComparison.Ordinal) ||
+                   fullIdentifier.EndsWith("+" + shortIdentifier, StringComparison.Ordinal);
         }
 
         private static void RemoveDuplicateSummaryValues(Dictionary<string, object> dictionary)

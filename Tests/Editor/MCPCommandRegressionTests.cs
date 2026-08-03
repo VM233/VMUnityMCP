@@ -9055,6 +9055,85 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        public void TransportCompaction_RemovesOnlyLosslesslyDerivedIdentifierAliases()
+        {
+            var compacted = RequireDictionary(MCPResponse.CompactForTransport(
+                new Dictionary<string, object>
+                {
+                    { "components", new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "type", "Camera" },
+                                { "fullType", "UnityEngine.Camera" },
+                                { "enabled", true },
+                            },
+                            new Dictionary<string, object>
+                            {
+                                { "component", "InnerComponent" },
+                                { "fullType", "Fixture.Outer+InnerComponent" },
+                            },
+                            new Dictionary<string, object>
+                            {
+                                { "name", "Named Element" },
+                                { "type", "DisplayType" },
+                                { "fullType", "Fixture.RuntimeType" },
+                            },
+                        }
+                    },
+                    { "types", new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "name", "FixtureType" },
+                                { "fullName", "Fixture.Namespace.FixtureType" },
+                                { "assembly", "Fixture.Assembly" },
+                            },
+                        }
+                    },
+                    { "tests", new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                { "name", "Parameterized(\"a.b\")" },
+                                { "fullName", "Fixture.Tests.Parameterized(\"a.b\")" },
+                                { "status", "Passed" },
+                            },
+                        }
+                    },
+                    { "typeName", "NestedType" },
+                    { "fullTypeName", "Fixture.Outer+NestedType" },
+                }));
+
+            var components = (IList)compacted["components"];
+            var camera = RequireDictionary(components[0]);
+            Assert.That(camera.ContainsKey("type"), Is.False);
+            Assert.That(camera["fullType"], Is.EqualTo("UnityEngine.Camera"));
+
+            var nestedComponent = RequireDictionary(components[1]);
+            Assert.That(nestedComponent.ContainsKey("component"), Is.False);
+            Assert.That(nestedComponent["fullType"], Is.EqualTo("Fixture.Outer+InnerComponent"));
+
+            var distinctElement = RequireDictionary(components[2]);
+            Assert.That(distinctElement["name"], Is.EqualTo("Named Element"));
+            Assert.That(distinctElement["type"], Is.EqualTo("DisplayType"));
+
+            var types = (IList)compacted["types"];
+            var type = RequireDictionary(types[0]);
+            Assert.That(type.ContainsKey("name"), Is.False);
+            Assert.That(type["fullName"], Is.EqualTo("Fixture.Namespace.FixtureType"));
+            Assert.That(type["assembly"], Is.EqualTo("Fixture.Assembly"));
+
+            var tests = (IList)compacted["tests"];
+            var test = RequireDictionary(tests[0]);
+            Assert.That(test.ContainsKey("name"), Is.False);
+            Assert.That(test["fullName"], Is.EqualTo("Fixture.Tests.Parameterized(\"a.b\")"));
+
+            Assert.That(compacted.ContainsKey("typeName"), Is.False);
+            Assert.That(compacted["fullTypeName"], Is.EqualTo("Fixture.Outer+NestedType"));
+        }
+
+        [Test]
         public void TransportCompaction_CollapsesProgressSummaryAndNamedResultPagination()
         {
             var complete = RequireDictionary(MCPResponse.CompactForTransport(
