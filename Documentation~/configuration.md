@@ -162,6 +162,7 @@ diagnostic arrays from otherwise informative responses.
 
 Type identities use their complete identifier as the transport authority. When
 `fullType`, `fullTypeName`, or `fullName` losslessly contains a matching short
-`type`, `component`, `typeName`, or `name`, the short alias is omitted. Distinct
-display names, element names, and mismatched diagnostic values remain intact;
-simple names are still accepted by request selectors.
+`type`, `component`, `typeName`, `name`, or fallback `title`, the short alias is
+omitted. Distinct display names, element names, custom titles, and mismatched
+diagnostic values remain intact; simple names are still accepted by request
+selectors.

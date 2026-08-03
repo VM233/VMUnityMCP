@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.28] - 2026-08-03
+
+- Extend complete-identifier compaction to fallback titles that exactly repeat the full identifier
+  or its short suffix. Custom window and type titles remain in the transported response.
+
 ## [5.6.27] - 2026-08-03
 
 - Compact all transported type descriptors at the shared response boundary by keeping the complete

@@ -348,9 +348,12 @@ namespace UnityMCP.Editor
 
         private static void RemoveDerivedIdentifierAliases(Dictionary<string, object> dictionary)
         {
-            RemoveDerivedIdentifierAliases(dictionary, "fullType", "type", "component", "typeName");
-            RemoveDerivedIdentifierAliases(dictionary, "fullTypeName", "type", "component", "typeName");
-            RemoveDerivedIdentifierAliases(dictionary, "fullName", "name", "shortName", "simpleName");
+            RemoveDerivedIdentifierAliases(dictionary, "fullType",
+                "type", "component", "typeName", "title");
+            RemoveDerivedIdentifierAliases(dictionary, "fullTypeName",
+                "type", "component", "typeName", "title");
+            RemoveDerivedIdentifierAliases(dictionary, "fullName",
+                "name", "shortName", "simpleName", "title");
         }
 
         private static void RemoveDerivedIdentifierAliases(Dictionary<string, object> dictionary,

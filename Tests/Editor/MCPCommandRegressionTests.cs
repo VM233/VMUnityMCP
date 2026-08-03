@@ -9078,6 +9078,7 @@ namespace UnityMCP.Editor.Tests
                                 { "name", "Named Element" },
                                 { "type", "DisplayType" },
                                 { "fullType", "Fixture.RuntimeType" },
+                                { "title", "Custom Runtime Window" },
                             },
                         }
                     },
@@ -9087,6 +9088,7 @@ namespace UnityMCP.Editor.Tests
                             {
                                 { "name", "FixtureType" },
                                 { "fullName", "Fixture.Namespace.FixtureType" },
+                                { "title", "FixtureType" },
                                 { "assembly", "Fixture.Assembly" },
                             },
                         }
@@ -9117,10 +9119,12 @@ namespace UnityMCP.Editor.Tests
             var distinctElement = RequireDictionary(components[2]);
             Assert.That(distinctElement["name"], Is.EqualTo("Named Element"));
             Assert.That(distinctElement["type"], Is.EqualTo("DisplayType"));
+            Assert.That(distinctElement["title"], Is.EqualTo("Custom Runtime Window"));
 
             var types = (IList)compacted["types"];
             var type = RequireDictionary(types[0]);
             Assert.That(type.ContainsKey("name"), Is.False);
+            Assert.That(type.ContainsKey("title"), Is.False);
             Assert.That(type["fullName"], Is.EqualTo("Fixture.Namespace.FixtureType"));
             Assert.That(type["assembly"], Is.EqualTo("Fixture.Assembly"));
 
