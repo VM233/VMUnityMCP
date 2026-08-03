@@ -5713,20 +5713,43 @@ namespace UnityMCP.Editor.Tests
         }
 
         [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void JobHistoryIsPaginatedAndOwnerScoped()
         {
             Type history = typeof(MCPToolMetadata).Assembly.GetType("UnityMCP.Editor.MCPJobHistory");
             Assert.That(history, Is.Not.Null);
             MethodInfo record = history.GetMethod("Record", BindingFlags.Static | BindingFlags.Public);
             MethodInfo list = history.GetMethod("List", BindingFlags.Static | BindingFlags.Public);
+            MethodInfo get = history.GetMethod("Get", BindingFlags.Static | BindingFlags.Public);
+            MethodInfo publishAccessToken = history.GetMethod("PublishAccessToken",
+                BindingFlags.Static | BindingFlags.Public);
+            FieldInfo entries = history.GetField("entries",
+                BindingFlags.Static | BindingFlags.NonPublic);
             Assert.That(record, Is.Not.Null);
             Assert.That(list, Is.Not.Null);
+            Assert.That(get, Is.Not.Null);
+            Assert.That(publishAccessToken, Is.Not.Null);
+            Assert.That(entries, Is.Not.Null);
             string jobId = "job-regression-" + Guid.NewGuid().ToString("N");
+            var startResponse = new Dictionary<string, object>
+            {
+                { "success", true },
+                { "jobId", jobId },
+                { "jobType", "regression" },
+                { "status", "Completed" },
+            };
+            publishAccessToken.Invoke(null, new object[]
+            {
+                startResponse, "regression", jobId, "owner-a",
+            });
+            string accessToken = startResponse["jobAccessToken"].ToString();
+            Assert.That(accessToken, Has.Length.GreaterThan(20));
             record.Invoke(null, new object[]
             {
                 "regression", jobId, "owner-a", "Completed",
-                new Dictionary<string, object> { { "success", true } }
+                startResponse,
             });
+            entries.SetValue(null, null);
 
             var ownerPage = RequireDictionary(list.Invoke(null, new object[]
             {
@@ -5736,6 +5759,7 @@ namespace UnityMCP.Editor.Tests
                 }
             }));
             Assert.That(Convert.ToInt32(ownerPage["total"]), Is.GreaterThanOrEqualTo(1));
+            Assert.That(MiniJson.Serialize(ownerPage), Does.Not.Contain("jobAccessToken"));
             var otherPage = RequireDictionary(list.Invoke(null, new object[]
             {
                 new Dictionary<string, object>
@@ -5744,6 +5768,50 @@ namespace UnityMCP.Editor.Tests
                 }
             }));
             Assert.That(Convert.ToInt32(otherPage["total"]), Is.EqualTo(0));
+
+            var rejected = RequireDictionary(get.Invoke(null, new object[]
+            {
+                new Dictionary<string, object>
+                {
+                    { "_agentId", "owner-b" },
+                    { "jobType", "regression" },
+                    { "jobId", jobId },
+                }
+            }));
+            Assert.That(rejected["errorCode"], Is.EqualTo("job_owner_mismatch"));
+
+            var recovered = RequireDictionary(get.Invoke(null, new object[]
+            {
+                new Dictionary<string, object>
+                {
+                    { "_agentId", "owner-b" },
+                    { "jobType", "regression" },
+                    { "jobId", jobId },
+                    { "jobAccessToken", accessToken },
+                }
+            }));
+            var recoveredJob = RequireDictionary(recovered["job"]);
+            Assert.That(recoveredJob["ownerAgentId"], Is.EqualTo("owner-a"));
+            Assert.That(recoveredJob, Does.Not.ContainKey("jobAccessToken"));
+            Assert.That(MiniJson.Serialize(recoveredJob["snapshot"]),
+                Does.Not.Contain("jobAccessToken"));
+
+            var repeatedResponse = new Dictionary<string, object>();
+            publishAccessToken.Invoke(null, new object[]
+            {
+                repeatedResponse, "regression", jobId, "owner-a",
+            });
+            Assert.That(repeatedResponse["jobAccessToken"], Is.EqualTo(accessToken));
+
+            var cancel = RequireDictionary(MCPJobCommands.Cancel(
+                new Dictionary<string, object>
+                {
+                    { "_agentId", "owner-b" },
+                    { "jobType", "regression" },
+                    { "jobId", jobId },
+                    { "jobAccessToken", accessToken },
+                }));
+            Assert.That(cancel["errorCode"], Is.EqualTo("job_not_cancellable"));
         }
 
         [Test]

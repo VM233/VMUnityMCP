@@ -273,6 +273,7 @@ namespace UnityMCP.Editor
             {
                 { "success", job.IsTerminal ? job.Status == "succeeded" : true },
                 { "jobId", job.JobId },
+                { "jobType", "asset-refresh" },
                 { "status", job.Status },
                 { "pollRoute", "asset/get-refresh-job" },
                 { "recoveredAfterReload", job.RecoveredAfterReload },
@@ -283,6 +284,8 @@ namespace UnityMCP.Editor
                 response["error"] = job.Error;
             if (job.Result != null)
                 response["result"] = new Dictionary<string, object>(job.Result);
+            MCPJobHistory.PublishAccessToken(response, "asset-refresh", job.JobId,
+                GetString(job.Arguments, "_agentId"));
             return response;
         }
 

@@ -2,6 +2,17 @@
 
 All notable changes to this package will be documented in this file.
 
+## [5.6.26] - 2026-08-03
+
+- Give every history-backed persistent Job one durable capability token shared by its producer,
+  `jobs/get`, and `jobs/cancel`. The same owner can poll normally; a reconnected MCP agent can
+  recover with the token, while job lists and stored public snapshots never expose it.
+- Route package-test's specialized reader through the same Job-history authority and publish the
+  canonical `jobId`, `jobType`, polling route, and access token from the workflow response.
+- Fail the package-manifest transaction before mutation when an existing `testables` value is not a
+  JSON array, preserving data owned outside the workflow instead of silently replacing it. Extend
+  smoke coverage through a real history-file reload and the malformed-manifest boundary.
+
 ## [5.6.25] - 2026-08-03
 
 - Persist package-test manifest publication as an explicit state machine, keep terminal restoration

@@ -248,6 +248,11 @@ The full ownership matrix and authoritative built-in route audit are in
 - `jobs/cancel` reports success when the target accepts cancellation, including
   workflows that reach `canceled` immediately. Read the terminal outcome through
   `jobs/get`; cancellation acceptance is not returned as a command failure.
+- History-backed refresh, build, Test Runner, package-test, memory-snapshot,
+  Addressables, and Unity-package-import Jobs return `jobId`, `jobType`, and a
+  durable `jobAccessToken`. The originating agent can poll normally; after an MCP
+  reconnect, pass the token to `jobs/get` or `jobs/cancel`. `jobs/list` and public
+  history snapshots never return the token.
 - `jobs/get` and `testing/get-job` report a successful snapshot read independently
   from the observed job outcome. Inspect `status` and `error` for `failed` or
   `canceled` jobs; those outcomes do not turn polling into a queue-command failure
@@ -255,7 +260,8 @@ The full ownership matrix and authoritative built-in route audit are in
   `jobType="package-test"`; poll that identity through `jobs/get`.
 - `testing/get-package-job` is the specialized inspection and terminal-state
   cleanup route for the current package-test workflow. It accepts the same
-  `jobId`, but is not a second public job identity or the normal polling path.
+  `jobId` and access token, but is not a second public job identity or the normal
+  polling path.
 - Job capability and positive state flags use the same presence-only `tags`
   contract (`incrementalJob`, `cleanupDeclared`, `cleanupAvailable`,
   `cancellationRequested`, and `reused`). Fields that do not yet have a value
@@ -333,8 +339,11 @@ testing a Git package inside a consumer project. With VM Unity MCP and no
 `categories: ["VMUnityMCP.FullRegression"]` only when the complete integration
 suite is warranted; exact names, fixture groups, and other categories remain
 available for focused validation. The start response contains a `jobId` and
-`jobType="package-test"`; poll that pair with `jobs/get` until a terminal status
-reports `manifestRestored` or the explicit `manifestRestoreFailed` outcome.
+`jobType="package-test"` plus a `jobAccessToken`; poll that identity with
+`jobs/get`, supplying the token after an MCP reconnect, until a terminal status
+reports `manifestRestored` or the explicit `manifestRestoreFailed` outcome. The
+workflow refuses to replace a malformed pre-existing `testables` value and leaves
+externally changed manifest bytes untouched during restoration.
 
 When tool metadata changes, synchronize and test the companion Node server,
 then reconnect the MCP client before judging its cached concrete tool list.

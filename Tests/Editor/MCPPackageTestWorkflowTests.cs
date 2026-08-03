@@ -413,6 +413,8 @@ namespace UnityMCP.Editor.Tests
             Assert.That(response["success"], Is.EqualTo(true));
             Assert.That(response["jobId"], Is.EqualTo("canceled-workflow"));
             Assert.That(response["jobType"], Is.EqualTo("package-test"));
+            Assert.That(response["pollRoute"], Is.EqualTo("jobs/get"));
+            Assert.That(response["jobAccessToken"].ToString(), Has.Length.GreaterThan(20));
             Assert.That(response, Does.Not.ContainKey("workflowId"));
             Assert.That(response["status"], Is.EqualTo("canceled"));
             Assert.That(response["error"], Is.EqualTo("Canceled by request."));
@@ -521,6 +523,53 @@ namespace UnityMCP.Editor.Tests
 
         [Test]
         [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
+        public void PackageWorkflowManifestPublicationTransitions_RejectIllegalJumps()
+        {
+            object completed = CreatePackageTestWorkflow("manifest-transition-completed");
+            InvokeManifestTransition(completed, "BeginManifestModification");
+            Assert.That(GetManifestPublication(completed), Is.EqualTo("Modified"));
+            InvokeManifestTransition(completed, "BeginManifestModification");
+            Assert.That(GetManifestPublication(completed), Is.EqualTo("Modified"));
+            InvokeManifestTransition(completed, "BeginManifestRestore");
+            Assert.That(GetManifestPublication(completed), Is.EqualTo("Restoring"));
+            InvokeManifestTransition(completed, "BeginManifestRestore");
+            Assert.That(GetManifestPublication(completed), Is.EqualTo("Restoring"));
+            InvokeManifestTransition(completed, "MarkManifestRestored");
+            Assert.That(GetManifestPublication(completed), Is.EqualTo("Restored"));
+            AssertIllegalManifestTransition(completed, "BeginManifestRestore", "Restored");
+
+            object illegalJump = CreatePackageTestWorkflow("manifest-transition-illegal");
+            AssertIllegalManifestTransition(illegalJump, "MarkManifestRestored", "Original");
+
+            object failed = CreatePackageTestWorkflow("manifest-transition-failed");
+            InvokeManifestTransition(failed, "BeginManifestModification");
+            InvokeManifestTransition(failed, "BeginManifestRestore");
+            InvokeManifestTransition(failed, "MarkManifestRestoreFailed");
+            Assert.That(GetManifestPublication(failed), Is.EqualTo("RestoreFailed"));
+            AssertIllegalManifestTransition(failed, "MarkManifestRestored", "RestoreFailed");
+        }
+
+        [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
+        public void PackageManifestTransaction_RejectsNonArrayTestablesWithoutReplacingIt()
+        {
+            MethodInfo buildModifiedManifest = typeof(MCPPackageTestCommands).GetMethod(
+                "BuildModifiedManifestBytes", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(buildModifiedManifest, Is.Not.Null);
+            object workflow = CreatePackageTestWorkflow("invalid-testables-contract");
+            byte[] originalBytes = System.Text.Encoding.UTF8.GetBytes(
+                "{\"dependencies\":{},\"testables\":\"not-an-array\"}\n");
+
+            var exception = Assert.Throws<TargetInvocationException>(() =>
+                buildModifiedManifest.Invoke(null, new object[] { workflow, originalBytes }));
+
+            Assert.That(exception.InnerException, Is.TypeOf<System.IO.InvalidDataException>());
+            Assert.That(exception.InnerException.Message, Does.Contain("testables"));
+            Assert.That(exception.InnerException.Message, Does.Contain("left it unchanged"));
+        }
+
+        [Test]
+        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
         public void UnityTestPoll_PreservesFailedOutcomeWithoutFailingTheRead()
         {
             Type jobType = typeof(MCPTestRunnerCommands).GetNestedType(
@@ -546,6 +595,8 @@ namespace UnityMCP.Editor.Tests
                 null, new object[] { job, false, false, false, 0, 100, 20 });
 
             Assert.That(response["success"], Is.EqualTo(true));
+            Assert.That(response["jobType"], Is.EqualTo("unity-test"));
+            Assert.That(response["jobAccessToken"].ToString(), Has.Length.GreaterThan(20));
             Assert.That(response["status"], Is.EqualTo("failed"));
             Assert.That(response["error"], Is.EqualTo("One test failed."));
             Assert.That(MCPResponse.TryGetError(response, out _, out _, out _), Is.False);
@@ -675,6 +726,25 @@ namespace UnityMCP.Editor.Tests
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             Assert.That(method, Is.Not.Null, methodName);
             method.Invoke(workflow, null);
+        }
+
+        private static string GetManifestPublication(object workflow)
+        {
+            PropertyInfo property = workflow.GetType().GetProperty("ManifestPublication",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.That(property, Is.Not.Null);
+            return property.GetValue(workflow).ToString();
+        }
+
+        private static void AssertIllegalManifestTransition(object workflow, string methodName,
+            string currentState)
+        {
+            var exception = Assert.Throws<TargetInvocationException>(() =>
+                InvokeManifestTransition(workflow, methodName));
+            Assert.That(exception.InnerException, Is.TypeOf<InvalidOperationException>());
+            Assert.That(exception.InnerException.Message, Does.Contain(currentState));
+            Assert.That(exception.InnerException.Message,
+                Does.Contain(workflow.GetType().GetField("WorkflowId")?.GetValue(workflow)?.ToString()));
         }
 
     }

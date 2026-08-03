@@ -278,6 +278,7 @@ namespace UnityMCP.Editor
                 response["errorCode"] = job.ErrorCode;
             if (!string.IsNullOrEmpty(job.Error))
                 response["error"] = job.Error;
+            MCPJobHistory.PublishAccessToken(response, JobType, job.JobId, job.OwnerAgentId);
             return response;
         }
 

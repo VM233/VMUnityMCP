@@ -909,6 +909,8 @@ namespace UnityMCP.Editor
             };
             if (!string.IsNullOrEmpty(job.Error)) response["error"] = job.Error;
             if (job.Result != null) response["result"] = job.Result;
+            MCPJobHistory.PublishAccessToken(response, "addressables-build", job.JobId,
+                job.OwnerAgentId);
             return response;
         }
 

@@ -121,14 +121,14 @@ namespace UnityMCP.Editor
                 _workflow = LoadWorkflow();
             if (_workflow == null)
                 return new { error = "No package test workflow found" };
-            if (!string.Equals(_workflow.OwnerAgentId ?? "anonymous", GetString(args, "_agentId", "anonymous"),
-                    StringComparison.Ordinal))
-                return MCPResponse.Error("Package test workflow belongs to another agent.",
-                    "job_owner_mismatch");
-
             string jobId = GetString(args, "jobId");
             if (!string.IsNullOrEmpty(jobId) && jobId != _workflow.WorkflowId)
                 return new { error = $"Package test job '{jobId}' not found" };
+            if (!MCPJobHistory.CanAccess("package-test", _workflow.WorkflowId,
+                    _workflow.OwnerAgentId, args))
+                return MCPResponse.Error(
+                    "Package test workflow belongs to another agent and the jobAccessToken was not supplied.",
+                    "job_owner_mismatch");
 
             if (!_workflow.IsTerminal)
             {
@@ -158,9 +158,10 @@ namespace UnityMCP.Editor
             if (!string.IsNullOrEmpty(workflowId) && workflowId != _workflow.WorkflowId)
                 return MCPResponse.Error($"Package test workflow '{workflowId}' was not found.",
                     "job_not_found");
-            if (!string.Equals(_workflow.OwnerAgentId ?? "anonymous",
-                    GetString(args, "_agentId", "anonymous"), StringComparison.Ordinal))
-                return MCPResponse.Error("Package test workflow belongs to another agent.",
+            if (!MCPJobHistory.CanAccess("package-test", _workflow.WorkflowId,
+                    _workflow.OwnerAgentId, args))
+                return MCPResponse.Error(
+                    "Package test workflow belongs to another agent and the jobAccessToken was not supplied.",
                     "job_owner_mismatch");
             if (_workflow.IsTerminal)
                 return MCPResponse.Error("Package test workflow is already terminal.",
@@ -546,6 +547,13 @@ namespace UnityMCP.Editor
                 { "jobId", workflow.WorkflowId },
                 { "jobType", "package-test" },
                 { "status", workflow.State },
+                { "pollRoute", "jobs/get" },
+                { "pollArgs", new Dictionary<string, object>
+                    {
+                        { "jobId", workflow.WorkflowId },
+                        { "jobType", "package-test" },
+                    }
+                },
                 { "packageName", workflow.PackageName },
                 { "mode", workflow.Mode },
                 { "assemblies", workflow.Assemblies ?? Array.Empty<string>() },
@@ -576,6 +584,8 @@ namespace UnityMCP.Editor
                 response["error"] = workflow.Error;
             if (workflow.TestResult != null)
                 response["testResult"] = workflow.TestResult;
+            MCPJobHistory.PublishAccessToken(response, "package-test", workflow.WorkflowId,
+                workflow.OwnerAgentId);
             return response;
         }
 
@@ -632,11 +642,21 @@ namespace UnityMCP.Editor
                 throw new InvalidOperationException(
                     $"Package '{workflow.PackageName}' was already testable in the captured manifest.");
 
-            if (!(manifest.TryGetValue("testables", out object rawTestables) &&
-                  rawTestables is List<object> testables))
+            List<object> testables;
+            if (!manifest.TryGetValue("testables", out object rawTestables))
             {
                 testables = new List<object>();
                 manifest["testables"] = testables;
+            }
+            else if (rawTestables is List<object> existingTestables)
+            {
+                testables = existingTestables;
+            }
+            else
+            {
+                throw new InvalidDataException(
+                    "Packages/manifest.json field 'testables' must be a JSON array; " +
+                    "the package-test manifest transaction left it unchanged.");
             }
             testables.Add(workflow.PackageName);
 

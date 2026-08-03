@@ -44,6 +44,9 @@ namespace UnityMCP.Editor
                 { "jobId", jobId },
                 { "_agentId", GetString(args, "_agentId", "anonymous") },
             };
+            string jobAccessToken = GetString(args, "jobAccessToken");
+            if (!string.IsNullOrEmpty(jobAccessToken))
+                lookupArgs["jobAccessToken"] = jobAccessToken;
             if (!string.IsNullOrEmpty(requestedJobType))
                 lookupArgs["jobType"] = requestedJobType;
 
@@ -63,6 +66,7 @@ namespace UnityMCP.Editor
             {
                 ["jobId"] = jobId,
                 ["jobType"] = jobType,
+                ["_agentId"] = GetString(job, "ownerAgentId", "anonymous"),
             };
 
             switch (jobType)

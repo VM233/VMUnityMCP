@@ -764,7 +764,7 @@ namespace UnityMCP.Editor
         {
             var snapshotFile = new FileInfo(job.SnapshotPath);
             var tempFile = new FileInfo(job.TempPath);
-            return new Dictionary<string, object>
+            var response = new Dictionary<string, object>
             {
                 { "jobId", job.JobId },
                 { "jobType", "memory-snapshot" },
@@ -785,6 +785,9 @@ namespace UnityMCP.Editor
                 { "elapsedMs", Math.Round((EditorApplication.timeSinceStartup - job.StartedAt) * 1000d, 1) },
                 { "error", job.Error ?? "" },
             };
+            MCPJobHistory.PublishAccessToken(response, "memory-snapshot", job.JobId,
+                job.OwnerAgentId);
+            return response;
         }
 
         private static void CompleteCanceledSnapshot(MemorySnapshotJob job, string callbackPath)

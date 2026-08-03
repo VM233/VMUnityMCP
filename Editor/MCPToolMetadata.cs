@@ -1272,9 +1272,9 @@ namespace UnityMCP.Editor
                 case "testing/get-job":
                     return "Poll a Unity Test Runner job, including progress, failures, and optional result details. EditMode tests can delay main-thread queue polling while they execute.";
                 case "testing/run-package-tests":
-                    return "Start a persistent Git-package test job that temporarily enables package testables, survives domain reloads, and restores manifest.json exactly. VM Unity MCP defaults to its package-smoke category; request VMUnityMCP.FullRegression explicitly for the full suite. Poll its returned jobId with jobs/get and jobType package-test.";
+                    return "Start a persistent Git-package test job that temporarily enables package testables, survives domain reloads, restores manifest.json exactly, and returns a jobAccessToken for reconnect recovery. VM Unity MCP defaults to its package-smoke category; request VMUnityMCP.FullRegression explicitly for the full suite. Poll its returned jobId with jobs/get and jobType package-test.";
                 case "testing/get-package-job":
-                    return "Inspect or clear the current package-test workflow state. Normal polling uses jobs/get with the package test's jobId and jobType package-test.";
+                    return "Inspect or clear the current package-test workflow state. Normal polling uses jobs/get with the package test's jobId and jobType package-test; after reconnect, supply the jobAccessToken returned at start.";
                 case "profiler/enable":
                     return "Enable or disable the Unity Profiler and optional deep profiling.";
                 case "profiler/stats":
@@ -2195,6 +2195,7 @@ namespace UnityMCP.Editor
                 case "testing/get-package-job":
                     return Schema(Props(
                         Prop("jobId", "string", "Optional package-test job ID. Defaults to the active or latest workflow."),
+                        Prop("jobAccessToken", "string", "Capability token returned when the package-test job started. Required after the originating MCP agent disconnects."),
                         Prop("clear", "boolean", "Delete terminal workflow state after returning it. Defaults to false.")
                     ));
                 case "scene/instantiate-prefab":

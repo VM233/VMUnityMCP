@@ -11,7 +11,10 @@ namespace UnityMCP.Editor
     internal static class MCPJobHistory
     {
         private const int MaxSnapshotCharacters = 128 * 1024;
+        private const string JobAccessTokenKey = "jobAccessToken";
         private static readonly object Sync = new object();
+        private static readonly Dictionary<string, PendingJobAccess> PendingAccessTokens =
+            new Dictionary<string, PendingJobAccess>(StringComparer.Ordinal);
         private static List<Dictionary<string, object>> entries;
 
         public static void Record(string jobType, string jobId, string ownerAgentId, string status, object snapshot)
@@ -20,19 +23,85 @@ namespace UnityMCP.Editor
             lock (Sync)
             {
                 EnsureLoaded();
+                string owner = NormalizeOwner(ownerAgentId);
+                Dictionary<string, object> existing = entries.FirstOrDefault(item =>
+                    GetString(item, "jobType") == jobType && GetString(item, "jobId") == jobId);
+                string accessToken = ResolveAccessToken(jobType, jobId, owner, existing);
                 entries.RemoveAll(item => GetString(item, "jobType") == jobType &&
                                           GetString(item, "jobId") == jobId);
-                object boundedSnapshot = BoundSnapshot(snapshot, status);
+                object boundedSnapshot = BoundSnapshot(RemoveAccessToken(snapshot), status);
                 entries.Add(new Dictionary<string, object>
                 {
                     { "jobType", jobType }, { "jobId", jobId },
-                    { "ownerAgentId", string.IsNullOrEmpty(ownerAgentId) ? "anonymous" : ownerAgentId },
+                    { "ownerAgentId", owner }, { JobAccessTokenKey, accessToken },
                     { "status", status ?? "unknown" }, { "updatedAt", DateTime.UtcNow.ToString("O") },
                     { "snapshot", boundedSnapshot },
                 });
+                PendingAccessTokens.Remove(GetAccessKey(jobType, jobId));
                 entries = entries.OrderByDescending(item => ParseDate(GetString(item, "updatedAt")))
                     .Take(MCPSettingsManager.JobHistoryMaxEntries).ToList();
                 Save();
+            }
+        }
+
+        public static void PublishAccessToken(Dictionary<string, object> response, string jobType,
+            string jobId, string ownerAgentId)
+        {
+            if (response == null || string.IsNullOrEmpty(jobType) || string.IsNullOrEmpty(jobId))
+                return;
+
+            lock (Sync)
+            {
+                EnsureLoaded();
+                string owner = NormalizeOwner(ownerAgentId);
+                string key = GetAccessKey(jobType, jobId);
+                Dictionary<string, object> existing = entries.FirstOrDefault(item =>
+                    GetString(item, "jobType") == jobType && GetString(item, "jobId") == jobId);
+                string accessToken;
+                if (existing != null)
+                {
+                    RequireOwner(existing, owner, jobType, jobId);
+                    accessToken = GetString(existing, JobAccessTokenKey);
+                    if (string.IsNullOrEmpty(accessToken))
+                    {
+                        accessToken = Guid.NewGuid().ToString("N");
+                        existing[JobAccessTokenKey] = accessToken;
+                        Save();
+                    }
+                }
+                else if (PendingAccessTokens.TryGetValue(key, out PendingJobAccess pending))
+                {
+                    if (!string.Equals(pending.OwnerAgentId, owner, StringComparison.Ordinal))
+                        throw BuildOwnerChangeException(jobType, jobId, pending.OwnerAgentId, owner);
+                    accessToken = pending.AccessToken;
+                }
+                else
+                {
+                    accessToken = Guid.NewGuid().ToString("N");
+                    PendingAccessTokens[key] = new PendingJobAccess(owner, accessToken);
+                }
+
+                response[JobAccessTokenKey] = accessToken;
+            }
+        }
+
+        public static bool CanAccess(string jobType, string jobId, string ownerAgentId,
+            Dictionary<string, object> args)
+        {
+            string owner = NormalizeOwner(ownerAgentId);
+            if (string.Equals(GetString(args, "_agentId", "anonymous"), owner,
+                    StringComparison.Ordinal))
+                return true;
+
+            lock (Sync)
+            {
+                EnsureLoaded();
+                Dictionary<string, object> existing = entries.FirstOrDefault(item =>
+                    GetString(item, "jobType") == jobType && GetString(item, "jobId") == jobId);
+                return existing != null &&
+                       string.Equals(GetString(existing, "ownerAgentId", "anonymous"), owner,
+                           StringComparison.Ordinal) &&
+                       HasAccessToken(existing, args);
             }
         }
 
@@ -52,7 +121,7 @@ namespace UnityMCP.Editor
                         (string.IsNullOrEmpty(status) || GetString(item, "status") == status))
                     .OrderByDescending(item => ParseDate(GetString(item, "updatedAt"))).ToList();
                 var page = filtered.Skip(offset).Take(limit)
-                    .Select(item => new Dictionary<string, object>(item)).ToList();
+                    .Select(CreatePublicEntry).ToList();
                 return new Dictionary<string, object>
                 {
                     { "success", true }, { "ownerAgentId", agentId }, { "total", filtered.Count },
@@ -77,13 +146,89 @@ namespace UnityMCP.Editor
                 var match = entries.FirstOrDefault(item => GetString(item, "jobId") == jobId &&
                     (string.IsNullOrEmpty(jobType) || GetString(item, "jobType") == jobType));
                 if (match == null) return MCPResponse.Error($"Job '{jobId}' was not found.", "job_not_found");
-                if (GetString(match, "ownerAgentId", "anonymous") != agentId)
-                    return MCPResponse.Error("Job belongs to another agent.", "job_owner_mismatch");
+                if (GetString(match, "ownerAgentId", "anonymous") != agentId &&
+                    !HasAccessToken(match, args))
+                    return MCPResponse.Error(
+                        "Job belongs to another agent and the jobAccessToken was not supplied.",
+                        "job_owner_mismatch");
                 return new Dictionary<string, object>
                 {
-                    { "success", true }, { "job", new Dictionary<string, object>(match) },
+                    { "success", true }, { "job", CreatePublicEntry(match) },
                 };
             }
+        }
+
+        private static string ResolveAccessToken(string jobType, string jobId, string owner,
+            Dictionary<string, object> existing)
+        {
+            if (existing != null)
+            {
+                RequireOwner(existing, owner, jobType, jobId);
+                string persisted = GetString(existing, JobAccessTokenKey);
+                if (!string.IsNullOrEmpty(persisted))
+                    return persisted;
+            }
+
+            string key = GetAccessKey(jobType, jobId);
+            if (PendingAccessTokens.TryGetValue(key, out PendingJobAccess pending))
+            {
+                if (!string.Equals(pending.OwnerAgentId, owner, StringComparison.Ordinal))
+                    throw BuildOwnerChangeException(jobType, jobId, pending.OwnerAgentId, owner);
+                return pending.AccessToken;
+            }
+            return Guid.NewGuid().ToString("N");
+        }
+
+        private static void RequireOwner(Dictionary<string, object> entry, string owner,
+            string jobType, string jobId)
+        {
+            string existingOwner = GetString(entry, "ownerAgentId", "anonymous");
+            if (!string.Equals(existingOwner, owner, StringComparison.Ordinal))
+                throw BuildOwnerChangeException(jobType, jobId, existingOwner, owner);
+        }
+
+        private static InvalidOperationException BuildOwnerChangeException(string jobType,
+            string jobId, string existingOwner, string requestedOwner)
+        {
+            return new InvalidOperationException(
+                $"Persistent job '{jobType}/{jobId}' cannot change owner from " +
+                $"'{existingOwner}' to '{requestedOwner}'.");
+        }
+
+        private static bool HasAccessToken(Dictionary<string, object> entry,
+            Dictionary<string, object> args)
+        {
+            string requested = GetString(args, JobAccessTokenKey);
+            return !string.IsNullOrEmpty(requested) &&
+                   string.Equals(requested, GetString(entry, JobAccessTokenKey),
+                       StringComparison.Ordinal);
+        }
+
+        private static object RemoveAccessToken(object snapshot)
+        {
+            if (!(snapshot is Dictionary<string, object> source))
+                return snapshot;
+            var sanitized = new Dictionary<string, object>(source);
+            sanitized.Remove(JobAccessTokenKey);
+            return sanitized;
+        }
+
+        private static Dictionary<string, object> CreatePublicEntry(
+            Dictionary<string, object> entry)
+        {
+            var result = new Dictionary<string, object>(entry);
+            result.Remove(JobAccessTokenKey);
+            return result;
+        }
+
+        private static string GetAccessKey(string jobType, string jobId)
+        {
+            return jobType + "\n" + jobId;
+        }
+
+        private static string NormalizeOwner(string ownerAgentId)
+        {
+            return string.IsNullOrEmpty(ownerAgentId) ? "anonymous" : ownerAgentId;
         }
 
         private static object BoundSnapshot(object snapshot, string status)
@@ -143,6 +288,18 @@ namespace UnityMCP.Editor
         {
             return args != null && args.TryGetValue(key, out object value) && value != null &&
                    int.TryParse(value.ToString(), out int parsed) ? parsed : defaultValue;
+        }
+
+        private sealed class PendingJobAccess
+        {
+            public PendingJobAccess(string ownerAgentId, string accessToken)
+            {
+                OwnerAgentId = ownerAgentId;
+                AccessToken = accessToken;
+            }
+
+            public string OwnerAgentId { get; }
+            public string AccessToken { get; }
         }
     }
 }

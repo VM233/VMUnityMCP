@@ -324,6 +324,7 @@ namespace UnityMCP.Editor
             {
                 { "success", job.IsTerminal ? job.Status == "succeeded" : true },
                 { "jobId", job.JobId },
+                { "jobType", "player-build" },
                 { "status", job.Status },
                 { "cancelRequested", job.CancelRequested },
                 { "pollRoute", "build/get-job" },
@@ -334,6 +335,8 @@ namespace UnityMCP.Editor
                 response["error"] = job.Error;
             if (job.Result != null)
                 response["result"] = job.Result;
+            MCPJobHistory.PublishAccessToken(response, "player-build", job.JobId,
+                GetString(job.Arguments, "_agentId"));
             return response;
         }
 

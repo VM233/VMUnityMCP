@@ -213,13 +213,16 @@ namespace UnityMCP.Editor
 
             Debug.Log($"[MCP TestRunner] Started test job {job.JobId} (mode={testMode})");
 
-            return new Dictionary<string, object>
+            var response = new Dictionary<string, object>
             {
                 { "success", true },
                 { "jobId", job.JobId },
+                { "jobType", "unity-test" },
                 { "status", "running" },
                 { "mode", testMode.ToString() }
             };
+            MCPJobHistory.PublishAccessToken(response, "unity-test", job.JobId, job.AgentId);
+            return response;
         }
 
         internal static object CancelTestJob(Dictionary<string, object> args)
@@ -567,6 +570,7 @@ namespace UnityMCP.Editor
                 // independently by status and error.
                 { "success", true },
                 { "jobId", job.JobId },
+                { "jobType", "unity-test" },
                 { "status", job.Status.ToString().ToLowerInvariant() },
                 { "mode", job.Mode.ToString() },
                 { "startedAt", job.StartedAt.ToString("O") },
@@ -674,6 +678,7 @@ namespace UnityMCP.Editor
                 result["nextResultOffset"] = nextOffset < filteredTests.Count ? (object)nextOffset : null;
             }
 
+            MCPJobHistory.PublishAccessToken(result, "unity-test", job.JobId, job.AgentId);
             return result;
         }
 
