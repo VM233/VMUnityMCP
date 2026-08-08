@@ -19,76 +19,6 @@ using Object = UnityEngine.Object;
 
 namespace UnityMCP.Editor.Tests
 {
-    public enum ScalarEnvelopeTestMode
-    {
-        First,
-        Second
-    }
-
-    [Serializable]
-    public sealed class ScalarEnvelopeTestConfig
-    {
-        public ScalarEnvelopeTestMode mode;
-    }
-
-    public sealed class ScalarEnvelopeTestObject : ScriptableObject
-    {
-        public ScalarEnvelopeTestConfig config = new ScalarEnvelopeTestConfig();
-    }
-
-    public sealed class SerializedInt64TestObject : ScriptableObject
-    {
-        public long keyId;
-    }
-
-    internal sealed class AssetDeletePersistenceProcessor : AssetModificationProcessor
-    {
-        internal static string WatchedAssetPath;
-        internal static AnimationClip Target;
-
-        private static AssetDeleteResult OnWillDeleteAsset(string assetPath, RemoveAssetOptions options)
-        {
-            if (Target != null && string.Equals(assetPath, WatchedAssetPath, StringComparison.Ordinal))
-            {
-                Target.frameRate = 17f;
-                EditorUtility.SetDirty(Target);
-            }
-
-            return AssetDeleteResult.DidNotDelete;
-        }
-
-        internal static void Reset()
-        {
-            WatchedAssetPath = null;
-            Target = null;
-        }
-    }
-
-    [Flags]
-    public enum SerializedEnumFlagsTestValue
-    {
-        None = 0,
-        Enemy = 1,
-        Neutral = 2,
-        Friendly = 4,
-        Allied = 8
-    }
-
-    [Serializable]
-    public sealed class SerializedEnumFlagsTestConfig
-    {
-        public SerializedEnumFlagsTestValue factionType;
-    }
-
-    public sealed class SerializedEnumFlagsTestObject : ScriptableObject
-    {
-        public List<SerializedEnumFlagsTestConfig> configs = new List<SerializedEnumFlagsTestConfig>
-        {
-            new SerializedEnumFlagsTestConfig()
-        };
-        public SerializedEnumFlagsTestValue factionType;
-    }
-
     [Category(MCPPackageTestCommands.FullPackageRegressionCategory)]
     public sealed class MCPCommandRegressionTests
     {
@@ -98,190 +28,15 @@ namespace UnityMCP.Editor.Tests
         private const string SOURCE_SCENE_PATH = TEST_FOLDER + "/MCP Source Scene.unity";
         private const string UNTITLED_SCENE_PATH = TEST_FOLDER + "/Saved Untitled Scene.unity";
         private const string TEST_HOST_SCENE_PATH = TEST_FOLDER + "/Test Host Scene.unity";
-        private const string RUNTIME_MUTATION_TOOL_NAME = "unity-mcp-tests/set-runtime-state";
-        private const string PROJECT_FILE_MUTATION_TOOL_NAME = "unity-mcp-tests/write-project-report";
-        private const string READ_ONLY_PROJECT_FILE_WRITE_TOOL_NAME =
-            "unity-mcp-tests/read-only-project-file-write";
-        private const string LAZY_READ_TOOL_NAME = "unity-mcp-tests/read-lazy-state";
-        private const string NESTED_SCHEMA_TOOL_NAME = "unity-mcp-tests/validate-nested-schema";
-        private const string STRICT_COMBINATOR_SCHEMA_TOOL_NAME =
-            "unity-mcp-tests/validate-strict-combinator-schema";
-        private const string MISSING_OPERATION_KIND_TOOL_NAME =
-            "unity-mcp-tests/missing-operation-kind";
-        private const string INCOMPLETE_FIRST_CLASS_TOOL_NAME = "unity-mcp-tests/incomplete-first-class";
-        private const string PERSISTENT_PROJECT_TOOL_NAME = "unity-mcp-tests/persistent-step";
-        private const string PERSISTENT_PROJECT_TOOL_CLEANUP_NAME =
-            "unity-mcp-tests/persistent-step-cleanup";
-        private static int runtimeMutationInvocationCount;
         private bool projectConfigurationExisted;
         private string projectConfigurationContents;
         private bool usesAssetFixture;
 
-        [MCPProjectTool(RUNTIME_MUTATION_TOOL_NAME,
-            Description = "Regression fixture for explicit runtime mutation metadata.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
-            MutatesRuntime = true,
-            RequiresPlayMode = true,
-            FirstClass = true)]
-        private static object SetRuntimeStateFixture(Dictionary<string, object> args)
-        {
-            runtimeMutationInvocationCount++;
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "receivedKeys", args.Keys.OrderBy(key => key).ToArray() }
-            };
-        }
-
-        [MCPProjectTool(PROJECT_FILE_MUTATION_TOOL_NAME,
-            Description = "Regression fixture for explicit project-file mutation metadata.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
-            MutatesProjectFiles = true,
-            FirstClass = true)]
-        private static object WriteProjectReportFixture(Dictionary<string, object> args)
-        {
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "receivedKeys", args.Keys.OrderBy(key => key).ToArray() }
-            };
-        }
-
-        [MCPProjectTool(READ_ONLY_PROJECT_FILE_WRITE_TOOL_NAME,
-            Description = "Regression fixture for rejecting read-only file writes.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
-            SideEffects = MCPProjectToolSideEffect.WritesProjectFiles,
-            ReadOnly = true)]
-        private static object ReadOnlyProjectFileWriteFixture(Dictionary<string, object> args)
-        {
-            return new Dictionary<string, object> { { "success", true } };
-        }
-
-        [MCPProjectTool(LAZY_READ_TOOL_NAME,
-            Description = "Regression fixture for an explicitly lazy project tool.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
-            ReadOnly = true)]
-        private static object ReadLazyStateFixture(Dictionary<string, object> args)
-        {
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "receivedKeys", args.Keys.OrderBy(key => key).ToArray() }
-            };
-        }
-
-        [MCPProjectTool(NESTED_SCHEMA_TOOL_NAME,
-            Description = "Regression fixture for recursive project-tool schema validation.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"config\":{\"type\":\"object\",\"description\":\"Nested validation configuration.\",\"properties\":{\"mode\":{\"type\":\"string\",\"description\":\"Validation mode.\",\"enum\":[\"safe\",\"fast\"]},\"values\":{\"type\":\"array\",\"description\":\"One or two integer values.\",\"minItems\":1,\"maxItems\":2,\"items\":{\"type\":\"integer\"}},\"choice\":{\"description\":\"String or integer choice.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}},\"required\":[\"mode\",\"values\"],\"additionalProperties\":false}},\"required\":[\"config\"],\"additionalProperties\":false}",
-            ReadOnly = true)]
-        private static object ValidateNestedSchemaFixture(Dictionary<string, object> args)
-        {
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "received", args }
-            };
-        }
-
-        [MCPProjectTool(STRICT_COMBINATOR_SCHEMA_TOOL_NAME,
-            Description = "Regression fixture for project-tool not and const schema validation.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"enabled\":{\"type\":\"boolean\",\"description\":\"Required enabled state.\",\"const\":true},\"blocked\":{\"type\":\"string\",\"description\":\"Forbidden marker.\"}},\"required\":[\"enabled\"],\"not\":{\"required\":[\"blocked\"]},\"additionalProperties\":false}",
-            ReadOnly = true)]
-        private static object ValidateStrictCombinatorSchemaFixture(Dictionary<string, object> args)
-        {
-            return new Dictionary<string, object>
-            {
-                { "success", true },
-                { "received", args }
-            };
-        }
-
-        [MCPProjectTool(MISSING_OPERATION_KIND_TOOL_NAME,
-            Description = "Regression fixture for mandatory operation-kind metadata.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}")]
-        private static object MissingOperationKindFixture(Dictionary<string, object> args)
-        {
-            return new Dictionary<string, object> { { "success", true } };
-        }
-
-        [MCPProjectTool(INCOMPLETE_FIRST_CLASS_TOOL_NAME,
-            Description = "Regression fixture that must be demoted when its schema metadata is incomplete.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"values\":{\"type\":\"array\"}},\"additionalProperties\":false}",
-            ReadOnly = true,
-            FirstClass = true)]
-        private static object IncompleteFirstClassFixture(Dictionary<string, object> args)
-        {
-            return new Dictionary<string, object> { { "success", true } };
-        }
-
-        [MCPProjectTool(PERSISTENT_PROJECT_TOOL_NAME,
-            Description = "Regression fixture for resumable persistent project-tool jobs.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"requiredSteps\":{\"type\":\"integer\",\"description\":\"Number of yielded steps before completion.\"},\"value\":{\"type\":\"integer\",\"description\":\"Value returned when the job completes.\"}},\"required\":[\"requiredSteps\",\"value\"],\"additionalProperties\":false}",
-            OutputSchemaJson = "{\"type\":\"object\",\"properties\":{\"value\":{\"type\":\"integer\"},\"stepCount\":{\"type\":\"integer\"}},\"required\":[\"value\",\"stepCount\"],\"additionalProperties\":false}",
-            CleanupToolName = PERSISTENT_PROJECT_TOOL_CLEANUP_NAME,
-            SideEffects = MCPProjectToolSideEffect.ChangesRuntimeState |
-                          MCPProjectToolSideEffect.CreatesTemporaryObjects,
-            ErrorCodes = new[] { "fixture_failed" },
-            MutatesRuntime = true,
-            LongRunning = true,
-            FirstClass = true)]
-        public sealed class PersistentProjectToolFixture : IMCPPersistentProjectTool
-        {
-            public object Execute(Dictionary<string, object> args)
-            {
-                return new Dictionary<string, object>
-                {
-                    { "value", Convert.ToInt32(args["value"]) },
-                    { "stepCount", 0 },
-                };
-            }
-
-            public MCPProjectToolJobStep ExecuteJobStep(Dictionary<string, object> args,
-                Dictionary<string, object> state)
-            {
-                int stepCount = state.TryGetValue("stepCount", out object stepValue)
-                    ? Convert.ToInt32(stepValue)
-                    : 0;
-                int requiredSteps = Convert.ToInt32(args["requiredSteps"]);
-                if (stepCount < requiredSteps)
-                {
-                    stepCount++;
-                    return MCPProjectToolJobStep.Pending(
-                        new Dictionary<string, object> { { "stepCount", stepCount } },
-                        requiredSteps == 0 ? 1d : (double)stepCount / requiredSteps,
-                        $"Completed step {stepCount} of {requiredSteps}.",
-                        delayMilliseconds: 1,
-                        cleanupToken: "fixture-cleanup-token");
-                }
-
-                return MCPProjectToolJobStep.Complete(
-                    new Dictionary<string, object>
-                    {
-                        { "value", Convert.ToInt32(args["value"]) },
-                        { "stepCount", stepCount },
-                    },
-                    "fixture-cleanup-token");
-            }
-        }
-
-        [MCPProjectTool(PERSISTENT_PROJECT_TOOL_CLEANUP_NAME,
-            Description = "Cleanup regression fixture for persistent project-tool jobs.",
-            InputSchemaJson = "{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"description\":\"Cleanup action.\",\"const\":\"cleanup\"},\"cleanupToken\":{\"type\":\"string\",\"description\":\"Token produced by the persistent fixture.\"}},\"required\":[\"action\",\"cleanupToken\"],\"additionalProperties\":false}",
-            OutputSchemaJson = "{\"type\":\"object\",\"properties\":{\"cleaned\":{\"type\":\"boolean\"}},\"required\":[\"cleaned\"],\"additionalProperties\":false}",
-            MutatesRuntime = true)]
-        private static object CleanupPersistentProjectToolFixture(Dictionary<string, object> args)
-        {
-            return new Dictionary<string, object>
-            {
-                { "cleaned", args["cleanupToken"].ToString() == "fixture-cleanup-token" },
-            };
-        }
 
         [SetUp]
         public void SetUp()
         {
             AssetDeletePersistenceProcessor.Reset();
-            runtimeMutationInvocationCount = 0;
 
             usesAssetFixture = !CurrentTestHasCategory(
                 MCPPackageTestCommands.DefaultPackageSmokeCategory);
@@ -2371,81 +2126,7 @@ namespace UnityMCP.Editor.Tests
             LogAssert.NoUnexpectedReceived();
         }
 
-        [Test]
-        public void ToolMetadata_ExposesPersistentPlayerBuildAndAssetRefreshJobs()
-        {
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
 
-            foreach (string route in new[]
-                     {
-                         "build/start",
-                         "build/get-job",
-                         "asset/refresh",
-                         "asset/get-refresh-job",
-                     })
-            {
-                var tool = tools.Single(item => item["route"].ToString() == route);
-                Assert.That(HasTag(tool, "firstClass"), Is.True, route);
-                Assert.That(tool["inputSchema"], Is.InstanceOf<Dictionary<string, object>>(), route);
-            }
-
-            var refreshTool = tools.Single(item => item["route"].ToString() == "asset/refresh");
-            var refreshSchema = RequireDictionary(refreshTool["inputSchema"]);
-            var refreshProperties = RequireDictionary(refreshSchema["properties"]);
-            Assert.That(refreshProperties.ContainsKey("assetPaths"), Is.True);
-            Assert.That(refreshProperties.ContainsKey("reconcileExternalChanges"), Is.False);
-            Assert.That(refreshProperties.ContainsKey("expectedProjectPath"), Is.True);
-
-            var refreshJobTool = tools.Single(item => item["route"].ToString() == "asset/get-refresh-job");
-            var refreshJobSchema = RequireDictionary(refreshJobTool["inputSchema"]);
-            var refreshJobProperties = RequireDictionary(refreshJobSchema["properties"]);
-            Assert.That(refreshJobProperties.ContainsKey("timeoutMs"), Is.True);
-
-            foreach (var tool in tools.Where(item => !HasTag(item, "readOnly")))
-            {
-                var schema = RequireDictionary(tool["inputSchema"]);
-                var properties = RequireDictionary(schema["properties"]);
-                Assert.That(properties.ContainsKey("expectedProjectPath"), Is.True,
-                    tool["route"].ToString());
-            }
-        }
-
-        [Test]
-        public void ToolMetadata_ExposesPlayModeDirectlyAndKeepsProfilerRoutesLazy()
-        {
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
-                category: "editor"));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-
-            var playModeTool = tools.Single(item => item["route"].ToString() == "editor/play-mode");
-            Assert.That(HasTag(playModeTool, "firstClass"), Is.True);
-            Assert.That(playModeTool["toolName"], Is.EqualTo("unity_play_mode"));
-            var playModeSchema = RequireDictionary(playModeTool["inputSchema"]);
-            var playModeProperties = RequireDictionary(playModeSchema["properties"]);
-            Assert.That(playModeProperties.Keys, Does.Contain("action"));
-            Assert.That(playModeProperties.Keys, Does.Contain("timeoutMs"));
-            Assert.That(playModeProperties.Keys, Does.Contain("expectedProjectPath"));
-
-            var profilerToolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
-                category: "profiler"));
-            var profilerTools = (List<Dictionary<string, object>>)profilerToolsResult["tools"];
-            Assert.That(profilerTools, Is.Not.Empty);
-            Assert.That(profilerTools.All(tool =>
-                !HasTag(tool, "firstClass") && !HasTag(tool, "fallback")), Is.True);
-            Assert.That(profilerTools.All(tool =>
-                tool["inputSchema"] is Dictionary<string, object>), Is.True);
-
-            var snapshotStatusTool = profilerTools.Single(item =>
-                item["route"].ToString() == "profiler/memory-snapshot-status");
-            Assert.That(HasTag(snapshotStatusTool, "readOnly"), Is.True);
-            var snapshotStatusSchema = RequireDictionary(snapshotStatusTool["inputSchema"]);
-            var snapshotStatusProperties = RequireDictionary(snapshotStatusSchema["properties"]);
-            Assert.That(snapshotStatusProperties.Keys, Does.Contain("jobId"));
-        }
 
         [Test]
         public void MemorySnapshot_UsesCurrentProfilerApiWhenAvailable()
@@ -3646,39 +3327,6 @@ namespace UnityMCP.Editor.Tests
                 Is.EqualTo(new[] { "height", "flex-shrink" }));
         }
 
-        [Test]
-        public void UIToolkitStaticAudits_AreLazyReadOnlyLongRunningTools()
-        {
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
-                category: "uitoolkit"));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-
-            foreach (string route in new[]
-                     {
-                         "uitoolkit/audit-uss-styles",
-                         "uitoolkit/audit-uxml-layout",
-                     })
-            {
-                var tool = tools.Single(item => item["route"].ToString() == route);
-                Assert.That(HasTag(tool, "firstClass"), Is.False, route);
-                Assert.That(HasTag(tool, "fallback"), Is.False, route);
-                Assert.That(HasTag(tool, "readOnly"), Is.True, route);
-                Assert.That(HasTag(tool, "longRunning"), Is.True, route);
-                Assert.That(tool["toolName"],
-                    Is.EqualTo("unity_" + route.Replace('/', '_').Replace('-', '_')), route);
-
-                var schema = RequireDictionary(tool["inputSchema"]);
-                var properties = RequireDictionary(schema["properties"]);
-                Assert.That(properties.Keys,
-                    Is.SupersetOf(new[]
-                    {
-                        "paths", "roots", "runtimeSourceRoots", "excludePaths",
-                        "useProjectSettings", "includeSuppressed", "runSelfTests",
-                        "pixelGridEnabled", "pixelGridStep", "maxIssues",
-                    }), route);
-            }
-        }
 
         [Test]
         public void UIToolkitStaticAudits_ReportIssueLimitTruncationWithoutDerivedCountAliases()
@@ -3977,7 +3625,7 @@ namespace UnityMCP.Editor.Tests
                 "prefab-asset/instantiate-child-prefab",
                 "scene/instantiate-prefab",
                 "screenshot/scene",
-                "search/by-component",
+                "search/scene",
                 "texture/info",
                 "texture/set-import",
                 "uitoolkit/refresh",
@@ -3991,6 +3639,11 @@ namespace UnityMCP.Editor.Tests
                 "debug/pause",
                 "debug/step-into",
                 "debug/step-over",
+                "search/by-component",
+                "search/by-layer",
+                "search/by-name",
+                "search/by-shader",
+                "search/by-tag",
                 "gameview/set-min-scale",
                 "graphics/prefab-render",
                 "graphics/scene-capture",
@@ -4016,53 +3669,7 @@ namespace UnityMCP.Editor.Tests
             Assert.That(typeof(MCPTextureCommands).GetMethod("SetAsNormalMap"), Is.Null);
         }
 
-        [Test]
-        public void ConsolidatedToolMetadata_ExposesVariantParametersOnCanonicalRoutes()
-        {
-            Dictionary<string, object> Properties(string route)
-            {
-                string category = route.Substring(0, route.IndexOf('/'));
-                var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                    firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
-                    category: category));
-                var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-                var tool = tools.Single(item => item["route"].ToString() == route);
-                var schema = RequireDictionary(tool["inputSchema"]);
-                return RequireDictionary(schema["properties"]);
-            }
 
-            Assert.That(Properties("gameview/set-scale").Keys,
-                Is.SupersetOf(new[] { "mode", "scale", "fallbackScale" }));
-            Assert.That(Properties("screenshot/scene").Keys,
-                Is.SupersetOf(new[] { "path", "width", "height", "transport" }));
-            Assert.That(Properties("uitoolkit/refresh").Keys,
-                Is.SupersetOf(new[] { "refreshAssets", "timeoutMs", "stableFrames" }));
-            Assert.That(Properties("editor/play-mode").Keys,
-                Does.Contain("action"));
-        }
-
-        [Test]
-        public void ToolMetadata_DeclaresGameViewCaptureRequiresPlayMode()
-        {
-            var screenshotTools = (List<Dictionary<string, object>>)RequireDictionary(
-                MCPToolMetadata.GetRegisteredTools(
-                    firstClassOnly: true,
-                    compact: false,
-                    includeSchema: true,
-                    limit: 200,
-                    category: "screenshot"))["tools"];
-            var screenshot = screenshotTools.Single(tool =>
-                tool["route"].ToString() == "screenshot/game");
-
-            Assert.That(HasTag(screenshot, "requiresPlayMode"), Is.True);
-            Assert.That(screenshot["description"].ToString(),
-                Does.Contain("suppress and restore Game View Gizmos and Stats by default"));
-            var inputSchema =
-                (Dictionary<string, object>)screenshot["inputSchema"];
-            var properties =
-                (Dictionary<string, object>)inputSchema["properties"];
-            Assert.That(properties.ContainsKey("editorOverlays"), Is.True);
-        }
 
         [Test]
         public void GameViewScreenshot_RenderTextureWriterScalesAndWritesDecodablePng()
@@ -4177,547 +3784,6 @@ namespace UnityMCP.Editor.Tests
             Assert.That(Resolve("unsupported", "UnityEditor.InspectorWindow", "Inspector"), Is.Empty);
         }
 
-        [Test]
-        public void ProjectToolNamesStayReadableAndBelowClientLimit()
-        {
-            var method = typeof(MCPToolMetadata).GetMethod("ProjectToolNameToToolName",
-                BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-            Assert.That(method, Is.Not.Null);
-
-            string runtimeName = method.Invoke(null,
-                new object[] { "battleidle/get-runtime-ready-state", "" }).ToString();
-            string validationName = method.Invoke(null,
-                new object[] { "vmframework/validate-visual-element-paths", "" }).ToString();
-            Assert.That(runtimeName, Is.EqualTo("unity_pt_battle_get_runtime_ready_state"));
-            Assert.That(validationName, Is.EqualTo("unity_pt_vmf_validate_ui_el_paths"));
-            Assert.That(runtimeName.Length, Is.LessThanOrEqualTo(48));
-            Assert.That(validationName.Length, Is.LessThanOrEqualTo(48));
-        }
-
-        [Test]
-        public void RuntimeMutatingProjectTool_IsExplicitlyFirstClass()
-        {
-            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
-                .Single(tool => tool["toolName"].ToString() == RUNTIME_MUTATION_TOOL_NAME);
-            Assert.That(HasTag(descriptor, "readOnly"), Is.False);
-            Assert.That(HasSideEffect(descriptor, "writesAssets"), Is.False);
-            Assert.That(HasSideEffect(descriptor, "changesRuntimeState"), Is.True);
-            Assert.That(HasTag(descriptor, "requiresPlayMode"), Is.True);
-            CollectionAssert.Contains((ICollection)descriptor["errorCodes"],
-                MCPRuntimePreconditions.PlayModeRequiredErrorCode);
-
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-            var tool = tools.Single(item =>
-                item["route"].ToString() == "project-tools/call/" + RUNTIME_MUTATION_TOOL_NAME);
-            Assert.That(HasTag(tool, "firstClass"), Is.True);
-            Assert.That(HasSideEffect(tool, "changesRuntimeState"), Is.True);
-        }
-
-        [Test]
-        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
-        public void ProjectFileMutatingProjectTool_IsExplicitAndNotMisclassified()
-        {
-            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
-                .Single(tool => tool["toolName"].ToString() == PROJECT_FILE_MUTATION_TOOL_NAME);
-            Assert.That(HasTag(descriptor, "readOnly"), Is.False);
-            Assert.That(HasSideEffect(descriptor, "writesProjectFiles"), Is.True);
-            Assert.That(HasSideEffect(descriptor, "writesAssets"), Is.False);
-            Assert.That(HasSideEffect(descriptor, "changesRuntimeState"), Is.False);
-
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-            var tool = tools.Single(item =>
-                item["route"].ToString() == "project-tools/call/" + PROJECT_FILE_MUTATION_TOOL_NAME);
-            Assert.That(HasTag(tool, "firstClass"), Is.True);
-            Assert.That(HasSideEffect(tool, "writesProjectFiles"), Is.True);
-            Assert.That(HasSideEffect(tool, "writesAssets"), Is.False);
-            Assert.That(HasSideEffect(tool, "changesRuntimeState"), Is.False);
-        }
-
-        [Test]
-        public void ProjectTool_ReadOnlyCannotDeclareProjectFileWrites()
-        {
-            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: false)
-                .Single(tool => tool["toolName"].ToString() == READ_ONLY_PROJECT_FILE_WRITE_TOOL_NAME);
-            Assert.That(HasTag(descriptor, "invalid"), Is.True);
-            Assert.That(descriptor["validationError"].ToString(),
-                Does.Contain("declares mutating side effects"));
-        }
-
-        [Test]
-        public void ProjectTool_FirstClassExposureMustBeExplicit()
-        {
-            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
-                .Single(tool => tool["toolName"].ToString() == LAZY_READ_TOOL_NAME);
-            Assert.That(HasTag(descriptor, "readOnly"), Is.True);
-            Assert.That(HasTag(descriptor, "firstClass"), Is.False);
-
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-            Assert.That(tools.Any(item =>
-                item["route"].ToString() == "project-tools/call/" + LAZY_READ_TOOL_NAME), Is.False);
-        }
-
-        [Test]
-        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
-        public void ProjectTool_MissingOperationKindIsRejectedFromEveryCatalogTier()
-        {
-            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: false)
-                .Single(tool => tool["toolName"].ToString() == MISSING_OPERATION_KIND_TOOL_NAME);
-            Assert.That(HasTag(descriptor, "invalid"), Is.True);
-            Assert.That(descriptor["validationError"].ToString(),
-                Does.Contain("must explicitly declare ReadOnly, MutatesAssets, MutatesRuntime, or MutatesProjectFiles"));
-
-            Assert.That(MCPProjectToolCommands.GetToolDetails(validOnly: true)
-                .Any(tool => tool["toolName"].ToString() == MISSING_OPERATION_KIND_TOOL_NAME), Is.False);
-
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: false, includeSchema: true, limit: 500));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-            Assert.That(tools.Any(item =>
-                item["route"].ToString() == "project-tools/call/" + MISSING_OPERATION_KIND_TOOL_NAME),
-                Is.False);
-        }
-
-        [Test]
-        public void ProjectTool_IncompleteFirstClassMetadataIsDemotedButRemainsDiscoverable()
-        {
-            var descriptor = MCPProjectToolCommands.GetToolDetails(validOnly: true)
-                .Single(tool => tool["toolName"].ToString() == INCOMPLETE_FIRST_CLASS_TOOL_NAME);
-            Assert.That(HasTag(descriptor, "firstClass"), Is.False);
-            Assert.That(HasTag(descriptor, "invalid"), Is.False);
-            Assert.That(descriptor["exposureWarning"].ToString(),
-                Does.Contain("needs a description").And.Contain("items schema"));
-
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-            Assert.That(tools.Any(item =>
-                item["route"].ToString() == "project-tools/call/" + INCOMPLETE_FIRST_CLASS_TOOL_NAME),
-                Is.False);
-
-            var execute = RequireDictionary(MCPProjectToolCommands.Execute(
-                new Dictionary<string, object>
-                {
-                    { "toolName", INCOMPLETE_FIRST_CLASS_TOOL_NAME },
-                    { "args", new Dictionary<string, object>
-                        {
-                            { "values", new List<object> { 1L } }
-                        }
-                    }
-                }));
-            Assert.That(execute["success"], Is.EqualTo(true));
-        }
-
-        [Test]
-        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
-        public void ProjectTool_RecursivelyValidatesNestedSchemasAndCombinators()
-        {
-            Dictionary<string, object> Execute(Dictionary<string, object> toolArgs)
-            {
-                return RequireDictionary(MCPProjectToolCommands.Execute(
-                    new Dictionary<string, object>
-                    {
-                        { "toolName", NESTED_SCHEMA_TOOL_NAME },
-                        { "args", toolArgs }
-                    }));
-            }
-
-            var valid = Execute(new Dictionary<string, object>
-            {
-                { "config", new Dictionary<string, object>
-                    {
-                        { "mode", "safe" },
-                        { "values", new List<object> { 1L, 2L } },
-                        { "choice", "value" },
-                    }
-                }
-            });
-            Assert.That(valid["success"], Is.EqualTo(true));
-
-            var invalid = Execute(new Dictionary<string, object>
-            {
-                { "config", new Dictionary<string, object>
-                    {
-                        { "mode", "unsupported" },
-                        { "values", new List<object> { "not-an-integer", 2L, 3L } },
-                        { "choice", true },
-                        { "unknown", true },
-                    }
-                }
-            });
-            Assert.That(invalid["success"], Is.EqualTo(false));
-            Assert.That(invalid["errorCode"], Is.EqualTo("invalid_arguments"));
-            Assert.That(invalid["error"].ToString(),
-                Does.Contain("$.config.mode")
-                    .And.Contain("$.config.values[0]")
-                    .And.Contain("at most 2 items")
-                    .And.Contain("$.config.choice")
-                    .And.Contain("$.config.unknown"));
-        }
-
-        [Test]
-        public void ProjectTool_EnforcesNotAndConstSchemasBeforeExecution()
-        {
-            Dictionary<string, object> Execute(Dictionary<string, object> toolArgs)
-            {
-                return RequireDictionary(MCPProjectToolCommands.Execute(
-                    new Dictionary<string, object>
-                    {
-                        { "toolName", STRICT_COMBINATOR_SCHEMA_TOOL_NAME },
-                        { "args", toolArgs }
-                    }));
-            }
-
-            var valid = Execute(new Dictionary<string, object>
-            {
-                { "enabled", true }
-            });
-            Assert.That(valid["success"], Is.EqualTo(true));
-
-            var invalidConst = Execute(new Dictionary<string, object>
-            {
-                { "enabled", false }
-            });
-            Assert.That(invalidConst["success"], Is.EqualTo(false));
-            Assert.That(invalidConst["errorCode"], Is.EqualTo("invalid_arguments"));
-            Assert.That(invalidConst["error"].ToString(),
-                Does.Contain("$.enabled").And.Contain("const"));
-
-            var invalidNot = Execute(new Dictionary<string, object>
-            {
-                { "enabled", true },
-                { "blocked", "present" }
-            });
-            Assert.That(invalidNot["success"], Is.EqualTo(false));
-            Assert.That(invalidNot["errorCode"], Is.EqualTo("invalid_arguments"));
-            Assert.That(invalidNot["error"].ToString(), Does.Contain("not"));
-        }
-
-        [Test]
-        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
-        public void ProjectToolDiscovery_SeparatesListGetAndExecuteContracts()
-        {
-            var listResult = RequireDictionary(MCPProjectToolCommands.List(new Dictionary<string, object>
-            {
-                { "offset", 0 },
-                { "limit", 200 }
-            }));
-            var summaries = (List<Dictionary<string, object>>)listResult["tools"];
-            var summary = summaries.Single(tool => tool["toolName"].ToString() == LAZY_READ_TOOL_NAME);
-
-            Assert.That(listResult.ContainsKey("count"), Is.False);
-            Assert.That(listResult.ContainsKey("returnedTools"), Is.False);
-            Assert.That(summary["description"], Is.EqualTo("Regression fixture for an explicitly lazy project tool."));
-            Assert.That(summary.ContainsKey("inputSchema"), Is.False);
-            Assert.That(summary.ContainsKey("source"), Is.False);
-            Assert.That(summary.ContainsKey("route"), Is.False);
-            Assert.That(summary.ContainsKey("validationError"), Is.False);
-
-            var getResult = RequireDictionary(MCPProjectToolCommands.Get(new Dictionary<string, object>
-            {
-                { "toolName", LAZY_READ_TOOL_NAME }
-            }));
-            var detail = RequireDictionary(getResult["tool"]);
-            Assert.That(detail["toolName"], Is.EqualTo(LAZY_READ_TOOL_NAME));
-            Assert.That(detail.ContainsKey("inputSchema"), Is.True);
-            Assert.That(detail.ContainsKey("source"), Is.True);
-            Assert.That(detail.ContainsKey("route"), Is.False);
-            Assert.That(detail.ContainsKey("directRoute"), Is.False);
-            Assert.That(detail["executeRoute"], Is.EqualTo("project-tools/execute"));
-            Assert.That(detail.ContainsKey("enforcesInputSchema"), Is.False);
-
-            var metadata = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: true, includeSchema: true, limit: 200));
-            var firstClassTools = (List<Dictionary<string, object>>)metadata["tools"];
-            var listTool = firstClassTools.Single(tool =>
-                tool["route"].ToString() == "project-tools/list");
-            var getTool = firstClassTools.Single(tool =>
-                tool["route"].ToString() == "project-tools/get");
-            var listSchema = RequireDictionary(listTool["inputSchema"]);
-            var listProperties = RequireDictionary(listSchema["properties"]);
-            Assert.That(listProperties.ContainsKey("includeSchema"), Is.False);
-            var getSchema = RequireDictionary(getTool["inputSchema"]);
-            CollectionAssert.AreEqual(new[] { "toolName" }, (List<string>)getSchema["required"]);
-        }
-
-        [Test]
-        public void ProjectToolExecute_StripsProjectBindingArgumentsBeforeStrictSchemaValidation()
-        {
-            var response = RequireDictionary(MCPProjectToolCommands.Execute(new Dictionary<string, object>
-            {
-                { "toolName", LAZY_READ_TOOL_NAME },
-                { "args", new Dictionary<string, object>
-                    {
-                        { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
-                        { "expectedProjectName", "BattleIdle" },
-                        { "targetProjectPath", "D:/UnityProjects/BattleIdle" },
-                        { "targetProjectName", "BattleIdle" },
-                        { "unityProjectPath", "D:/UnityProjects/BattleIdle" },
-                        { "unityProjectName", "BattleIdle" },
-                    }
-                },
-                { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
-                { "expectedProjectName", "BattleIdle" },
-            }));
-
-            Assert.That(response["success"], Is.EqualTo(true));
-            var result = RequireDictionary(response["result"]);
-            CollectionAssert.IsEmpty((string[])result["receivedKeys"]);
-        }
-
-        [Test]
-        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
-        public void ProjectToolExecution_EnforcesPlayModeBeforeEveryInvocationBoundary()
-        {
-            Assert.That(MCPRuntimePreconditions.IsStablePlayMode, Is.False,
-                "This regression must execute in Edit Mode.");
-
-            void AssertRejected(object rawResponse)
-            {
-                var response = RequireDictionary(rawResponse);
-                Assert.That(response["success"], Is.EqualTo(false));
-                Assert.That(response["errorCode"],
-                    Is.EqualTo(MCPRuntimePreconditions.PlayModeRequiredErrorCode));
-                Assert.That(response["toolName"], Is.EqualTo(RUNTIME_MUTATION_TOOL_NAME));
-                Assert.That(response["requiresPlayMode"], Is.EqualTo(true));
-                Assert.That(response["isPlaying"], Is.EqualTo(false));
-            }
-
-            object Execute(bool runAsJob = false)
-            {
-                var arguments = new Dictionary<string, object>
-                {
-                    { "toolName", RUNTIME_MUTATION_TOOL_NAME },
-                    { "args", new Dictionary<string, object>() },
-                };
-                if (runAsJob)
-                    arguments["runAsJob"] = true;
-                return MCPProjectToolCommands.Execute(arguments);
-            }
-
-            AssertRejected(Execute());
-            AssertRejected(Execute(runAsJob: true));
-
-            bool handled = MCPProjectToolCommands.TryExecuteDirectRoute(
-                MCPProjectToolCommands.GetDirectRoute(RUNTIME_MUTATION_TOOL_NAME),
-                new Dictionary<string, object>(),
-                out object directResponse);
-            Assert.That(handled, Is.True);
-            AssertRejected(directResponse);
-
-            AssertRejected(MCPProjectToolCommands.ExecuteJobInline(
-                RUNTIME_MUTATION_TOOL_NAME,
-                new Dictionary<string, object>()));
-
-            MCPProjectToolException stepError = Assert.Throws<MCPProjectToolException>(() =>
-                MCPProjectToolCommands.ExecuteJobStepInline(
-                    RUNTIME_MUTATION_TOOL_NAME,
-                    new Dictionary<string, object>(),
-                    new Dictionary<string, object>()));
-            Assert.That(stepError.ErrorCode,
-                Is.EqualTo(MCPRuntimePreconditions.PlayModeRequiredErrorCode));
-            Assert.That(stepError.Details["toolName"], Is.EqualTo(RUNTIME_MUTATION_TOOL_NAME));
-            Assert.That(runtimeMutationInvocationCount, Is.Zero);
-
-            var unaffected = RequireDictionary(MCPProjectToolCommands.Execute(
-                new Dictionary<string, object>
-                {
-                    { "toolName", LAZY_READ_TOOL_NAME },
-                    { "args", new Dictionary<string, object>() },
-                }));
-            Assert.That(unaffected["success"], Is.EqualTo(true));
-        }
-
-        [Test]
-        public void ProjectToolDirectRoute_StripsProjectBindingArgumentsBeforeStrictSchemaValidation()
-        {
-            bool handled = MCPProjectToolCommands.TryExecuteDirectRoute(
-                MCPProjectToolCommands.GetDirectRoute(PROJECT_FILE_MUTATION_TOOL_NAME),
-                new Dictionary<string, object>
-                {
-                    { "expectedProjectPath", "D:/UnityProjects/BattleIdle" },
-                    { "expectedProjectName", "BattleIdle" },
-                },
-                out object rawResponse);
-
-            Assert.That(handled, Is.True);
-            var response = RequireDictionary(rawResponse);
-            Assert.That(response["success"], Is.EqualTo(true));
-            var result = RequireDictionary(response["result"]);
-            CollectionAssert.IsEmpty((string[])result["receivedKeys"]);
-        }
-
-        [UnityTest]
-        public IEnumerator PersistentProjectToolJob_SupportsSchemaMetadataIdempotencyStepsAndCleanup()
-        {
-            const string agentId = "persistent-project-tool-test-agent";
-            string idempotencyKey = Guid.NewGuid().ToString("N");
-            Dictionary<string, object> Start(
-                int value, string callerAgentId = agentId)
-            {
-                return RequireDictionary(MCPProjectToolCommands.Execute(
-                    new Dictionary<string, object>
-                    {
-                        { "toolName", PERSISTENT_PROJECT_TOOL_NAME },
-                        { "_agentId", callerAgentId },
-                        { "idempotencyKey", idempotencyKey },
-                        { "args", new Dictionary<string, object>
-                            {
-                                { "requiredSteps", 2 },
-                                { "value", value },
-                            }
-                        },
-                    }));
-            }
-
-            Dictionary<string, object> started = Start(7);
-            Assert.That(started["status"], Is.EqualTo("queued"));
-            Assert.That(HasTag(started, "incrementalJob"), Is.True);
-            Assert.That(HasTag(started, "cleanupDeclared"), Is.True);
-            string jobId = started["jobId"].ToString();
-            string accessToken = started["jobAccessToken"].ToString();
-
-            Dictionary<string, object> reused =
-                Start(7, "reconnected-project-tool-test-agent");
-            Assert.That(reused["jobId"], Is.EqualTo(jobId));
-            Assert.That(reused["jobAccessToken"],
-                Is.EqualTo(accessToken));
-            Assert.That(HasTag(reused, "reused"), Is.True);
-
-            Dictionary<string, object> conflict =
-                Start(8, "different-project-tool-test-agent");
-            Assert.That(conflict["success"], Is.EqualTo(false));
-            Assert.That(conflict["errorCode"], Is.EqualTo("idempotency_conflict"));
-
-            Dictionary<string, object> descriptor = MCPProjectToolCommands
-                .GetToolDetails(validOnly: true)
-                .Single(tool => tool["toolName"].ToString() == PERSISTENT_PROJECT_TOOL_NAME);
-            Assert.That(HasTag(descriptor, "incrementalJob"), Is.True);
-            Assert.That(HasTag(descriptor, "outputSchema"), Is.True);
-            CollectionAssert.Contains((ICollection)descriptor["sideEffects"], "changesRuntimeState");
-            CollectionAssert.Contains((ICollection)descriptor["sideEffects"], "createsTemporaryObjects");
-            CollectionAssert.Contains((ICollection)descriptor["errorCodes"], "fixture_failed");
-
-            Dictionary<string, object> snapshot = null;
-            for (int frame = 0; frame < 120; frame++)
-            {
-                yield return null;
-                snapshot = RequireDictionary(MCPJobCommands.Get(
-                    new Dictionary<string, object>
-                    {
-                        { "jobId", jobId },
-                        { "_agentId", agentId },
-                    }));
-                if (snapshot["status"].ToString() == "succeeded")
-                    break;
-            }
-
-            Assert.That(snapshot, Is.Not.Null);
-            Assert.That(snapshot["status"], Is.EqualTo("succeeded"));
-            Assert.That(Convert.ToDouble(snapshot["progress"]), Is.EqualTo(1d));
-            Assert.That(Convert.ToInt32(snapshot["stepCount"]), Is.EqualTo(2));
-            Assert.That(snapshot["cleanupStatus"], Is.EqualTo("available"));
-            Dictionary<string, object> successEnvelope = RequireDictionary(snapshot["result"]);
-            Dictionary<string, object> jobResult = RequireDictionary(successEnvelope["result"]);
-            Assert.That(Convert.ToInt32(jobResult["value"]), Is.EqualTo(7));
-            Assert.That(Convert.ToInt32(jobResult["stepCount"]), Is.EqualTo(2));
-
-            Dictionary<string, object> cleanupQueued = RequireDictionary(MCPJobCommands.Cleanup(
-                new Dictionary<string, object>
-                {
-                    { "jobId", jobId },
-                    { "jobAccessToken", accessToken },
-                    { "_agentId", "different-agent" },
-                }));
-            Assert.That(cleanupQueued["cleanupStatus"], Is.EqualTo("queued"));
-
-            for (int frame = 0; frame < 120; frame++)
-            {
-                yield return null;
-                snapshot = RequireDictionary(MCPJobCommands.Get(
-                    new Dictionary<string, object>
-                    {
-                        { "jobId", jobId },
-                        { "jobAccessToken", accessToken },
-                        { "_agentId", "different-agent" },
-                    }));
-                if (snapshot["cleanupStatus"].ToString() == "succeeded")
-                    break;
-            }
-
-            Assert.That(snapshot["cleanupStatus"], Is.EqualTo("succeeded"));
-            Dictionary<string, object> cleanupEnvelope =
-                RequireDictionary(snapshot["cleanupResult"]);
-            Dictionary<string, object> cleanupResult =
-                RequireDictionary(cleanupEnvelope["result"]);
-            Assert.That(cleanupResult["cleaned"], Is.EqualTo(true));
-        }
-
-        [UnityTest]
-        public IEnumerator PersistentProjectToolJob_CancelsBetweenSteps()
-        {
-            const string agentId = "persistent-project-tool-cancel-test-agent";
-            Dictionary<string, object> started = RequireDictionary(
-                MCPProjectToolCommands.Execute(new Dictionary<string, object>
-                {
-                    { "toolName", PERSISTENT_PROJECT_TOOL_NAME },
-                    { "_agentId", agentId },
-                    { "idempotencyKey", Guid.NewGuid().ToString("N") },
-                    { "args", new Dictionary<string, object>
-                        {
-                            { "requiredSteps", 100 },
-                            { "value", 5 },
-                        }
-                    },
-                }));
-            string jobId = started["jobId"].ToString();
-
-            Dictionary<string, object> snapshot = null;
-            for (int frame = 0; frame < 120; frame++)
-            {
-                yield return null;
-                snapshot = RequireDictionary(MCPJobCommands.Get(
-                    new Dictionary<string, object>
-                    {
-                        { "jobId", jobId },
-                        { "_agentId", agentId },
-                    }));
-                if (snapshot["status"].ToString() == "running" &&
-                    Convert.ToInt32(snapshot["stepCount"]) > 0)
-                {
-                    break;
-                }
-            }
-            Assert.That(snapshot["status"], Is.EqualTo("running"));
-
-            Dictionary<string, object> canceled = RequireDictionary(MCPJobCommands.Cancel(
-                new Dictionary<string, object>
-                {
-                    { "jobId", jobId },
-                    { "_agentId", agentId },
-                }));
-            Assert.That(HasTag(canceled, "cancellationRequested"), Is.True);
-
-            for (int frame = 0; frame < 120; frame++)
-            {
-                yield return null;
-                snapshot = RequireDictionary(MCPJobCommands.Get(
-                    new Dictionary<string, object>
-                    {
-                        { "jobId", jobId },
-                        { "_agentId", agentId },
-                    }));
-                if (snapshot["status"].ToString() == "canceled")
-                    break;
-            }
-            Assert.That(snapshot["status"], Is.EqualTo("canceled"));
-            Assert.That(snapshot["cleanupStatus"], Is.EqualTo("available"));
-        }
 
         [Test]
         public void AssetWorkspace_CreateCopyDependenciesAndTransactionRollback()
@@ -5560,7 +4626,7 @@ namespace UnityMCP.Editor.Tests
             CollectionAssert.AreEquivalent(new[] { "assetPath", "_agentId" },
                 importerArguments.Keys);
 
-            foreach (string route in new[] { "advanced/execute", "instance/assert-project" })
+            foreach (string route in new[] { "instance/assert-project" })
             {
                 var preservedArguments = new Dictionary<string, object>
                 {
@@ -5575,8 +4641,8 @@ namespace UnityMCP.Editor.Tests
 
             foreach (string route in new[]
                      {
-                         "advanced/execute", "asset/refresh", "asset/import-unitypackage",
-                         "project-tools/execute", "project-tools/call/sample/tool"
+                         "asset/refresh", "asset/import-unitypackage",
+                         "project-tools/call/sample/tool"
                      })
             {
                 var requestArguments = new Dictionary<string, object>
@@ -5587,8 +4653,7 @@ namespace UnityMCP.Editor.Tests
                 method.Invoke(null, new object[] { route, requestArguments });
 
                 Assert.That(requestArguments["_requestId"], Is.EqualTo("owned-request"), route);
-                if (route != "advanced/execute")
-                    Assert.That(requestArguments.ContainsKey("expectedProjectPath"), Is.False, route);
+                Assert.That(requestArguments.ContainsKey("expectedProjectPath"), Is.False, route);
             }
 
             var queueMethod = typeof(MCPBridgeServer).GetMethod(
@@ -5816,12 +4881,13 @@ namespace UnityMCP.Editor.Tests
 
         [Test]
         [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
-        public void RouteRegistryMatchesEveryBuiltInSwitchHandlerWithoutRuntimeSourceParsing()
+        public void RouteRegistryMatchesEveryBuiltInDispatcherCase()
         {
             var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(MCPBridgeServer).Assembly);
             Assert.That(package, Is.Not.Null);
-            string source = File.ReadAllText(Path.Combine(package.resolvedPath, "Editor", "MCPBridgeServer.cs"));
-            int methodIndex = source.LastIndexOf("private static object RouteRequest(string path",
+            string source = File.ReadAllText(Path.Combine(
+                package.resolvedPath, "Editor", "MCPBuiltInRouteDispatcher.cs"));
+            int methodIndex = source.IndexOf("internal static object Dispatch(string path",
                 StringComparison.Ordinal);
             int switchIndex = source.IndexOf("switch (path)", methodIndex, StringComparison.Ordinal);
             int defaultIndex = source.IndexOf("\n                default:", switchIndex,
@@ -7370,87 +6436,6 @@ namespace UnityMCP.Editor.Tests
                 Does.Contain("build/profile"));
         }
 
-        [Test]
-        public void NewP0Tools_AreFirstClassWhileOptionalPackageToolsStayLazy()
-        {
-            var firstClass = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
-            var firstClassRoutes = ((List<Dictionary<string, object>>)firstClass["tools"])
-                .Select(tool => tool["route"].ToString()).ToHashSet(StringComparer.Ordinal);
-            foreach (string route in new[]
-                     {
-                         "editor/execute-code",
-                         "jobs/get",
-                         "jobs/cancel",
-                         "jobs/cleanup",
-                         "asset/import-settings/get", "asset/import-settings/set",
-                         "scene/workspace",
-                         "material/properties/get", "material/properties/set",
-                     })
-            {
-                Assert.That(firstClassRoutes, Does.Contain(route), route);
-            }
-
-            var firstClassTools =
-                ((List<Dictionary<string, object>>)firstClass["tools"])
-                .ToDictionary(tool => tool["route"].ToString());
-            var executeCodeSchema = RequireDictionary(
-                firstClassTools["editor/execute-code"]["inputSchema"]);
-            var executeCodeProperties = RequireDictionary(
-                executeCodeSchema["properties"]);
-            foreach (string property in new[]
-                     {
-                         "unityStructFormat",
-                         "idempotencyKey",
-                         "cleanupCode",
-                     })
-            {
-                Assert.That(executeCodeProperties.ContainsKey(property),
-                    Is.True, property);
-            }
-            var executeCodeOutput = RequireDictionary(
-                firstClassTools["editor/execute-code"]["outputSchema"]);
-            var executeCodeOutputProperties = RequireDictionary(
-                executeCodeOutput["properties"]);
-            Assert.That(executeCodeOutputProperties.ContainsKey("jobId"),
-                Is.True);
-            Assert.That(executeCodeOutputProperties.ContainsKey("cleanupToken"),
-                Is.True);
-            Assert.That(executeCodeOutputProperties.ContainsKey("tags"), Is.True);
-            foreach (var entry in executeCodeOutputProperties)
-            {
-                var propertySchema = RequireDictionary(entry.Value);
-                Assert.That(propertySchema.TryGetValue("description", out object description),
-                    Is.True, entry.Key);
-                Assert.That(description?.ToString(), Is.Not.Empty, entry.Key);
-            }
-            foreach (string retiredField in new[]
-                     {
-                         "cleanupAvailable", "cleanupDeclared",
-                         "cancellationRequested", "cancelMode", "incremental",
-                         "statusRoute", "cancelRoute", "cleanupRoute", "reused",
-                     })
-            {
-                Assert.That(executeCodeOutputProperties.ContainsKey(retiredField),
-                    Is.False, retiredField);
-            }
-
-            var all = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: false, includeSchema: true, limit: 500));
-            var tools = ((List<Dictionary<string, object>>)all["tools"])
-                .ToDictionary(tool => tool["route"].ToString());
-            foreach (string route in new[]
-                     {
-                         "vfxgraph/info", "audio-mixer/info", "build/profile",
-                         "addressables/info", "timeline/info", "cinemachine/info",
-                     })
-            {
-                if (!tools.TryGetValue(route, out Dictionary<string, object> tool))
-                    continue;
-                Assert.That(HasTag(tool, "firstClass"), Is.False, route);
-                Assert.That(HasTag(tool, "fallback"), Is.False, route);
-            }
-        }
 
         [Test]
         public void AssetGraphSanitizer_BoundsStringsAndUnityObjectReferences()
@@ -7908,483 +6893,17 @@ namespace UnityMCP.Editor.Tests
             Assert.That(canceled["cancelMode"], Is.EqualTo("pre-start"));
         }
 
-        [Test]
-        public void ToolMetadata_DefaultIsCompactPaginatedAndSchemaFree()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools());
-            Assert.That(System.Convert.ToInt32(result["schemaVersion"]), Is.EqualTo(6));
-            Assert.That(result.ContainsKey("compact"), Is.False);
-            Assert.That(result.ContainsKey("firstClassOnly"), Is.False);
-            Assert.That(result.ContainsKey("includeSchema"), Is.False);
-            Assert.That(result.ContainsKey("returnedTools"), Is.False);
-            Assert.That(result.ContainsKey("hasMore"), Is.False);
-            Assert.That(result.ContainsKey("routes"), Is.False);
-            Assert.That(result.ContainsKey("mcpTools"), Is.False);
-            Assert.That(MiniJson.Serialize(result).Length, Is.LessThan(100000));
 
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            Assert.That(tools.All(tool => !tool.ContainsKey("inputSchema")), Is.True);
-        }
 
-        [Test]
-        public void ToolMetadata_DetailedPageUsesOneSchemaKey()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: false, includeSchema: true, limit: 5));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            Assert.That(tools, Is.Not.Empty);
-            Assert.That(tools.All(tool => tool.ContainsKey("inputSchema")), Is.True);
-            Assert.That(tools.All(tool => !tool.ContainsKey("input_schema")), Is.True);
-            Assert.That(result.ContainsKey("firstClassTools"), Is.False);
-            Assert.That(result.ContainsKey("fallbackTools"), Is.False);
-            Assert.That(result.ContainsKey("metadataIssues"), Is.False);
-        }
 
-        [Test]
-        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
-        public void ToolMetadata_FirstClassCatalogHasNoDefaultDescriptionsOrSchemaGaps()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true,
-                compact: false,
-                includeSchema: true,
-                limit: 200,
-                includeMetadataIssues: true));
-            var issues = (List<Dictionary<string, object>>)result["metadataIssues"];
 
-            Assert.That(issues, Is.Empty,
-                string.Join(Environment.NewLine, issues.Select(MiniJson.Serialize)));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            Assert.That(tools.Any(tool => tool["route"].ToString() == "_meta/tools"), Is.False);
-            Assert.That(tools.Any(tool => tool["route"].ToString() == "_meta/capabilities"), Is.False);
-            Assert.That(tools.Any(tool => tool["route"].ToString() == "search/scene"), Is.True);
-            Assert.That(tools.Any(tool => tool["route"].ToString() == "search/by-name"), Is.False);
-            Assert.That(tools.Any(tool => tool["route"].ToString() == "search/by-component"), Is.False);
-            var builtInRoutes = tools
-                .Select(tool => tool["route"].ToString())
-                .Where(route => !route.StartsWith("project-tools/call/", StringComparison.Ordinal))
-                .ToArray();
-            CollectionAssert.AreEquivalent(new[]
-            {
-                "asset/import",
-                "asset/list",
-                "asset/refresh",
-                "build/get-job",
-                "build/start",
-                "compilation/errors",
-                "component/set-property",
-                "editor/execute-code",
-                "editor/play-mode",
-                "queue/info",
-                "search/scene",
-                "scene/hierarchy",
-                "screenshot/game",
-                "packages/list",
-                "packages/update-git",
-                "wait/editor-idle",
-                "scene/instantiate-prefab",
-                "serialized-object/get",
-                "serialized-object/set",
-                "component/set-reference",
-                "asset/create-folder",
-                "asset/copy",
-                "prefab/create-variant",
-                "prefab-asset/hierarchy",
-                "prefab-asset/configure-component",
-                "prefab-asset/transaction-edit",
-                "localization/status",
-                "localization/locales",
-                "localization/create-locale",
-                "localization/set-selected-locale",
-                "localization/collections",
-                "localization/create-collection",
-                "localization/entries",
-                "localization/upsert-entry",
-                "localization/remove-entry",
-                "localization/validate",
-                "localization/settings",
-                "localization/variables",
-                "localization/upsert-variable",
-                "localization/remove-variable",
-                "asset/get-refresh-job",
-                "asset/rename",
-                "asset/move",
-                "console/query",
-                "uitoolkit/runtime-query",
-                "uitoolkit/refresh",
-                "uitoolkit/edit-uxml",
-                "uitoolkit/edit-uss",
-                "testing/run-tests",
-                "testing/get-job",
-                "project-tools/list",
-                "project-tools/get",
-                "project-tools/execute",
-                "jobs/cancel",
-                "jobs/cleanup",
-                "jobs/get",
-                "asset/import-settings/get",
-                "asset/import-settings/set",
-                "scene/workspace",
-                "material/properties/get",
-                "material/properties/set",
-            }, builtInRoutes);
-        }
 
-        [Test]
-        [Category(MCPPackageTestCommands.DefaultPackageSmokeCategory)]
-        public void ToolMetadata_UsesOnlyTheCurrentMetadataContract()
-        {
-            var method = typeof(MCPToolMetadata).GetMethod(nameof(MCPToolMetadata.GetRegisteredTools),
-                BindingFlags.Static | BindingFlags.Public);
-            Assert.That(method, Is.Not.Null);
-            Assert.That(method.GetParameters().Select(parameter => parameter.Name),
-                Does.Not.Contain("includeCollections"));
-            Assert.That(typeof(MCPToolMetadata).GetMethod("GetRegisteredRoutes",
-                BindingFlags.Static | BindingFlags.Public), Is.Null);
 
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: false, includeSchema: true, limit: 20));
-            foreach (string retiredCollection in new[]
-                     {
-                         "routes", "mcpTools", "firstClassTools", "fallbackTools", "categories"
-                     })
-            {
-                Assert.That(result.ContainsKey(retiredCollection), Is.False, retiredCollection);
-            }
 
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            Assert.That(tools.All(tool => !tool.ContainsKey("name")), Is.True);
-            Assert.That(tools.All(tool => !tool.ContainsKey("legacyToolName")), Is.True);
-            string[] retiredBooleanMetadata =
-            {
-                "readOnly", "mutatesAssets", "mutatesRuntime", "dangerous",
-                "longRunning", "mayReloadDomain", "requiresPlayMode",
-                "firstClass", "preferred", "cleanupAvailable", "incrementalJob",
-                "hasOutputSchema", "enforcesInputSchema", "enforcesOutputSchema", "valid",
-            };
-            foreach (Dictionary<string, object> tool in tools)
-            {
-                Assert.That(retiredBooleanMetadata.All(key => !tool.ContainsKey(key)),
-                    Is.True, tool["route"].ToString());
-                if (tool.TryGetValue("tags", out object tags))
-                {
-                    Assert.That(tags, Is.InstanceOf<IList>());
-                    Assert.That(((IList)tags).Cast<object>().All(tag =>
-                        !string.IsNullOrWhiteSpace(tag?.ToString())), Is.True);
-                }
-            }
 
-            foreach (Dictionary<string, object> tool in
-                     MCPProjectToolCommands.GetToolDetails(validOnly: false))
-            {
-                Assert.That(retiredBooleanMetadata.All(key => !tool.ContainsKey(key)),
-                    Is.True, tool["toolName"].ToString());
-            }
 
-            var routes = GetBuiltInRoutes();
-            Assert.That(routes, Does.Not.Contain("_meta/routes"));
-            Assert.That(routes.Any(route => route.StartsWith("amplify/", StringComparison.Ordinal)),
-                Is.False);
-            Assert.That(routes.Any(route => route.StartsWith("uma/", StringComparison.Ordinal)),
-                Is.False);
-            foreach (string retiredRoute in new[]
-                     {
-                         "prefab/set-object-reference", "prefab/duplicate",
-                         "prefab/set-active", "prefab/reparent"
-                     })
-            {
-                Assert.That(routes, Does.Not.Contain(retiredRoute), retiredRoute);
-            }
-            foreach (string currentRoute in new[]
-                     {
-                         "gameobject/duplicate", "gameobject/set-active", "gameobject/reparent"
-                     })
-            {
-                Assert.That(routes, Does.Contain(currentRoute), currentRoute);
-            }
-            Assert.That(MCPSettingsManager.GetAllCategoryNames(), Does.Not.Contain("amplify"));
-            Assert.That(MCPSettingsManager.GetAllCategoryNames(), Does.Not.Contain("uma"));
 
-            var capabilities = RequireDictionary(MCPCapabilityRegistry.GetCapabilities());
-            var optional = (List<Dictionary<string, object>>)capabilities["optional"];
-            Assert.That(optional.Select(capability => capability["name"].ToString()),
-                Does.Not.Contain("uma"));
-        }
 
-        [Test]
-        public void ToolMetadata_FirstClassSchemasUseCanonicalFieldsAndTrueAnnotations()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: true, includeSchema: true, limit: 200));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            string json = MiniJson.Serialize(tools);
-
-            Assert.That(json, Does.Not.Contain("Alias for"));
-            Assert.That(json, Does.Not.Contain("\"uidocumentInstanceId\""));
-            foreach (var tool in tools)
-            {
-                if (!tool.TryGetValue("annotations", out object annotationsValue))
-                    continue;
-                var annotations = RequireDictionary(annotationsValue);
-                Assert.That(annotations.ContainsKey("title"), Is.False);
-                Assert.That(annotations.Values.OfType<bool>().All(value => value), Is.True);
-            }
-        }
-
-        [Test]
-        public void ToolMetadata_ExposesPrefabConfigureComponentAsFirstClass()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: true, includeSchema: true, limit: 200));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            var tool = tools.Single(item =>
-                item["route"].ToString() == "prefab-asset/configure-component");
-
-            Assert.That(tool["toolName"], Is.EqualTo("unity_prefab_asset_configure_component"));
-            Assert.That(HasTag(tool, "firstClass"), Is.True);
-            var schema = RequireDictionary(tool["inputSchema"]);
-            CollectionAssert.AreEquivalent(new[] { "assetPath", "componentType" },
-                (List<string>)schema["required"]);
-            var properties = RequireDictionary(schema["properties"]);
-            Assert.That(properties.Keys, Does.Contain("properties"));
-            Assert.That(properties.Keys, Does.Contain("references"));
-            Assert.That(properties.Keys, Does.Contain("createPathIfMissing"));
-            Assert.That(properties.Keys, Does.Contain("expectedProjectPath"));
-            var references = RequireDictionary(properties["references"]);
-            var referenceItems = RequireDictionary(references["items"]);
-            var referenceProperties = RequireDictionary(referenceItems["properties"]);
-            Assert.That(referenceProperties.Keys, Does.Contain("referenceSubAssetName"));
-            Assert.That(referenceProperties.Keys, Does.Contain("referenceSubAssetLocalId"));
-        }
-
-        [Test]
-        public void ToolMetadata_ExposesComposableAssetAuthoringRoutesAsFirstClass()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: true, includeSchema: true, limit: 500));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            string[] routes =
-            {
-                "asset/create-folder",
-                "asset/copy",
-                "prefab/create-variant",
-                "prefab-asset/hierarchy",
-                "prefab-asset/transaction-edit",
-                "localization/upsert-entry",
-                "localization/remove-entry",
-            };
-
-            foreach (string route in routes)
-            {
-                var tool = tools.Single(item => item["route"].ToString() == route);
-                Assert.That(HasTag(tool, "firstClass"), Is.True, route);
-                Assert.That(tool.ContainsKey("inputSchema"), Is.True, route);
-                Assert.That(tool.ContainsKey("outputSchema"), Is.True, route);
-            }
-        }
-
-        [Test]
-        public void ToolMetadata_LazyPrefabAddGameObjectExposesLayer()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
-                category: "prefab-asset"));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            var tool = tools.Single(item => item["route"].ToString() == "prefab-asset/add-gameobject");
-
-            Assert.That(HasTag(tool, "firstClass"), Is.False);
-            Assert.That(HasTag(tool, "fallback"), Is.False);
-            var schema = RequireDictionary(tool["inputSchema"]);
-            var properties = RequireDictionary(schema["properties"]);
-            Assert.That(properties.Keys, Does.Contain("layer"));
-            var layer = RequireDictionary(properties["layer"]);
-            Assert.That(layer["type"], Is.EqualTo("string"));
-            Assert.That(layer["description"].ToString(), Does.Contain("parent GameObject's layer"));
-        }
-
-        [Test]
-        public void ToolMetadata_LazyPrefabAddComponentExposesInitialSerializedProperties()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
-                category: "prefab-asset"));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            var tool = tools.Single(item =>
-                item["route"].ToString() == "prefab-asset/add-component");
-
-            Assert.That(HasTag(tool, "firstClass"), Is.False);
-            Assert.That(HasTag(tool, "fallback"), Is.False);
-            Assert.That(tool["description"].ToString(),
-                Does.Contain("optionally initialize").And.Contain("serialized state"));
-
-            var schema = RequireDictionary(tool["inputSchema"]);
-            var properties = RequireDictionary(schema["properties"]);
-            Assert.That(properties.Keys, Does.Contain("properties"));
-            var initialProperties = RequireDictionary(properties["properties"]);
-            Assert.That(initialProperties["type"], Is.EqualTo("object"));
-            Assert.That(initialProperties["additionalProperties"], Is.EqualTo(true));
-            Assert.That(initialProperties["description"].ToString(),
-                Does.Contain("before the new component is saved"));
-        }
-
-        [Test]
-        public void ToolMetadata_ExposesAssetImportDirectlyAndTextureToolsLazily()
-        {
-            var assetResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
-                category: "asset"));
-            var textureResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
-                category: "texture"));
-            var tools = ((List<Dictionary<string, object>>)assetResult["tools"])
-                .Concat((List<Dictionary<string, object>>)textureResult["tools"])
-                .ToList();
-            var toolsByRoute = tools.ToDictionary(tool => tool["route"].ToString());
-
-            foreach (var expected in new[]
-                     {
-                         (Route: "asset/import", ToolName: "unity_asset_import"),
-                         (Route: "texture/apply-sprite-preset", ToolName: "unity_texture_apply_sprite_preset"),
-                         (Route: "texture/info", ToolName: "unity_texture_info"),
-                         (Route: "texture/find-duplicates", ToolName: "unity_texture_find_duplicates"),
-                     })
-            {
-                Assert.That(toolsByRoute.ContainsKey(expected.Route), Is.True,
-                    $"{expected.Route} must publish discoverable metadata.");
-                var tool = toolsByRoute[expected.Route];
-                Assert.That(tool["toolName"], Is.EqualTo(expected.ToolName));
-                bool shouldBeFirstClass = expected.Route == "asset/import";
-                Assert.That(HasTag(tool, "firstClass"), Is.EqualTo(shouldBeFirstClass));
-                Assert.That(HasTag(tool, "fallback"), Is.False);
-
-                var schema = RequireDictionary(tool["inputSchema"]);
-                var properties = RequireDictionary(schema["properties"]);
-                Assert.That(properties, Is.Not.Empty, $"{expected.Route} must publish a concrete input schema.");
-            }
-
-            var textureInfoAnnotations = RequireDictionary(toolsByRoute["texture/info"]["annotations"]);
-            Assert.That(textureInfoAnnotations["readOnlyHint"], Is.EqualTo(true));
-            var duplicateFinderAnnotations = RequireDictionary(
-                toolsByRoute["texture/find-duplicates"]["annotations"]);
-            Assert.That(duplicateFinderAnnotations["readOnlyHint"], Is.EqualTo(true));
-
-            var assetImportSchema = RequireDictionary(toolsByRoute["asset/import"]["inputSchema"]);
-            var assetImportProperties = RequireDictionary(assetImportSchema["properties"]);
-            Assert.That(assetImportProperties.Keys,
-                Is.EquivalentTo(new[]
-                {
-                    "dryRun", "defaults", "execution", "imports",
-                    "expectedProjectPath", "expectedProjectName"
-                }));
-            Assert.That(assetImportProperties.ContainsKey("sourcePath"), Is.False);
-            Assert.That(assetImportProperties.ContainsKey("destinationPath"), Is.False);
-            var defaultsSchema = RequireDictionary(assetImportProperties["defaults"]);
-            var defaultProperties = RequireDictionary(defaultsSchema["properties"]);
-            Assert.That(defaultProperties.Keys, Does.Contain("dedupeMode"));
-            Assert.That(defaultProperties.Keys, Does.Contain("dedupeScope"));
-            Assert.That(defaultProperties.Keys, Does.Contain("dedupeSearchPath"));
-            Assert.That(defaultProperties.Keys, Does.Contain("onDuplicate"));
-            Assert.That(defaultProperties.Keys, Does.Contain("spriteSlice"));
-            var spriteSliceSchema = RequireDictionary(defaultProperties["spriteSlice"]);
-            var spriteSliceProperties = RequireDictionary(spriteSliceSchema["properties"]);
-            Assert.That(spriteSliceProperties.Keys, Does.Contain("frameWidth"));
-            Assert.That(spriteSliceProperties.Keys, Does.Contain("frameHeight"));
-        }
-
-        [Test]
-        public void ToolMetadata_ExposesUnityPackageImportLazily()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: false, includeSchema: true, limit: 200,
-                category: "asset"));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            var tool = tools.Single(item => item["route"].ToString() == "asset/import-unitypackage");
-
-            Assert.That(tool["toolName"], Is.EqualTo("unity_asset_import_unitypackage"));
-            Assert.That(HasTag(tool, "firstClass"), Is.False);
-            Assert.That(HasTag(tool, "fallback"), Is.False);
-            Assert.That(HasSideEffect(tool, "writesAssets"), Is.True);
-            Assert.That(HasTag(tool, "longRunning"), Is.True);
-            Assert.That(HasSideEffect(tool, "reloadsDomain"), Is.True);
-
-            var schema = RequireDictionary(tool["inputSchema"]);
-            CollectionAssert.AreEquivalent(new[] { "packagePath" }, (List<string>)schema["required"]);
-            var properties = RequireDictionary(schema["properties"]);
-            Assert.That(properties.Keys, Does.Contain("packagePath"));
-            Assert.That(properties.Keys, Does.Contain("expectedProjectPath"));
-            Assert.That(properties.Keys, Does.Not.Contain("interactive"));
-        }
-
-        [Test]
-        public void ToolMetadata_ExposesAnimatorEditingToolsLazily()
-        {
-            var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: false, compact: true, includeSchema: true, limit: 200,
-                category: "animation"));
-            var tools = (List<Dictionary<string, object>>)result["tools"];
-            var toolsByRoute = tools.ToDictionary(tool => tool["route"].ToString());
-
-            foreach (var expected in new[]
-                     {
-                         (Route: "animation/transition-info", ToolName: "unity_animation_transition_info"),
-                         (Route: "animation/update-state", ToolName: "unity_animation_update_state"),
-                         (Route: "animation/update-transition", ToolName: "unity_animation_update_transition"),
-                         (Route: "animation/connect-states", ToolName: "unity_animation_connect_states"),
-                     })
-            {
-                Assert.That(toolsByRoute.ContainsKey(expected.Route), Is.True,
-                    $"{expected.Route} must publish discoverable metadata.");
-                var tool = toolsByRoute[expected.Route];
-                Assert.That(tool["toolName"], Is.EqualTo(expected.ToolName));
-                Assert.That(HasTag(tool, "firstClass"), Is.False);
-                Assert.That(HasTag(tool, "fallback"), Is.False);
-
-                var schema = RequireDictionary(tool["inputSchema"]);
-                var properties = RequireDictionary(schema["properties"]);
-                Assert.That(properties, Is.Not.Empty, $"{expected.Route} must publish a concrete input schema.");
-            }
-
-            var transitionInfoAnnotations = RequireDictionary(
-                toolsByRoute["animation/transition-info"]["annotations"]);
-            Assert.That(transitionInfoAnnotations["readOnlyHint"], Is.EqualTo(true));
-
-            foreach (string route in new[]
-                     {
-                         "animation/update-state",
-                         "animation/update-transition",
-                         "animation/connect-states",
-                     })
-            {
-                Assert.That(
-                    !toolsByRoute[route].TryGetValue("annotations", out object annotationsValue) ||
-                    !RequireDictionary(annotationsValue).ContainsKey("readOnlyHint"),
-                    Is.True, route);
-            }
-
-            var updateTransitionSchema = RequireDictionary(
-                toolsByRoute["animation/update-transition"]["inputSchema"]);
-            var updateTransitionProperties = RequireDictionary(updateTransitionSchema["properties"]);
-            foreach (string propertyName in new[] { "conditions", "addConditions" })
-            {
-                var arraySchema = RequireDictionary(updateTransitionProperties[propertyName]);
-                Assert.That(arraySchema["type"], Is.EqualTo("array"));
-                var itemSchema = RequireDictionary(arraySchema["items"]);
-                Assert.That(itemSchema["type"], Is.EqualTo("object"));
-                var itemProperties = RequireDictionary(itemSchema["properties"]);
-                CollectionAssert.IsSubsetOf(new[] { "parameter", "mode", "threshold" }, itemProperties.Keys);
-                CollectionAssert.Contains((List<string>)itemSchema["required"], "parameter");
-            }
-
-            var updateConditionsSchema = RequireDictionary(updateTransitionProperties["updateConditions"]);
-            var updateConditionItemSchema = RequireDictionary(updateConditionsSchema["items"]);
-            var updateConditionItemProperties = RequireDictionary(updateConditionItemSchema["properties"]);
-            CollectionAssert.IsSubsetOf(new[] { "index", "parameter", "mode", "threshold" },
-                updateConditionItemProperties.Keys);
-            CollectionAssert.Contains((List<string>)updateConditionItemSchema["required"], "index");
-
-            var removeIndexesSchema = RequireDictionary(updateTransitionProperties["removeConditionIndexes"]);
-            Assert.That(RequireDictionary(removeIndexesSchema["items"])["type"], Is.EqualTo("number"));
-        }
 
         [Test]
         public void AnimationUpdateTransition_AddsConditionFromObjectArray()
@@ -8437,51 +6956,7 @@ namespace UnityMCP.Editor.Tests
                 Is.EqualTo(UnityEditor.Animations.AnimatorConditionMode.IfNot));
         }
 
-        [Test]
-        public void ToolMetadata_ValueSchemasAcceptPrimitiveNumbers()
-        {
-            MethodInfo getSchema = typeof(MCPToolMetadata).GetMethod("GetToolInputSchema",
-                BindingFlags.Static | BindingFlags.NonPublic);
-            Assert.That(getSchema, Is.Not.Null);
 
-            foreach (string route in new[]
-                     {
-                         "prefab-asset/set-property",
-                         "serialized-object/set",
-                         "component/set-property",
-                         "localization/upsert-variable",
-                     })
-            {
-                var schema = RequireDictionary(getSchema.Invoke(null, new object[] { route }));
-                var properties = RequireDictionary(schema["properties"]);
-                var valueSchema = RequireDictionary(properties["value"]);
-                Assert.That(valueSchema.ContainsKey("type"), Is.False,
-                    $"{route} must allow primitive JSON values such as 0.72.");
-            }
-
-            var toolsResult = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 500));
-            var tools = (List<Dictionary<string, object>>)toolsResult["tools"];
-            Assert.That(tools.Any(tool => tool["route"].ToString() == "component/set-property"), Is.True);
-        }
-
-        [Test]
-        public void ToolMetadata_LocalizationRoutesRequireOptionalPackage()
-        {
-            Type registry = typeof(MCPToolMetadata).Assembly.GetType("UnityMCP.Editor.MCPCapabilityRegistry");
-            Assert.That(registry, Is.Not.Null);
-            var method = registry.GetMethod("IsRouteAvailable", BindingFlags.Static | BindingFlags.NonPublic);
-            Assert.That(method, Is.Not.Null);
-            Type localizationBridge = typeof(MCPToolMetadata).Assembly.GetType(
-                "UnityMCP.Editor.MCPLocalizationBridge");
-            Assert.That(localizationBridge, Is.Not.Null);
-            var isAvailable = localizationBridge.GetProperty("IsAvailable",
-                BindingFlags.Static | BindingFlags.Public);
-            Assert.That(isAvailable, Is.Not.Null);
-            Assert.That(method.Invoke(null, new object[] { "localization/status" }),
-                Is.EqualTo(isAvailable.GetValue(null)));
-            Assert.That(method.Invoke(null, new object[] { "scene/hierarchy" }), Is.EqualTo(true));
-        }
 
         [Test]
         public void TransportCompaction_UnwrapsProjectToolEnvelopeAndPreservesOutputSchemaShape()
@@ -8489,7 +6964,7 @@ namespace UnityMCP.Editor.Tests
             var result = new Dictionary<string, object>
             {
                 { "ticketId", 42L },
-                { "actionName", "project-tools/execute" },
+                { "actionName", "project-tools/call/fixture/audit" },
                 { "status", "Completed" },
                 { "queuePosition", 0 },
                 { "result", MCPResponse.Success(
@@ -8831,7 +7306,7 @@ namespace UnityMCP.Editor.Tests
             var source = new Dictionary<string, object>
             {
                 { "ticketId", 43L },
-                { "actionName", "project-tools/execute" },
+                { "actionName", "project-tools/call/vmframework/find-game-prefab" },
                 { "status", "Completed" },
                 {
                     "result",
@@ -8919,7 +7394,7 @@ namespace UnityMCP.Editor.Tests
             var source = new Dictionary<string, object>
             {
                 { "ticketId", 44L },
-                { "actionName", "project-tools/execute" },
+                { "actionName", "project-tools/call/fixture/schema-shape" },
                 { "status", "Completed" },
                 {
                     "result",
@@ -9887,6 +8362,7 @@ namespace UnityMCP.Editor.Tests
             Assert.That(value, Is.TypeOf<Dictionary<string, object>>());
             return (Dictionary<string, object>)value;
         }
+
 
         private static bool HasTag(Dictionary<string, object> metadata, string tag)
         {

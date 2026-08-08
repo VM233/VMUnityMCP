@@ -16,6 +16,7 @@ using UnityEngine.TestTools;
 
 namespace UnityMCP.Editor.Localization.Tests
 {
+    [Category("VMUnityMCP.FullRegression")]
     public sealed class MCPLocalizationCommandTests
     {
         private const string TestFolder = "Assets/__UnityMCPLocalizationTests";
@@ -53,7 +54,7 @@ namespace UnityMCP.Editor.Localization.Tests
         public void LocalizationTools_AreExposedWhenPackageIsInstalled()
         {
             var result = RequireDictionary(MCPToolMetadata.GetRegisteredTools(
-                firstClassOnly: true, compact: false, includeSchema: true, limit: 100,
+                compact: false, includeSchema: true, limit: 100,
                 category: "localization"));
             var tools = (List<Dictionary<string, object>>)result["tools"];
 

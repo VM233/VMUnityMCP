@@ -1,168 +1,127 @@
-# Unity MCP configuration architecture and tool audit
+# Unity MCP catalog, configuration, and ownership audit
 
-This document records the configuration review for the 406 built-in routes
-published by `MCPRouteRegistry`. The registry composes its catalog from a
-non-deferred manifest and `MCPDeferredRouteRegistry`, which owns both deferred
-names and executable handlers. The two sources must be disjoint, their union
-must exactly equal the published catalog, and metadata inspection does not
-initialize `MCPBridgeServer`.
+VM Unity MCP 6 publishes 397 executable built-in routes from two authorities:
+`MCPRouteRegistry` owns synchronous names and `MCPDeferredRouteRegistry` owns
+callback-based names together with their handlers. Their union is executable;
+the two `_meta` endpoints remain internal discovery transport and are not
+advertised as callable tools.
 
-The audited manifest SHA-256 is
-`605809562e5412cb10f0ba48671d78aaeb24ca61ab387b91a3303fe95e25ed0c`.
-The regression suite compares that fingerprint with the authoritative route
-manifest, so adding, removing, or renaming a route requires another
-configuration review.
+The audited executable-route SHA-256 is
+`91724eb19902998c3655d20274ac45b0c06efc92b9f6f6227a49016d4e35a81d`.
+The regression suite compares this value with the live registry. Adding,
+removing, or renaming a route therefore requires an explicit configuration
+review instead of silently inheriting defaults.
 
-## Precedence and ownership
+## Canonical catalog
+
+Paginated `_meta/tools` is the only tool catalog. It contains all available
+built-in routes plus every valid direct project/package route under
+`project-tools/call/<toolName>`. Optional package tools appear only when their
+capability is installed. Pages are capped at 200 and publish a `nextOffset`
+only when another page exists.
+
+Every catalog entry must provide:
+
+- one route and one typed tool name;
+- category, module ID, capability, and normalized operation kind;
+- a task-oriented description and search terms;
+- complete input and output schemas;
+- positive tags, concrete side effects, preconditions, and error codes when
+  applicable.
+
+Built-in operation kinds are the stable filter values `inspect`, `mutate`, and
+`job`. The route and search terms carry the specific action. Project tools use
+the same defaults unless they explicitly declare a domain operation kind.
+
+`MCPToolProfileCatalog` explicitly assigns lifecycle and effects to every
+built-in route. Duplicate declarations and missing profiles fail catalog
+initialization. There is no mutating fallback. Specialized descriptions live
+in `MCPToolDescriptionCatalog`; ordinary routes use an audited module/action
+composer, which fails on an unknown module instead of publishing route-name
+placeholder prose.
+
+Five single-condition search routes were removed. `search/scene` is the sole
+composable scene-search authority for name, component, tag, layer, and shader
+criteria. The advanced executor, first-class tiers, exposure allowlists, and
+project-tools list/get/execute endpoints are also removed.
+
+## Project and package tools
+
+`MCPProjectToolAttribute` is an authoring contract, not an exposure tier. A
+valid tool declares exactly one of `ReadOnly`, `MutatesAssets`,
+`MutatesRuntime`, or `MutatesProjectFiles`, plus strict input/output schemas.
+It may also declare module, capability, operation kind, when/not-to-use text,
+aliases, search terms, preconditions, completion evidence, side effects,
+errors, cleanup, and persistent-job behavior.
+
+When module ID is omitted, the complete path segment before `/` is preserved,
+including hyphens. Capability defaults to the noun portion of the next segment
+after removing a structural action prefix; for example,
+`unity-mcp-tests/set-runtime-state` becomes module `unity-mcp-tests` and
+capability `runtime-state`.
+
+Schemas are recursively validated before invocation. Supported constraints
+include nested objects and arrays, primitive types, bounds, patterns, `enum`,
+`const`, `allOf`, `anyOf`, `oneOf`, and `not`. Catalog quality additionally
+requires descriptions for request properties and item schemas for arrays.
+
+Long-running tools and explicit `runAsJob=true` calls use the persistent Job
+owner. Class tools implement `IMCPPersistentProjectTool` and return all
+continuation state in `MCPProjectToolJobStep`; the bridge never relies on a
+retained tool instance. Cleanup remains an explicit typed tool and capability
+token contract.
+
+## Configuration precedence
 
 Effective values use this order:
 
-1. An explicit tool argument.
-2. A team-owned default from `ProjectSettings/UnityMCPSettings.json`.
-3. A local user preference from `Preferences > Unity MCP`.
-4. The package's built-in default.
+1. explicit tool argument;
+2. team-owned `ProjectSettings/UnityMCPSettings.json` value;
+3. local `Preferences > Unity MCP` value;
+4. built-in default.
 
-Safety caps are not part of that override chain. Request/response hard limits,
-queue capacity and ownership, destructive confirmations, and tool-specific
-maximums remain package invariants.
+Team settings contain only portable project choices: project context,
+additional execute-code namespaces, the default Physics query dimension, and
+the screenshot output directory. Local preferences own bridge startup and
+ports, MPPM startup, response limits, optional Prefab diff detail, histories,
+and locally enabled categories.
 
-`ProjectSettings/UnityMCPSettings.json` contains only portable team contracts:
+The optional result limit is injected only for a route with one unambiguous
+primary collection and only when the caller omitted that argument. Current
+consumers include catalog pages, asset/package/material/localization reads,
+jobs and test results, the composable scene search, Physics queries, Prefab
+hierarchy/find, profiler pages, terrain trees, texture duplicates, and UI
+Toolkit queries/audits. Exact field ownership remains in
+`MCPToolConfigurationPolicy` and is regression-checked against the route
+manifest.
 
-- project context enablement and path;
-- additional namespaces for `editor/execute-code`;
-- the default Physics query dimension;
-- the default screenshot output directory.
+Physics dimension defaults apply only to read queries. Screenshot directory
+defaults apply only to capture tools that expose a path. Prefab YAML diff
+preferences apply only to routes that already publish
+`includePrefabFileDiff`. Domain packages own their own settings and may reuse
+the shared primary-result limit without moving domain semantics into this
+bridge.
 
-`Preferences > Unity MCP` contains machine or operator choices:
+## Values that remain explicit
 
-- instance auto-start and manual port;
-- the global automatic port range;
-- whether MPPM virtual players auto-start the bridge;
-- optional primary-result-limit override;
-- whether Prefab mutations include YAML diffs when omitted by the caller;
-- Action History persistence/size and persistent Job History size;
-- locally enabled tool categories.
+The following never become hidden cross-tool defaults:
 
-The detailed UI Toolkit audit remains in
-`ProjectSettings/UnityMCPUIToolkitAudit.json`. It is a separate domain policy
-with roots, exclusions, automatic audit switches, and rule-specific values.
+- mutation operations and values, paths, selectors, object identities, scene
+  modes, package refs, build targets, and test filters;
+- `dryRun`, save/discard, overwrite, run/terminate, destructive confirmation,
+  cleanup, and equivalent lifecycle choices;
+- raw serialization, stack traces, full graph data, complete snapshots, and
+  other potentially large diagnostic expansions;
+- hard request/response caps, queue capacity, ownership and idempotency,
+  recovery limits, and tool-specific safety maxima.
 
-### Project-tool package settings
+This boundary lets clients compose tools from visible contracts without
+turning project or operator state into an implicit mutation API.
 
-The built-in route policy never injects domain-specific defaults into the
-opaque `args` object of `project-tools/execute`. A project-tool package owns
-its own settings UI, storage, schema annotations, and per-tool decision about
-which omitted arguments may use those settings.
+## Validation gates
 
-Project-tool arguments are validated recursively before invocation. The
-supported schema subset includes nested objects and arrays, primitive types,
-bounds and patterns, `enum`, `const`, and
-`allOf`/`anyOf`/`oneOf`/`not`. Extension packages should express selector
-exclusivity in their schema instead of duplicating it in the bridge.
-
-For one unambiguous primary result collection, extension packages can call
-`MCPSettingsManager.ResolvePrimaryResultLimit(...)`. The helper preserves the
-same explicit-argument -> shared user preference -> package-default order and
-then applies the package's hard bounds. It does not make selectors, mutation
-fields, or multi-axis graph budgets configurable.
-
-For example, VMFramework MCP keeps team GameTag validation coverage in
-`ProjectSettings/VMFrameworkMCPSettings.json`, local inspection/trace response
-choices under `Preferences > VMFramework MCP`, and reuses the shared Unity MCP
-result preference for simple paginated reads. VMFramework content paths and
-localization tables remain owned by VMFramework GeneralSettings.
-
-## Cross-tool settings added
-
-The optional result-limit preference applies only to a route with one clear
-primary result collection. It sets the named argument only when the caller
-omits it:
-
-- `limit`: `_meta/tools`, `addressables/info`, `asset/dependencies`,
-  `asset/list`, `build/profile`, `cinemachine/info`, `jobs/list`,
-  `localization/entries`, `material/properties/get`, `packages/list`,
-  `packages/search`, `project-tools/list`, `search/by-component`,
-  `search/by-layer`, `search/by-name`, `search/by-shader`, `search/by-tag`,
-  `search/missing-references`, `search/scene`, `testing/get-job`, and
-  `terrain/get-tree-instances`;
-- `maxResults`: `packages/lint-metas`, the three Physics queries,
-  `prefab-asset/find`, `shadergraph/get-node-types`, `shadergraph/list`,
-  `shadergraph/list-shaders`, `testing/list-tests`,
-  `uitoolkit/asset-inspect`, `uitoolkit/query`, and
-  `uitoolkit/runtime-query`;
-- other primary budgets: `console/query.count`,
-  `debug/stack-trace.maxFrames`, `editor/execute-code.maxResultItems`,
-  `localization/validate.maxIssues`, `prefab-asset/hierarchy.maxNodes`,
-  `profiler/frame-data.maxItems`,
-  `profiler/memory-breakdown.maxPerCategory`,
-  `profiler/memory-top-assets.count`, `scene/hierarchy.maxNodes`,
-  `serialized-object/get.maxProperties`, `texture/find-duplicates.maxGroups`,
-  `uitoolkit/audit-uss-styles.maxIssues`,
-  `uitoolkit/audit-uxml-layout.maxIssues`,
-  `uitoolkit/runtime-tree.maxNodes`, and `uitoolkit/tree.maxNodes`.
-
-The Physics project default applies only to `physics/raycast`,
-`physics/overlap-sphere`, and `physics/overlap-box`. Collision matrices,
-gravity writes, and collision-layer writes keep their existing explicit
-contracts.
-
-The screenshot project directory applies to `screenshot/game`,
-`screenshot/scene`, `screenshot/editor-window`, and
-`uitoolkit/builder-preview`. Crop and annotation outputs remain adjacent to
-their explicit source image, while element captures remain temporary evidence
-unless an output path is supplied.
-
-The Prefab YAML-diff preference applies to mutation routes that already expose
-`includePrefabFileDiff`: add/configure/remove/move component, add/remove
-GameObject, set property/reference, missing-override cleanup, and atomic
-transaction edit. It is disabled initially because semantic operation results
-are sufficient for normal calls and YAML lines can dominate the response.
-
-## Per-family review
-
-Every route in the manifest was checked. The result by tool family is:
-
-| Families | Routes reviewed | Configuration decision |
-|---|---:|---|
-| `_meta`, `ping`, `agents`, `instance`, `queue`, `mcp`, `wait`, `advanced`, `mppm` | 19 | Port discovery and compact result defaults are preferences. Queue limits, ownership, transport size, ticket retention, and execution deadlines remain invariants. `mcp/health` is compact by default and reports effective configuration. |
-| `editor`, `console`, `compilation`, `debug`, `debugger`, `profiler`, `undo`, `selection`, `search` | 40 | Primary diagnostic result budgets may use the user override. Play-mode actions, attach waits, stack traces, snapshots, evaluation, and mutations remain explicit. |
-| `asset`, `texture`, `sprite`, `spriteatlas`, `material`, `serialized-object`, `scriptableobject`, `script`, `asmdef`, `taglayer` | 62 | Read-result budgets may use the preference. Importer values, presets, roots, overwrite, dedupe, reimport, refresh, raw serialization, and file mutations stay request-owned. Sprite slicing authoritatively owns the complete SpriteRect and name-fileID tables; removed frames and renamed entries are not retained as compatibility aliases. Filename-changing asset rename/move operations synchronize Single Sprite names and matching Multiple Sprite filename prefixes while preserving Sprite IDs. The pixel-sprite preset preserves the target's current Single/Multiple mode unless a supplied reference importer explicitly owns that setting. |
-| `prefab`, `prefab-asset`, `component`, `gameobject`, `renderer`, `constraint`, `lod` | 43 | Prefab YAML response detail is a user preference; hierarchy/find budgets may use the result preference. Selectors, references, transforms, apply/revert/unpack, and transaction operations stay explicit. |
-| `scene`, `sceneview`, `physics`, `navigation`, `lighting`, `particle`, `terrain`, `scenario` | 71 | Physics read queries have a project dimension default. Scene replacement/save/discard, runtime simulation, baking, clearing, placement, scenario activation, and terrain edits stay explicit. |
-| `build`, `testing`, `jobs`, `packages`, `project-tools`, `project`, `settings`, `editorprefs`, `playerprefs` | 40 | Read pages and histories may use preferences. Build target/output/run/overwrite, ordinary Test Runner filters, package ref/resolve, the generic project-tool envelope, and preference mutations remain explicit. The VM Unity MCP package-test workflow resolves an omitted test selector to its built-in `VMUnityMCP.PackageSmoke` category; `VMUnityMCP.FullRegression` is explicit. A project-tool package may resolve its own omitted domain defaults after schema validation. |
-| `ui`, `uitoolkit`, `gameview`, `screenshot`, `graphics` | 47 | Screenshot directory is a project default; bounded read results may use the preference; UI audit keeps its dedicated project policy. Capture dimensions, transports, tolerances, expected images, refresh, and runtime/editor target selection stay explicit. |
-| `animation`, `audio`, `audio-mixer`, `input`, `shadergraph`, `vfxgraph`, `timeline`, `cinemachine`, `addressables`, `localization` | 84 | Simple list pages may use the result preference. Graph/mixer/timeline multi-axis budgets, raw serialized detail, operations, package capability behavior, locale/table values, labels, addresses, and runtime overrides stay explicit. |
-
-The counts total 406. Complex graph tools deliberately retain independent
-budgets such as nodes, edges, slots, clips, markers, groups, effects, and
-properties. Collapsing those into one global number would make response shape
-less predictable rather than easier to use.
-
-## Values deliberately not configurable
-
-The following fields must continue to be selected per request:
-
-- `dryRun`, `save`, `discard`, `overwrite`, `force`, `run`,
-  `terminateAfter`, and equivalent destructive or lifecycle choices;
-- paths, selectors, target object identities, scene modes, build targets,
-  package refs, test modes, import settings, and ordered transaction
-  operations;
-- `includeSerialized`, `includeStackTrace`, full metadata diagnostics, raw
-  graph data, and other potentially large diagnostic detail;
-- hard response/request caps, queue capacity, idempotency/ownership rules,
-  reload recovery limits, and tool-specific maximums.
-
-This boundary keeps configuration convenient without turning hidden state into
-an implicit mutation contract.
-
-Transport compaction removes empty optional containers, but preserves a sole
-empty primary collection. This keeps zero-match list/search results meaningful
-inside completed queue tickets while still omitting redundant empty warning or
-diagnostic arrays from otherwise informative responses.
-
-Type identities use their complete identifier as the transport authority. When
-`fullType`, `fullTypeName`, or `fullName` losslessly contains a matching short
-`type`, `component`, `typeName`, `name`, or fallback `title`, the short alias is
-omitted. Distinct display names, element names, custom titles, and mismatched
-diagnostic values remain intact; simple names are still accepted by request
-selectors.
+The EditMode regression suite checks route/dispatcher parity, manifest hash,
+profile exhaustiveness, catalog pagination, schema and description quality,
+optional capability gating, direct project routes, normalized module and
+capability metadata, strict schema enforcement, persistent jobs, and removal
+of retired generic/duplicate routes.

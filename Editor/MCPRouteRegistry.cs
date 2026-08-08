@@ -224,9 +224,6 @@ namespace UnityMCP.Editor
             "profiler/memory-top-assets",
             "profiler/stats",
             "project/info",
-            "project-tools/get",
-            "project-tools/execute",
-            "project-tools/list",
             "renderer/set-material",
             "scenario/activate",
             "scenario/create",
@@ -254,11 +251,6 @@ namespace UnityMCP.Editor
             "scriptableobject/info",
             "scriptableobject/list-types",
             "scriptableobject/set-field",
-            "search/by-component",
-            "search/by-layer",
-            "search/by-name",
-            "search/by-shader",
-            "search/by-tag",
             "search/missing-references",
             "search/scene",
             "search/scene-stats",
@@ -408,6 +400,13 @@ namespace UnityMCP.Editor
         private static readonly HashSet<string> BuiltInRouteSet =
             new HashSet<string>(BuiltInRouteArray, StringComparer.Ordinal);
 
+        private static readonly HashSet<string> InternalDiscoveryRouteSet =
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                "_meta/tools",
+                "_meta/capabilities",
+            };
+
         internal static IEnumerable<string> NonDeferredRoutes => NonDeferredRouteArray;
 
         internal static IEnumerable<string> BuiltInRoutes => BuiltInRouteArray;
@@ -415,6 +414,12 @@ namespace UnityMCP.Editor
         internal static bool ContainsBuiltInRoute(string route)
         {
             return !string.IsNullOrEmpty(route) && BuiltInRouteSet.Contains(route.Trim('/'));
+        }
+
+        internal static bool IsCatalogRoute(string route)
+        {
+            return !string.IsNullOrEmpty(route) &&
+                   !InternalDiscoveryRouteSet.Contains(route.Trim('/'));
         }
     }
 }

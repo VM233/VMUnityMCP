@@ -18,7 +18,7 @@ namespace UnityMCP.Editor
         // audit and updating this fingerprint. This prevents new tools from silently
         // inheriting an inappropriate global default.
         internal const string AuditedRouteManifestSha256 =
-            "605809562e5412cb10f0ba48671d78aaeb24ca61ab387b91a3303fe95e25ed0c";
+            "91724eb19902998c3655d20274ac45b0c06efc92b9f6f6227a49016d4e35a81d";
 
         private static readonly Dictionary<string, string> ResultLimitArguments =
             new Dictionary<string, string>(StringComparer.Ordinal)
@@ -47,13 +47,7 @@ namespace UnityMCP.Editor
                 { "profiler/frame-data", "maxItems" },
                 { "profiler/memory-breakdown", "maxPerCategory" },
                 { "profiler/memory-top-assets", "count" },
-                { "project-tools/list", "limit" },
                 { "scene/hierarchy", "maxNodes" },
-                { "search/by-component", "limit" },
-                { "search/by-layer", "limit" },
-                { "search/by-name", "limit" },
-                { "search/by-shader", "limit" },
-                { "search/by-tag", "limit" },
                 { "search/missing-references", "limit" },
                 { "search/scene", "limit" },
                 { "serialized-object/get", "maxProperties" },

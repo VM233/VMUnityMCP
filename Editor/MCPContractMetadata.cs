@@ -12,7 +12,7 @@ namespace UnityMCP.Editor
     /// </summary>
     internal static class MCPContractMetadata
     {
-        internal const int ToolMetadataSchemaVersion = 6;
+        internal const int ToolMetadataSchemaVersion = 7;
 
         internal static class Tag
         {
@@ -20,8 +20,6 @@ namespace UnityMCP.Editor
             internal const string Dangerous = "dangerous";
             internal const string LongRunning = "longRunning";
             internal const string RequiresPlayMode = "requiresPlayMode";
-            internal const string FirstClass = "firstClass";
-            internal const string Fallback = "fallback";
             internal const string Cleanup = "cleanup";
             internal const string CleanupDeclared = "cleanupDeclared";
             internal const string CleanupAvailable = "cleanupAvailable";
@@ -64,8 +62,6 @@ namespace UnityMCP.Editor
                 { "dangerous", Tag.Dangerous },
                 { "longRunning", Tag.LongRunning },
                 { "requiresPlayMode", Tag.RequiresPlayMode },
-                { "firstClass", Tag.FirstClass },
-                { "fallback", Tag.Fallback },
                 { "cleanup", Tag.Cleanup },
                 { "cleanupDeclared", Tag.CleanupDeclared },
                 { "cleanupAvailable", Tag.CleanupAvailable },
@@ -115,8 +111,6 @@ namespace UnityMCP.Editor
             bool dangerous = false,
             bool longRunning = false,
             bool requiresPlayMode = false,
-            bool firstClass = false,
-            bool fallback = false,
             bool cleanup = false,
             bool incrementalJob = false,
             bool outputSchema = false,
@@ -127,8 +121,6 @@ namespace UnityMCP.Editor
             Add(tags, Tag.Dangerous, dangerous);
             Add(tags, Tag.LongRunning, longRunning);
             Add(tags, Tag.RequiresPlayMode, requiresPlayMode);
-            Add(tags, Tag.FirstClass, firstClass);
-            Add(tags, Tag.Fallback, fallback);
             Add(tags, Tag.Cleanup, cleanup);
             Add(tags, Tag.IncrementalJob, incrementalJob);
             Add(tags, Tag.OutputSchema, outputSchema);

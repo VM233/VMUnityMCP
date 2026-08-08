@@ -17,10 +17,6 @@ namespace UnityMCP.Editor
             new Dictionary<string, Handler>(StringComparer.Ordinal)
             {
                 { "testing/list-tests", (args, resolve, _) => MCPTestRunnerCommands.ListTests(args, resolve) },
-                {
-                    "advanced/execute",
-                    (args, resolve, _) => MCPBridgeServer.ExecuteAdvancedRouteDeferred(args, resolve)
-                },
                 { "wait/editor-idle", (args, resolve, _) => MCPEditorCommands.WaitForIdle(args, resolve) },
                 { "editor/play-mode", (args, resolve, _) => MCPEditorCommands.SetPlayMode(args, resolve) },
                 { "uitoolkit/refresh", (args, resolve, _) => MCPUICommands.RefreshUIToolkit(args, resolve) },

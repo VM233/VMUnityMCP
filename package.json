@@ -1,8 +1,8 @@
 {
   "name": "com.vm233.unity-mcp",
-  "version": "5.6.28",
+  "version": "6.0.0",
   "displayName": "VM Unity MCP",
-  "description": "MCP bridge for structured, queue-safe Unity Editor automation across assets, UI Toolkit, packages, builds, tests, and project-defined workflows.",
+  "description": "Canonical typed-tool catalog and queue-safe Unity Editor bridge for composable MCP automation.",
   "unity": "2021.3",
   "unityRelease": "18f1",
   "keywords": [

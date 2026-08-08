@@ -42,10 +42,10 @@ second list, and reading metadata does not initialize the HTTP listener.
 
 | Area | Contract |
 |---|---|
-| Discovery | `_meta/capabilities` reports package/version-gated integrations. `_meta/tools` provides the compact route catalog for server synchronization. |
-| Common tools | The companion server exposes a bounded, release-managed set of concrete `unity_*` tools with route-owned schemas. |
-| Specialized routes | Lower-frequency routes remain available through lazy metadata or `unity_advanced_execute`. |
-| Project extensions | `unity_project_tools_list`, `unity_project_tools_get`, and `unity_project_tools_execute` discover and execute project/package-defined tools without leaking one project's catalog into another project. |
+| Discovery | `_meta/capabilities` reports package/version-gated integrations. Paginated `_meta/tools` is the only canonical Unity/package/project catalog. |
+| Client bootstrap | The companion server starts with a bounded list/search/get surface, then activates exact typed tools from the selected instance catalog. |
+| Built-in tools | Every available route has one typed name, full input/output schemas, module/capability/operation metadata, effects, and preconditions. |
+| Project extensions | Every valid project/package tool is cataloged at `project-tools/call/<toolName>` and becomes an ordinary typed tool after exact activation. |
 | Multi-instance safety | Instance discovery, explicit port selection, expected-project binding, and per-agent queue ownership prevent cross-project mutation. |
 | Long work | Builds, tests, refreshes, package tests, snapshots, Addressables builds, execute-code, and long project tools use persistent jobs or tickets; owned cancel routes are cooperative. |
 | Optional packages | Localization, Shader Graph, VFX Graph, Addressables, Timeline, Cinemachine, and Build Profiles publish only when their capability is available. |
@@ -102,6 +102,10 @@ public static class ProjectMcpTools
 {
     [MCPProjectTool("example/add-content",
         Description = "Create and register one example content asset.",
+        ModuleId = "example",
+        Capability = "content",
+        WhenToUse = "Use when the project needs one registered content asset.",
+        SearchTerms = new[] { "content", "authoring", "register" },
         InputSchemaJson =
             "{\"type\":\"object\",\"properties\":{" +
             "\"id\":{\"type\":\"string\",\"description\":\"Content id.\"}" +
@@ -142,7 +146,7 @@ serializes positive capabilities as a sorted `tags` array, for example
 `writesAssets`, `writesProjectFiles`, `changesRuntimeState`, or `reloadsDomain`
 are reported once in
 `sideEffects`. Empty tags/effects, empty cleanup names, valid-state aliases, and
-standard project-tool error codes are omitted. `project-tools/get` includes
+standard project-tool error codes are omitted. Canonical descriptors include
 only tool-specific extra `errorCodes`.
 
 `LongRunning=true` and an explicit `runAsJob=true` both return a persistent Job.
@@ -150,32 +154,17 @@ Class-based tools can implement `IMCPPersistentProjectTool` to yield a
 `MCPProjectToolJobStep` between Editor updates. Every continuation value must be
 returned in the step state; the bridge does not retain the tool instance.
 
-The canonical client workflow is:
+The canonical client workflow is the same for built-in and project tools:
 
-```json
-{ "offset": 0, "limit": 100 }
-```
+1. Search the selected instance catalog by intent, module, capability,
+   operation kind, effects, or preconditions.
+2. Get one exact typed name to receive its complete schema and activate it.
+3. Call that typed tool directly with its business arguments.
 
-through `project-tools/list`, then:
-
-```json
-{ "toolName": "example/add-content" }
-```
-
-through `project-tools/get`, then:
-
-```json
-{
-  "toolName": "example/add-content",
-  "args": { "id": "example_item" }
-}
-```
-
-through `project-tools/execute`.
-
-`project-tools/list` intentionally omits schemas. The Node server intentionally
-keeps all project-defined tools behind this three-stage contract because a
-single MCP session can switch between open Unity projects.
+For the example above, the Editor route remains
+`project-tools/call/example/add-content`; clients never send a generic
+`toolName + args` envelope. Switching Unity instances binds a different
+catalog, so one project's tools cannot leak into another project.
 
 Project-tool packages can reuse
 `MCPSettingsManager.ResolvePrimaryResultLimit(...)` for a single primary

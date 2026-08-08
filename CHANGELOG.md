@@ -2,6 +2,33 @@
 
 All notable changes to this package will be documented in this file.
 
+## [6.0.0] - 2026-08-08
+
+- Publish one paginated canonical catalog for built-in, package, and project
+  tools. Every descriptor now includes module, capability, normalized operation
+  kind, intent text, search terms, schemas, effects, preconditions, and errors.
+- Replace default tool effects with an exhaustive profile catalog covering all
+  397 executable built-in routes. Missing and duplicate profiles fail as
+  configuration errors, and generic descriptions are replaced by explicit
+  descriptions or an audited module/action composer.
+- Expose every valid project tool at its direct
+  `project-tools/call/<toolName>` route. Add neutral project-tool metadata,
+  strict schemas, persistent tool interfaces, typed job steps, execution
+  context, cleanup, and domain error contracts.
+- Split bridge dispatch, descriptions, schema construction, input schemas,
+  profiles, project-tool contracts, and regression ownership into bounded
+  classes. Remove the former monolithic metadata/dispatcher responsibilities.
+- Remove the generic advanced route, project-tools list/get/execute endpoints,
+  first-class flags and tiers, metadata allowlists, and five duplicate
+  single-condition scene-search routes. `search/scene` is the sole composable
+  scene-search authority.
+- Preserve hyphenated project module IDs and derive capability nouns by
+  removing structural action prefixes. Normalize built-in operation kinds to
+  `inspect`, `mutate`, or `job` for reliable client filtering.
+- Add catalog-quality, direct-route, pagination, effect, schema, dispatcher,
+  and module/capability regressions. The package and VMFramework MCP suites are
+  selectable through explicit full-regression categories.
+
 ## [5.6.28] - 2026-08-03
 
 - Extend complete-identifier compaction to fallback titles that exactly repeat the full identifier
